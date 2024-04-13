@@ -1,0 +1,30 @@
+{
+  "name": "voxel-raster",
+  "version": "0.1.0",
+  "builtin-baseline": "ce46ba8777d8f899d8dc11afefb8eca39293df39",
+  "dependencies": [
+    {
+      "name": "daxa",
+      "features": [
+        "utils-pipeline-manager-spirv-validation",
+        "utils-imgui",
+        "utils-mem",
+        "utils-pipeline-manager-glslang",
+        "utils-task-graph"
+      ]
+    },
+    "glfw3",
+    {
+      "name": "imgui",
+      "features": [
+        "glfw-binding",
+        "docking-experimental"
+      ]
+    }
+  ],
+  "vcpkg-configuration": {
+    "overlay-ports": [
+      "deps/Daxa"
+    ]
+  }
+}

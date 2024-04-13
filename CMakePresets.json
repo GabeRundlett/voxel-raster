@@ -1,0 +1,108 @@
+{
+    "version": 3,
+    "cmakeMinimumRequired": {
+        "major": 3,
+        "minor": 21,
+        "patch": 0
+    },
+    "configurePresets": [
+        {
+            "name": "defaults",
+            "hidden": true,
+            "binaryDir": "${sourceDir}/.out/${presetName}",
+            "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+            "generator": "Ninja Multi-Config",
+            "cacheVariables": {
+                "ENABLE_STATIC_ANALYSIS": false,
+                "CMAKE_EXPORT_COMPILE_COMMANDS": true,
+                "GVOX_ENGINE_INSTALL": false,
+                "GVOX_ENGINE_USE_VCPKG": true
+            }
+        },
+        {
+            "name": "clangd-support",
+            "binaryDir": "${sourceDir}/build",
+            "inherits": [
+                "defaults"
+            ],
+            "cacheVariables": {
+                "CMAKE_EXPORT_COMPILE_COMMANDS": true
+            }
+        },
+        {
+            "name": "defaults-windows",
+            "hidden": true,
+            "inherits": [ "defaults" ],
+            "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+        },
+        {
+            "name": "defaults-linux",
+            "hidden": true,
+            "inherits": [ "defaults" ],
+            "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" }
+        },
+        {
+            "name": "clang-x86_64-windows-msvc",
+            "displayName": "Clang x86_64 Windows (MSVC ABI)",
+            "inherits": [ "defaults-windows" ],
+            "toolchainFile": "${sourceDir}/cmake/toolchains/clang-x86_64-windows-msvc.cmake"
+        },
+        {
+            "name": "cl-x86_64-windows-msvc",
+            "displayName": "CL.exe x86_64 Windows (MSVC ABI)",
+            "inherits": [ "defaults-windows" ],
+            "toolchainFile": "${sourceDir}/cmake/toolchains/cl-x86_64-windows-msvc.cmake"
+        },
+        {
+            "name": "vs-x86_64-windows-msvc",
+            "generator": "Visual Studio 17 2022",
+            "displayName": "Visual Studio x86_64 Windows (MSVC ABI)",
+            "inherits": [ "defaults-windows" ],
+            "toolchainFile": ""
+        },
+        {
+            "name": "gcc-x86_64-linux-gnu",
+            "displayName": "G++ x86_64 Linux (GNU ABI)",
+            "inherits": [ "defaults-linux" ],
+            "toolchainFile": "${sourceDir}/cmake/toolchains/gcc-x86_64-linux-gnu.cmake"
+        },
+        {
+            "name": "clang-x86_64-linux-gnu",
+            "displayName": "Clang x86_64 Linux (GNU ABI)",
+            "inherits": [ "defaults-linux" ],
+            "toolchainFile": "${sourceDir}/cmake/toolchains/clang-x86_64-linux-gnu.cmake"
+        },
+        {
+            "name": "windows-dist",
+            "displayName": "Windows Distribution",
+            "inherits": [ "clang-x86_64-windows-msvc" ],
+            "cacheVariables": {
+                "GVOX_ENGINE_INSTALL": true
+            }
+        },
+        {
+            "name": "linux-dist",
+            "displayName": "Linux Distribution",
+            "inherits": [ "gcc-x86_64-linux-gnu" ],
+            "cacheVariables": {
+                "GVOX_ENGINE_INSTALL": true
+            }
+        }
+    ],
+    "buildPresets": [
+        { "name": "clang-x86_64-windows-msvc-debug", "displayName": "Clang x86_64 Windows (MSVC ABI) Debug", "configurePreset": "clang-x86_64-windows-msvc", "configuration": "Debug" },
+        { "name": "clang-x86_64-windows-msvc-relwithdebinfo", "displayName": "Clang x86_64 Windows (MSVC ABI) RelWithDebInfo", "configurePreset": "clang-x86_64-windows-msvc", "configuration": "RelWithDebInfo" },
+        { "name": "clang-x86_64-windows-msvc-release", "displayName": "Clang x86_64 Windows (MSVC ABI) Release", "configurePreset": "clang-x86_64-windows-msvc", "configuration": "Release" },
+        { "name": "cl-x86_64-windows-msvc-debug", "displayName": "CL.exe x86_64 Windows (MSVC ABI) Debug", "configurePreset": "cl-x86_64-windows-msvc", "configuration": "Debug" },
+        { "name": "cl-x86_64-windows-msvc-relwithdebinfo", "displayName": "CL.exe x86_64 Windows (MSVC ABI) RelWithDebInfo", "configurePreset": "cl-x86_64-windows-msvc", "configuration": "RelWithDebInfo" },
+        { "name": "cl-x86_64-windows-msvc-release", "displayName": "CL.exe x86_64 Windows (MSVC ABI) Release", "configurePreset": "cl-x86_64-windows-msvc", "configuration": "Release" },
+        { "name": "gcc-x86_64-linux-gnu-debug", "displayName": "G++ x86_64 Linux (GNU ABI) Debug", "configurePreset": "gcc-x86_64-linux-gnu", "configuration": "Debug" },
+        { "name": "gcc-x86_64-linux-gnu-relwithdebinfo", "displayName": "G++ x86_64 Linux (GNU ABI) RelWithDebInfo", "configurePreset": "gcc-x86_64-linux-gnu", "configuration": "RelWithDebInfo" },
+        { "name": "gcc-x86_64-linux-gnu-release", "displayName": "G++ x86_64 Linux (GNU ABI) Release", "configurePreset": "gcc-x86_64-linux-gnu", "configuration": "Release" },
+        { "name": "clang-x86_64-linux-gnu-debug", "displayName": "Clang x86_64 Linux (GNU ABI) Debug", "configurePreset": "clang-x86_64-linux-gnu", "configuration": "Debug" },
+        { "name": "clang-x86_64-linux-gnu-relwithdebinfo", "displayName": "Clang x86_64 Linux (GNU ABI) RelWithDebInfo", "configurePreset": "clang-x86_64-linux-gnu", "configuration": "RelWithDebInfo" },
+        { "name": "clang-x86_64-linux-gnu-release", "displayName": "Clang x86_64 Linux (GNU ABI) Release", "configurePreset": "clang-x86_64-linux-gnu", "configuration": "Release" },
+        { "name": "windows-dist-release", "displayName": "Windows Distribution", "configurePreset": "windows-dist", "configuration": "Release" },
+        { "name": "linux-dist-release", "displayName": "Linux Distribution", "configurePreset": "linux-dist", "configuration": "Release" }
+    ]
+}

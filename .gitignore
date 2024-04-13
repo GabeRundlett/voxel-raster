@@ -1,0 +1,7 @@
+.out*
+build
+.cache
+.vs*
+
+imgui.ini
+*.dot
