@@ -20,7 +20,8 @@
         "glfw-binding",
         "docking-experimental"
       ]
-    }
+    },
+    "glm"
   ],
   "vcpkg-configuration": {
     "overlay-ports": [

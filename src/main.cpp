@@ -1,9 +1,11 @@
 #include <daxa/daxa.hpp>
 
 #include <daxa/utils/pipeline_manager.hpp>
-#include <iostream>
-
 #include <daxa/utils/task_graph.hpp>
+#include <daxa/utils/imgui.hpp>
+#include <imgui.h>
+#include <iostream>
+#include <imgui_impl_glfw.h>
 
 #include "shared.inl"
 
@@ -36,49 +38,12 @@ struct WindowInfo {
     bool swapchain_out_of_date = false;
 };
 
-void upload_vertces_data_task(daxa::TaskGraph &tg, daxa::TaskBufferView vertices) {
-    tg.add_task({
-        .attachments = {
-            daxa::inl_attachment(daxa::TaskBufferAccess::TRANSFER_WRITE, vertices),
-        },
-        .task = [=](daxa::TaskInterface ti) {
-            auto data = std::array{
-                MyVertex{.position = {-0.5f, +0.5f, 0.0f}, .color = {1.0f, 0.0f, 0.0f}},
-                MyVertex{.position = {+0.5f, +0.5f, 0.0f}, .color = {0.0f, 1.0f, 0.0f}},
-                MyVertex{.position = {+0.0f, -0.5f, 0.0f}, .color = {0.0f, 0.0f, 1.0f}},
-            };
-
-            auto staging_buffer_id = ti.device.create_buffer({
-                .size = sizeof(data),
-                .allocate_info = daxa::MemoryFlagBits::HOST_ACCESS_RANDOM,
-                .name = "my staging buffer",
-            });
-            ti.recorder.destroy_buffer_deferred(staging_buffer_id);
-            auto *buffer_ptr = ti.device.get_host_address_as<std::array<MyVertex, 3>>(staging_buffer_id).value();
-            *buffer_ptr = data;
-
-            daxa::TaskBufferAttachmentInfo const &buffer_at_info = ti.get(vertices);
-            std::span<daxa::BufferId const> runtime_ids = buffer_at_info.ids;
-            daxa::BufferId id = runtime_ids[0];
-
-            ti.recorder.copy_buffer_to_buffer({
-                .src_buffer = staging_buffer_id,
-                .dst_buffer = id,
-                .size = sizeof(data),
-            });
-        },
-        .name = "upload vertices",
-    });
-}
-
 struct DrawToSwapchainTask : DrawToSwapchainH::Task {
     AttachmentViews views = {};
     daxa::RasterPipeline *pipeline = {};
     void callback(daxa::TaskInterface ti) {
         daxa::TaskImageAttachmentInfo const &image_attach_info = ti.get(AT.color_target);
-
         daxa::ImageInfo image_info = ti.device.info_image(image_attach_info.ids[0]).value();
-
         daxa::RenderCommandRecorder render_recorder = std::move(ti.recorder).begin_renderpass({
             .color_attachments = std::array{
                 daxa::RenderAttachmentInfo{
@@ -90,12 +55,10 @@ struct DrawToSwapchainTask : DrawToSwapchainH::Task {
             .render_area = {.width = image_info.size.x, .height = image_info.size.y},
         });
         render_recorder.set_pipeline(*pipeline);
-
         MyPushConstant push = {};
         ti.assign_attachment_shader_blob(push.attachments.value);
         render_recorder.push_constant(push);
-        render_recorder.draw({.vertex_count = 3});
-
+        render_recorder.draw_mesh_tasks(1, 1, 1);
         ti.recorder = std::move(render_recorder).end_renderpass();
     }
 };
@@ -119,24 +82,13 @@ auto main() -> int {
         });
     auto *native_window_handle = get_native_handle(glfw_window_ptr);
     auto native_window_platform = get_native_platform(glfw_window_ptr);
-
     daxa::Instance instance = daxa::create_instance({});
-
     daxa::Device device = instance.create_device({
-        .selector = [](daxa::DeviceProperties const &device_props) -> daxa::i32 {
-            daxa::i32 score = 0;
-            switch (device_props.device_type) {
-            case daxa::DeviceType::DISCRETE_GPU: score += 10000; break;
-            case daxa::DeviceType::VIRTUAL_GPU: score += 1000; break;
-            case daxa::DeviceType::INTEGRATED_GPU: score += 100; break;
-            default: break;
-            }
-            score += static_cast<daxa::i32>(device_props.limits.max_memory_allocation_count / 100000);
-            return score;
+        .flags = daxa::DeviceFlags2{
+            .mesh_shader_bit = true,
         },
         .name = "my device",
     });
-
     daxa::Swapchain swapchain = device.create_swapchain({
         .native_window = native_window_handle,
         .native_window_platform = native_window_platform,
@@ -150,7 +102,14 @@ auto main() -> int {
         .image_usage = daxa::ImageUsageFlagBits::TRANSFER_DST,
         .name = "my swapchain",
     });
-
+    ImGui::CreateContext();
+    daxa::ImGuiRenderer imgui_renderer = daxa::ImGuiRenderer({
+        .device = device,
+        .format = swapchain.get_format(),
+        .context = ImGui::GetCurrentContext(),
+        .use_custom_config = false,
+    });
+    ImGui_ImplGlfw_InitForVulkan(glfw_window_ptr, true);
     auto pipeline_manager = daxa::PipelineManager({
         .device = device,
         .shader_compile_options = {
@@ -166,8 +125,9 @@ auto main() -> int {
     std::shared_ptr<daxa::RasterPipeline> pipeline;
     {
         auto result = pipeline_manager.add_raster_pipeline({
-            .vertex_shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"main.glsl"}},
+            .mesh_shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"main.glsl"}},
             .fragment_shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"main.glsl"}},
+            .task_shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"main.glsl"}},
             .color_attachments = {{.format = swapchain.get_format()}},
             .raster = {},
             .push_constant_size = sizeof(MyPushConstant),
@@ -179,46 +139,33 @@ auto main() -> int {
         }
         pipeline = result.value();
     }
-
-    auto buffer_id = device.create_buffer({
-        .size = sizeof(MyVertex) * 3,
-        .name = "my vertex data",
-    });
     auto task_swapchain_image = daxa::TaskImage{{.swapchain_image = true, .name = "swapchain image"}};
-    auto task_vertex_buffer = daxa::TaskBuffer({
-        .initial_buffers = {.buffers = std::span{&buffer_id, 1}},
-        .name = "task vertex buffer",
-    });
     auto loop_task_graph = daxa::TaskGraph({
         .device = device,
         .swapchain = swapchain,
         .name = "loop",
     });
-    loop_task_graph.use_persistent_buffer(task_vertex_buffer);
     loop_task_graph.use_persistent_image(task_swapchain_image);
     loop_task_graph.add_task(DrawToSwapchainTask{
         .views = std::array{
             daxa::attachment_view(DrawToSwapchainH::AT.color_target, task_swapchain_image),
-            daxa::attachment_view(DrawToSwapchainH::AT.vertices, task_vertex_buffer),
+            daxa::attachment_view(DrawToSwapchainH::AT.temp, daxa::NullTaskBuffer),
         },
         .pipeline = pipeline.get(),
+    });
+    loop_task_graph.add_task({
+        .attachments = {
+            daxa::inl_attachment(daxa::TaskImageAccess::COLOR_ATTACHMENT, daxa::ImageViewType::REGULAR_2D, task_swapchain_image),
+        },
+        .task = [&](daxa::TaskInterface const &ti) {
+            auto swapchain_image = task_swapchain_image.get_state().images[0];
+            imgui_renderer.record_commands(ImGui::GetDrawData(), ti.recorder, swapchain_image, window_info.width, window_info.height);
+        },
+        .name = "ImGui draw",
     });
     loop_task_graph.submit({});
     loop_task_graph.present({});
     loop_task_graph.complete({});
-
-    {
-        auto upload_task_graph = daxa::TaskGraph({
-            .device = device,
-            .name = "upload",
-        });
-        upload_task_graph.use_persistent_buffer(task_vertex_buffer);
-        upload_vertces_data_task(upload_task_graph, task_vertex_buffer);
-        upload_task_graph.submit({});
-        upload_task_graph.complete({});
-        upload_task_graph.execute({});
-    }
-
     while (true) {
         glfwPollEvents();
         if (glfwWindowShouldClose(glfw_window_ptr) != 0) {
@@ -232,12 +179,22 @@ auto main() -> int {
         if (swapchain_image.is_empty()) {
             continue;
         }
+        auto reload_result = pipeline_manager.reload_all();
+        if (auto *reload_err = daxa::get_if<daxa::PipelineReloadError>(&reload_result)) {
+            std::cout << reload_err->message << std::endl;
+        }
         task_swapchain_image.set_images({.images = std::span{&swapchain_image, 1}});
+        {
+            ImGui_ImplGlfw_NewFrame();
+            ImGui::NewFrame();
+            ImGui::ShowMetricsWindow(nullptr);
+            ImGui::Render();
+        }
         loop_task_graph.execute({});
         device.collect_garbage();
     }
-
     device.wait_idle();
     device.collect_garbage();
-    device.destroy_buffer(buffer_id);
+    ImGui_ImplGlfw_Shutdown();
+    ImGui::DestroyContext();
 }
