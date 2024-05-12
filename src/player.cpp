@@ -143,33 +143,7 @@ glm::mat4 translation_matrix(glm::vec3 pos) {
         pos.x, pos.y, pos.z, 1);
 }
 
-void player::update(Player self, float dt) {
-    float const speed = self->move_sprint ? 10.0f : 1.0f;
-    if (self->move_f) {
-        self->pos += self->forward * (speed * dt);
-        self->trn_dirty = true;
-    }
-    if (self->move_b) {
-        self->pos -= self->forward * (speed * dt);
-        self->trn_dirty = true;
-    }
-    if (self->move_l) {
-        self->pos -= self->lateral * (speed * dt);
-        self->trn_dirty = true;
-    }
-    if (self->move_r) {
-        self->pos += self->lateral * (speed * dt);
-        self->trn_dirty = true;
-    }
-    if (self->move_u) {
-        self->pos += self->upwards * (speed * dt);
-        self->trn_dirty = true;
-    }
-    if (self->move_d) {
-        self->pos -= self->upwards * (speed * dt);
-        self->trn_dirty = true;
-    }
-
+void update_camera(player::Player self) {
     auto view_dirty = self->rot_dirty || self->trn_dirty;
 
     if (self->rot_dirty) {
@@ -215,7 +189,37 @@ void player::update(Player self, float dt) {
     self->prj_dirty = false;
 }
 
+void player::update(Player self, float dt) {
+    float const speed = self->move_sprint ? 10.0f : 1.0f;
+    if (self->move_f) {
+        self->pos += self->forward * (speed * dt);
+        self->trn_dirty = true;
+    }
+    if (self->move_b) {
+        self->pos -= self->forward * (speed * dt);
+        self->trn_dirty = true;
+    }
+    if (self->move_l) {
+        self->pos -= self->lateral * (speed * dt);
+        self->trn_dirty = true;
+    }
+    if (self->move_r) {
+        self->pos += self->lateral * (speed * dt);
+        self->trn_dirty = true;
+    }
+    if (self->move_u) {
+        self->pos += self->upwards * (speed * dt);
+        self->trn_dirty = true;
+    }
+    if (self->move_d) {
+        self->pos -= self->upwards * (speed * dt);
+        self->trn_dirty = true;
+    }
+    update_camera(self);
+}
+
 void player::get_camera(Player self, Camera *camera) {
+    update_camera(self);
     camera->world_to_view = std::bit_cast<daxa_f32mat4x4>(self->world_to_view);
     camera->view_to_world = std::bit_cast<daxa_f32mat4x4>(self->view_to_world);
     camera->view_to_clip = std::bit_cast<daxa_f32mat4x4>(self->view_to_clip);

@@ -13,7 +13,7 @@ void main() {
     if (gl_GlobalInvocationID.x != 0) {
         return;
     }
-    EmitMeshTasksEXT((640 + 31) / 32, 640, 32);
+    EmitMeshTasksEXT((3200 + 31) / 32, 3200, 1);
 }
 
 #elif DAXA_SHADER_STAGE == DAXA_SHADER_STAGE_MESH

@@ -2,6 +2,7 @@
 
 #include <daxa/utils/task_graph.inl>
 #include "camera.inl"
+#include <voxels/voxel_mesh.inl>
 
 struct GpuInput {
     daxa_u32vec2 render_size;
