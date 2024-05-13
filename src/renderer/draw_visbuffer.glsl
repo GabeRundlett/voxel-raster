@@ -80,11 +80,11 @@ bool is_micropoly_visible(vec2 ndc_min, vec2 ndc_max, vec2 resolution) {
     return prim_visible && !(any(greaterThan(ndc_min, vec2(1))) || any(lessThan(ndc_max, vec2(-1))));
 }
 
-void emit_prim(vec3 pos, vec2 size) {
+void emit_prim(vec3 in_p0, vec3 in_p1, vec3 in_p2, vec3 in_p3) {
 #if DISCARD_METHOD
-    vec4 p0_h = world_to_clip * vec4(pos + vec3(-size.x * 0.5, -size.y * 0.5, 0), 1);
-    vec4 p1_h = world_to_clip * vec4(pos + vec3(+size.x * 1.5, -size.y * 0.5, 0), 1);
-    vec4 p2_h = world_to_clip * vec4(pos + vec3(-size.x * 0.5, +size.y * 1.5, 0), 1);
+    vec4 p0_h = world_to_clip * vec4(in_p0, 1);
+    vec4 p1_h = world_to_clip * vec4(in_p1, 1);
+    vec4 p2_h = world_to_clip * vec4(in_p2, 1);
 
     vec2 p0 = p0_h.xy / p0_h.w;
     vec2 p1 = p1_h.xy / p1_h.w;
@@ -113,10 +113,10 @@ void emit_prim(vec3 pos, vec2 size) {
         gl_MeshVerticesEXT[vert_i + 2].gl_Position = p2_h;
     }
 #else
-    vec4 p0_h = world_to_clip * vec4(pos + vec3(-size.x * 0.5, -size.y * 0.5, 0), 1);
-    vec4 p1_h = world_to_clip * vec4(pos + vec3(+size.x * 0.5, -size.y * 0.5, 0), 1);
-    vec4 p2_h = world_to_clip * vec4(pos + vec3(-size.x * 0.5, +size.y * 0.5, 0), 1);
-    vec4 p3_h = world_to_clip * vec4(pos + vec3(+size.x * 0.5, +size.y * 0.5, 0), 1);
+    vec4 p0_h = world_to_clip * vec4(in_p0, 1);
+    vec4 p1_h = world_to_clip * vec4(in_p1, 1);
+    vec4 p2_h = world_to_clip * vec4(in_p2, 1);
+    vec4 p3_h = world_to_clip * vec4(in_p3, 1);
 
     vec2 p0 = p0_h.xy / p0_h.w;
     vec2 p1 = p1_h.xy / p1_h.w;
@@ -149,6 +149,51 @@ void emit_prim(vec3 pos, vec2 size) {
 #endif
 }
 
+void emit_prim_x(vec3 pos, vec2 size) {
+#if DISCARD_METHOD
+    vec3 p0 = pos + vec3(0, -size.x * 0.5, -size.y * 0.5);
+    vec3 p1 = pos + vec3(0, +size.x * 1.5, -size.y * 0.5);
+    vec3 p2 = pos + vec3(0, -size.x * 0.5, +size.y * 1.5);
+    vec3 p3 = vec3(0);
+#else
+    vec3 p0 = pos + vec3(0, -size.x * 0.0, -size.y * 0.0);
+    vec3 p1 = pos + vec3(0, +size.x * 1.0, -size.y * 0.0);
+    vec3 p2 = pos + vec3(0, -size.x * 0.0, +size.y * 1.0);
+    vec3 p3 = pos + vec3(0, +size.x * 1.0, +size.y * 1.0);
+#endif
+    emit_prim(p0, p1, p2, p3);
+}
+
+void emit_prim_y(vec3 pos, vec2 size) {
+#if DISCARD_METHOD
+    vec3 p0 = pos + vec3(-size.x * 0.5, 0, -size.y * 0.5);
+    vec3 p1 = pos + vec3(+size.x * 1.5, 0, -size.y * 0.5);
+    vec3 p2 = pos + vec3(-size.x * 0.5, 0, +size.y * 1.5);
+    vec3 p3 = vec3(0);
+#else
+    vec3 p0 = pos + vec3(-size.x * 0.0, 0, -size.y * 0.0);
+    vec3 p1 = pos + vec3(+size.x * 1.0, 0, -size.y * 0.0);
+    vec3 p2 = pos + vec3(-size.x * 0.0, 0, +size.y * 1.0);
+    vec3 p3 = pos + vec3(+size.x * 1.0, 0, +size.y * 1.0);
+#endif
+    emit_prim(p0, p1, p2, p3);
+}
+
+void emit_prim_z(vec3 pos, vec2 size) {
+#if DISCARD_METHOD
+    vec3 p0 = pos + vec3(-size.x * 0.5, -size.y * 0.5, 0);
+    vec3 p1 = pos + vec3(+size.x * 1.5, -size.y * 0.5, 0);
+    vec3 p2 = pos + vec3(-size.x * 0.5, +size.y * 1.5, 0);
+    vec3 p3 = vec3(0);
+#else
+    vec3 p0 = pos + vec3(-size.x * 0.0, -size.y * 0.0, 0);
+    vec3 p1 = pos + vec3(+size.x * 1.0, -size.y * 0.0, 0);
+    vec3 p2 = pos + vec3(-size.x * 0.0, +size.y * 1.0, 0);
+    vec3 p3 = pos + vec3(+size.x * 1.0, +size.y * 1.0, 0);
+#endif
+    emit_prim(p0, p1, p2, p3);
+}
+
 void begin_prim() {
     if (gl_LocalInvocationIndex == 0) {
         current_vert_n = 0;
@@ -168,24 +213,38 @@ void main() {
 
     begin_prim();
 
-    if (gl_GlobalInvocationID.x < payload.face_count) {
-        uint voxel_id = gl_GlobalInvocationID.x;
+    uint meshlet_index = gl_GlobalInvocationID.x / 32;
+    VoxelBrickMesh mesh = deref(push.uses.meshes[payload.brick_id]);
+    if (gl_GlobalInvocationID.x < payload.face_count && mesh.meshlet_start != 0) {
+        VoxelMeshlet meshlet = deref(push.uses.meshlet_allocator[meshlet_index + mesh.meshlet_start]);
+        PackedVoxelBrickFace packed_face = meshlet.faces[gl_GlobalInvocationID.x % 32];
 
-        int xi = int(voxel_id % VOXEL_BRICK_SIZE);
-        int yi = int((voxel_id / VOXEL_BRICK_SIZE) % VOXEL_BRICK_SIZE);
-        int zi = int(voxel_id / VOXEL_BRICK_SIZE / VOXEL_BRICK_SIZE);
+        VoxelBrickFace face = unpack(packed_face);
 
         VisbufferPayload o_payload;
-        o_payload.brick_id = payload.brick_id;
-        o_payload.voxel_id = voxel_id;
+        o_payload.face_id = gl_GlobalInvocationID.x % 32;
+        o_payload.meshlet_id = meshlet_index + mesh.meshlet_start;
         o_packed_payload = pack(o_payload);
 
         ivec4 pos_scl = deref(push.uses.pos_scl[payload.brick_id]);
-        ivec3 pos = pos_scl.xyz * int(VOXEL_BRICK_SIZE) + ivec3(xi, yi, zi);
+        ivec3 pos = pos_scl.xyz * int(VOXEL_BRICK_SIZE) + ivec3(face.pos);
         int scl = pos_scl.w;
 
 #define SCL (1.0 / VOXEL_BRICK_SIZE * (1 << scl))
-        emit_prim(vec3(pos) * SCL, vec2(SCL));
+        switch (face.axis / 2) {
+        case 0:
+            pos.x += int(face.axis % 2);
+            emit_prim_x(vec3(pos) * SCL, vec2(SCL));
+            break;
+        case 1:
+            pos.y += int(face.axis % 2);
+            emit_prim_y(vec3(pos) * SCL, vec2(SCL));
+            break;
+        case 2:
+            pos.z += int(face.axis % 2);
+            emit_prim_z(vec3(pos) * SCL, vec2(SCL));
+            break;
+        }
     }
 
     end_prim();

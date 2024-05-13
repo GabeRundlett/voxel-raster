@@ -12,7 +12,7 @@
 #define MAX_MESHLET_COUNT 1000000
 
 // MUST never be less than 2
-#define VOXEL_BRICK_SIZE_LOG2 2
+#define VOXEL_BRICK_SIZE_LOG2 3
 #define VOXEL_BRICK_SIZE (1u << VOXEL_BRICK_SIZE_LOG2)
 #define VOXELS_PER_BRICK (VOXEL_BRICK_SIZE * VOXEL_BRICK_SIZE * VOXEL_BRICK_SIZE)
 #define MAX_INNER_FACES_PER_BRICK ((VOXEL_BRICK_SIZE - 1) * VOXEL_BRICK_SIZE * VOXEL_BRICK_SIZE * 3)
@@ -30,21 +30,29 @@ struct VoxelBrickBitmask {
     daxa_u32 bits[VOXELS_PER_BRICK / 32];
 };
 DAXA_DECL_BUFFER_PTR(VoxelBrickBitmask)
-struct VoxelBrickFaceBitmask {
-    // Technically we only need (VOXEL_BRICK_SIZE-1)^3 / 32, but I do this for convenience
-    daxa_u32 bits[VOXELS_PER_BRICK * 3 / 32];
-};
-DAXA_DECL_BUFFER_PTR(VoxelBrickFaceBitmask)
 struct VoxelBrickMesh {
     daxa_u32 face_count;
     daxa_u32 meshlet_start;
 };
 DAXA_DECL_BUFFER_PTR(VoxelBrickMesh)
 
+struct PackedVoxelBrickFace {
+    daxa_u32 data;
+};
+struct VoxelBrickFace {
+    daxa_u32vec3 pos;
+    daxa_u32 axis;
+};
+
 struct VoxelMeshlet {
-    daxa_u32 faces[32];
+    PackedVoxelBrickFace faces[32];
 };
 DAXA_DECL_BUFFER_PTR(VoxelMeshlet)
+
+struct VoxelMeshletMetadata {
+    daxa_u32 brick_id;
+};
+DAXA_DECL_BUFFER_PTR(VoxelMeshletMetadata)
 
 struct VoxelMeshletAllocatorState {
     daxa_u32 meshlet_count;

@@ -15,22 +15,30 @@ void voxel_world::init(VoxelWorld &self) {
     auto bitmask = VoxelBrickBitmask{};
     auto position = glm::ivec4{};
 
-    for (uint32_t zi = 0; zi < VOXEL_BRICK_SIZE; ++zi) {
-        for (uint32_t yi = 0; yi < VOXEL_BRICK_SIZE; ++yi) {
-            for (uint32_t xi = 0; xi < VOXEL_BRICK_SIZE; ++xi) {
-                uint32_t voxel_index = xi + yi * VOXEL_BRICK_SIZE + zi * VOXEL_BRICK_SIZE * VOXEL_BRICK_SIZE;
-                uint32_t voxel_word_index = voxel_index / 32;
-                uint32_t voxel_in_word_index = voxel_index % 32;
-                uint32_t value = (xi + yi + zi) < 4 ? 1 : 0;
-                bitmask.bits[voxel_word_index] |= uint32_t(value) << voxel_in_word_index;
+    {
+        int32_t brick_zi = 0;
+        int32_t brick_yi = 0;
+        int32_t brick_xi = 0;
+        for (uint32_t zi = 0; zi < VOXEL_BRICK_SIZE; ++zi) {
+            for (uint32_t yi = 0; yi < VOXEL_BRICK_SIZE; ++yi) {
+                for (uint32_t xi = 0; xi < VOXEL_BRICK_SIZE; ++xi) {
+                    uint32_t voxel_index = xi + yi * VOXEL_BRICK_SIZE + zi * VOXEL_BRICK_SIZE * VOXEL_BRICK_SIZE;
+                    uint32_t voxel_word_index = voxel_index / 32;
+                    uint32_t voxel_in_word_index = voxel_index % 32;
+                    float x = ((float(xi + brick_xi * VOXEL_BRICK_SIZE) + 0.5f) - 0.5f * VOXEL_BRICK_SIZE) / (0.5f * VOXEL_BRICK_SIZE);
+                    float y = ((float(yi + brick_yi * VOXEL_BRICK_SIZE) + 0.5f) - 0.5f * VOXEL_BRICK_SIZE) / (0.5f * VOXEL_BRICK_SIZE);
+                    float z = ((float(zi + brick_zi * VOXEL_BRICK_SIZE) + 0.5f) - 0.5f * VOXEL_BRICK_SIZE) / (0.5f * VOXEL_BRICK_SIZE);
+                    uint32_t value = (x * x + y * y + z * z) < 1.0f ? 1 : 0;
+                    bitmask.bits[voxel_word_index] |= uint32_t(value) << voxel_in_word_index;
+                }
             }
         }
     }
 
-    for (int32_t zi = 0; zi < 16 / VOXEL_BRICK_SIZE; ++zi) {
-        for (int32_t yi = 0; yi < 256 / VOXEL_BRICK_SIZE; ++yi) {
-            for (int32_t xi = 0; xi < 256 / VOXEL_BRICK_SIZE; ++xi) {
-                position = glm::ivec4{xi, yi, zi, 0};
+    for (int32_t brick_zi = 0; brick_zi < 32 / VOXEL_BRICK_SIZE; ++brick_zi) {
+        for (int32_t brick_yi = 0; brick_yi < 1024 / VOXEL_BRICK_SIZE; ++brick_yi) {
+            for (int32_t brick_xi = 0; brick_xi < 1024 / VOXEL_BRICK_SIZE; ++brick_xi) {
+                position = glm::ivec4{brick_xi, brick_yi, brick_zi, 0};
                 self->brick_bitmasks.push_back(bitmask);
                 self->brick_positions.push_back(position);
             }
