@@ -1,28 +1,64 @@
 #include <shared.inl>
+#include <renderer/visbuffer.glsl>
+#include <voxels/voxel_mesh.glsl>
 
 #define DISCARD_METHOD 0
 
 DAXA_DECL_PUSH_CONSTANT(DrawVisbufferPush, push)
 
+struct TaskPayload {
+    uint face_count;
+    uint brick_id;
+};
+struct PackedTaskPayload {
+    uint data;
+};
+
+PackedTaskPayload pack(TaskPayload payload) {
+    PackedTaskPayload result;
+    result.data = payload.face_count & 0xfff;
+    result.data |= (payload.brick_id & 0xfffff) << 12;
+    return result;
+}
+
+TaskPayload unpack(PackedTaskPayload packed_payload) {
+    TaskPayload result;
+    result.face_count = packed_payload.data & 0xfff;
+    result.brick_id = (packed_payload.data >> 12) & 0xfffff;
+    return result;
+}
+
 #if DAXA_SHADER_STAGE == DAXA_SHADER_STAGE_TASK
 #extension GL_EXT_mesh_shader : enable
 
+taskPayloadSharedEXT PackedTaskPayload packed_payload;
+
 layout(local_size_x = 32) in;
 void main() {
-    // emit 1 mesh shader
-    if (gl_GlobalInvocationID.x != 0) {
+    uint brick_id = gl_WorkGroupID.x;
+    if (brick_id >= deref(push.uses.gpu_input).brick_n) {
         return;
     }
-    EmitMeshTasksEXT((3200 + 31) / 32, 3200, 1);
+
+    VoxelBrickMesh mesh = deref(push.uses.meshes[brick_id]);
+
+    if (gl_LocalInvocationIndex == 0) {
+        TaskPayload payload;
+        payload.face_count = mesh.face_count;
+        payload.brick_id = brick_id;
+        packed_payload = pack(payload);
+        EmitMeshTasksEXT((mesh.face_count + 31) / 32, 1, 1);
+    }
 }
 
 #elif DAXA_SHADER_STAGE == DAXA_SHADER_STAGE_MESH
 #extension GL_EXT_mesh_shader : enable
 
+taskPayloadSharedEXT PackedTaskPayload packed_payload;
 layout(triangles) out;
-layout(max_vertices = 128, max_primitives = 126) out;
+layout(max_vertices = MAX_VERTICES_PER_MESHLET, max_primitives = MAX_TRIANGLES_PER_MESHLET) out;
 
-layout(location = 0) out flat uint v_id[];
+layout(location = 0) out flat PackedVisbufferPayload v_payload[];
 #if DISCARD_METHOD
 layout(location = 1) out vec2 v_uv[];
 #endif
@@ -31,7 +67,7 @@ shared uint current_vert_n;
 shared uint current_prim_n;
 
 mat4 world_to_clip;
-uint packed_id;
+PackedVisbufferPayload o_packed_payload;
 
 bool is_micropoly_visible(vec2 ndc_min, vec2 ndc_max, vec2 resolution) {
     // Cope epsilon to be conservative
@@ -68,9 +104,9 @@ void emit_prim(vec3 pos, vec2 size) {
         v_uv[vert_i + 1] = vec2(2, 0);
         v_uv[vert_i + 2] = vec2(0, 2);
 
-        v_id[vert_i + 0] = packed_id;
-        v_id[vert_i + 1] = packed_id;
-        v_id[vert_i + 2] = packed_id;
+        v_payload[vert_i + 0] = o_packed_payload;
+        v_payload[vert_i + 1] = o_packed_payload;
+        v_payload[vert_i + 2] = o_packed_payload;
 
         gl_MeshVerticesEXT[vert_i + 0].gl_Position = p0_h;
         gl_MeshVerticesEXT[vert_i + 1].gl_Position = p1_h;
@@ -100,10 +136,10 @@ void emit_prim(vec3 pos, vec2 size) {
         gl_MeshPrimitivesEXT[prim_i + 1].gl_CullPrimitiveEXT = false;
         gl_PrimitiveTriangleIndicesEXT[prim_i + 1] = uvec3(1, 2, 3) + vert_i;
 
-        v_id[vert_i + 0] = packed_id;
-        v_id[vert_i + 1] = packed_id;
-        v_id[vert_i + 2] = packed_id;
-        v_id[vert_i + 3] = packed_id;
+        v_payload[vert_i + 0] = o_packed_payload;
+        v_payload[vert_i + 1] = o_packed_payload;
+        v_payload[vert_i + 2] = o_packed_payload;
+        v_payload[vert_i + 3] = o_packed_payload;
 
         gl_MeshVerticesEXT[vert_i + 0].gl_Position = p0_h;
         gl_MeshVerticesEXT[vert_i + 1].gl_Position = p1_h;
@@ -128,23 +164,36 @@ void end_prim() {
 layout(local_size_x = 32) in;
 void main() {
     world_to_clip = deref(push.uses.gpu_input).cam.view_to_clip * deref(push.uses.gpu_input).cam.world_to_view;
+    TaskPayload payload = unpack(packed_payload);
 
     begin_prim();
 
-    int xi = int(gl_LocalInvocationID.x + gl_WorkGroupID.x * 32);
-    int yi = int(gl_WorkGroupID.y);
-    int zi = int(gl_WorkGroupID.z);
+    if (gl_GlobalInvocationID.x < payload.face_count) {
+        uint voxel_id = gl_GlobalInvocationID.x;
 
-    packed_id = xi + (yi << 10) + (zi << 20);
+        int xi = int(voxel_id % VOXEL_BRICK_SIZE);
+        int yi = int((voxel_id / VOXEL_BRICK_SIZE) % VOXEL_BRICK_SIZE);
+        int zi = int(voxel_id / VOXEL_BRICK_SIZE / VOXEL_BRICK_SIZE);
 
-    emit_prim(vec3((xi + 1) * 0.0125 - 1, (yi + 1) * 0.0125 - 1, (zi + 1) * 0.0125 - 1), vec2(0.0125));
+        VisbufferPayload o_payload;
+        o_payload.brick_id = payload.brick_id;
+        o_payload.voxel_id = voxel_id;
+        o_packed_payload = pack(o_payload);
+
+        ivec4 pos_scl = deref(push.uses.pos_scl[payload.brick_id]);
+        ivec3 pos = pos_scl.xyz * int(VOXEL_BRICK_SIZE) + ivec3(xi, yi, zi);
+        int scl = pos_scl.w;
+
+#define SCL (1.0 / VOXEL_BRICK_SIZE * (1 << scl))
+        emit_prim(vec3(pos) * SCL, vec2(SCL));
+    }
 
     end_prim();
 }
 
 #elif DAXA_SHADER_STAGE == DAXA_SHADER_STAGE_FRAGMENT
 
-layout(location = 0) in flat uint v_id;
+layout(location = 0) in flat PackedVisbufferPayload v_payload;
 #if DISCARD_METHOD
 layout(location = 1) in vec2 v_uv;
 #endif
@@ -155,7 +204,7 @@ void main() {
         discard;
     }
 #endif
-    f_out = uvec4(v_id, 0, 0, 0);
+    f_out = uvec4(v_payload.data, 0, 0, 0);
 }
 
 #endif
