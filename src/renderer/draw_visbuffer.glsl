@@ -151,9 +151,9 @@ void emit_prim(vec3 in_p0, vec3 in_p1, vec3 in_p2, vec3 in_p3) {
 
 void emit_prim_x(vec3 pos, vec2 size) {
 #if DISCARD_METHOD
-    vec3 p0 = pos + vec3(0, -size.x * 0.5, -size.y * 0.5);
-    vec3 p1 = pos + vec3(0, +size.x * 1.5, -size.y * 0.5);
-    vec3 p2 = pos + vec3(0, -size.x * 0.5, +size.y * 1.5);
+    vec3 p0 = pos + vec3(0, -size.x * 0.0, -size.y * 0.0);
+    vec3 p1 = pos + vec3(0, +size.x * 2.0, -size.y * 0.0);
+    vec3 p2 = pos + vec3(0, -size.x * 0.0, +size.y * 2.0);
     vec3 p3 = vec3(0);
 #else
     vec3 p0 = pos + vec3(0, -size.x * 0.0, -size.y * 0.0);
@@ -166,9 +166,9 @@ void emit_prim_x(vec3 pos, vec2 size) {
 
 void emit_prim_y(vec3 pos, vec2 size) {
 #if DISCARD_METHOD
-    vec3 p0 = pos + vec3(-size.x * 0.5, 0, -size.y * 0.5);
-    vec3 p1 = pos + vec3(+size.x * 1.5, 0, -size.y * 0.5);
-    vec3 p2 = pos + vec3(-size.x * 0.5, 0, +size.y * 1.5);
+    vec3 p0 = pos + vec3(-size.x * 0.0, 0, -size.y * 0.0);
+    vec3 p1 = pos + vec3(+size.x * 2.0, 0, -size.y * 0.0);
+    vec3 p2 = pos + vec3(-size.x * 0.0, 0, +size.y * 2.0);
     vec3 p3 = vec3(0);
 #else
     vec3 p0 = pos + vec3(-size.x * 0.0, 0, -size.y * 0.0);
@@ -181,9 +181,9 @@ void emit_prim_y(vec3 pos, vec2 size) {
 
 void emit_prim_z(vec3 pos, vec2 size) {
 #if DISCARD_METHOD
-    vec3 p0 = pos + vec3(-size.x * 0.5, -size.y * 0.5, 0);
-    vec3 p1 = pos + vec3(+size.x * 1.5, -size.y * 0.5, 0);
-    vec3 p2 = pos + vec3(-size.x * 0.5, +size.y * 1.5, 0);
+    vec3 p0 = pos + vec3(-size.x * 0.0, -size.y * 0.0, 0);
+    vec3 p1 = pos + vec3(+size.x * 2.0, -size.y * 0.0, 0);
+    vec3 p2 = pos + vec3(-size.x * 0.0, +size.y * 2.0, 0);
     vec3 p3 = vec3(0);
 #else
     vec3 p0 = pos + vec3(-size.x * 0.0, -size.y * 0.0, 0);
@@ -252,6 +252,8 @@ void main() {
 
 #elif DAXA_SHADER_STAGE == DAXA_SHADER_STAGE_FRAGMENT
 
+DAXA_STORAGE_IMAGE_LAYOUT_WITH_FORMAT(r32ui) uniform uimage2D atomic_u32_table[];
+
 layout(location = 0) in flat PackedVisbufferPayload v_payload;
 #if DISCARD_METHOD
 layout(location = 1) in vec2 v_uv;
@@ -263,6 +265,11 @@ void main() {
         discard;
     }
 #endif
+
+#if ENABLE_DEBUG_VIS
+    imageAtomicAdd(atomic_u32_table[daxa_image_view_id_to_index(push.uses.debug_overdraw)], ivec2(gl_FragCoord.xy), 1);
+#endif
+
     f_out = uvec4(v_payload.data, 0, 0, 0);
 }
 

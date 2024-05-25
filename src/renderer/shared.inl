@@ -4,6 +4,8 @@
 #include "camera.inl"
 #include <voxels/voxel_mesh.inl>
 
+#define ENABLE_DEBUG_VIS 1
+
 struct GpuInput {
     daxa_u32vec2 render_size;
     daxa_u32 brick_n;
@@ -39,6 +41,9 @@ DAXA_TH_BUFFER_PTR(MESH_SHADER_READ, daxa_BufferPtr(GpuInput), gpu_input)
 DAXA_TH_BUFFER_PTR(TASK_SHADER_READ, daxa_BufferPtr(VoxelBrickMesh), meshes)
 DAXA_TH_BUFFER_PTR(MESH_SHADER_READ, daxa_BufferPtr(daxa_i32vec4), pos_scl)
 DAXA_TH_BUFFER_PTR(MESH_SHADER_READ, daxa_BufferPtr(VoxelMeshlet), meshlet_allocator)
+#if ENABLE_DEBUG_VIS
+DAXA_TH_IMAGE_INDEX(FRAGMENT_SHADER_STORAGE_READ_WRITE, REGULAR_2D, debug_overdraw)
+#endif
 DAXA_DECL_TASK_HEAD_END
 
 struct DrawVisbufferPush {
@@ -51,9 +56,24 @@ DAXA_TH_BUFFER_PTR(FRAGMENT_SHADER_READ, daxa_BufferPtr(GpuInput), gpu_input)
 DAXA_TH_BUFFER_PTR(FRAGMENT_SHADER_READ, daxa_BufferPtr(VoxelBrickMesh), meshes)
 DAXA_TH_BUFFER_PTR(FRAGMENT_SHADER_READ, daxa_BufferPtr(VoxelMeshlet), meshlet_allocator)
 DAXA_TH_BUFFER_PTR(FRAGMENT_SHADER_READ, daxa_BufferPtr(VoxelMeshletMetadata), meshlet_metadata)
-DAXA_TH_IMAGE_ID(FRAGMENT_SHADER_SAMPLED, REGULAR_2D, visbuffer)
+#if ENABLE_DEBUG_VIS
+DAXA_TH_IMAGE_INDEX(FRAGMENT_SHADER_SAMPLED, REGULAR_2D, debug_overdraw)
+#endif
+DAXA_TH_IMAGE_INDEX(FRAGMENT_SHADER_SAMPLED, REGULAR_2D, visbuffer)
 DAXA_DECL_TASK_HEAD_END
 
 struct ShadeVisbufferPush {
     DAXA_TH_BLOB(ShadeVisbufferH, uses)
+};
+
+DAXA_DECL_TASK_HEAD_BEGIN(AnalyzeVisbufferH)
+DAXA_TH_BUFFER_PTR(FRAGMENT_SHADER_READ, daxa_BufferPtr(GpuInput), gpu_input)
+DAXA_TH_BUFFER_PTR(FRAGMENT_SHADER_READ, daxa_BufferPtr(VoxelBrickMesh), meshes)
+DAXA_TH_BUFFER_PTR(FRAGMENT_SHADER_READ, daxa_BufferPtr(VoxelMeshlet), meshlet_allocator)
+DAXA_TH_BUFFER_PTR(FRAGMENT_SHADER_READ, daxa_BufferPtr(VoxelMeshletMetadata), meshlet_metadata)
+DAXA_TH_IMAGE_INDEX(COMPUTE_SHADER_SAMPLED, REGULAR_2D, visbuffer)
+DAXA_DECL_TASK_HEAD_END
+
+struct AnalyzeVisbufferPush {
+    DAXA_TH_BLOB(AnalyzeVisbufferH, uses)
 };

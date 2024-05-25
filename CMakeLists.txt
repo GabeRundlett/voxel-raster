@@ -7,16 +7,19 @@ add_executable(${PROJECT_NAME}
     "src/main.cpp"
     "src/player.cpp"
     "src/renderer/renderer.cpp"
+    "src/renderer/prepopulate_meshlets.cpp"
     "src/voxels/voxel_world.cpp"
 )
 target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_20)
 
 find_package(daxa CONFIG REQUIRED)
+find_package(gvox CONFIG REQUIRED)
 find_package(glfw3 CONFIG REQUIRED)
 find_package(glm CONFIG REQUIRED)
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
     daxa::daxa
+    gvox::gvox
     glfw
     glm::glm
 )

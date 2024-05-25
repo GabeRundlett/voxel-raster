@@ -88,7 +88,14 @@ vec3 color_correct(vec3 x) {
     return x;
 }
 
+#define VISUALIZE_OVERDRAW (ENABLE_DEBUG_VIS && 1)
+
 void main() {
+#if VISUALIZE_OVERDRAW
+    uint overdraw = texelFetch(daxa_utexture2D(push.uses.debug_overdraw), ivec2(gl_FragCoord.xy), 0).x;
+    const uint threshold = 10;
+    f_out = vec4(color_correct(hsv2rgb(vec3(clamp(float(overdraw) / threshold, 0, 1) * 0.4 + 0.65, 0.99, overdraw > threshold ? exp(-float(overdraw - threshold) * 0.5 / threshold) * 0.8 + 0.2 : 1))), 1);
+#else
     uint visbuffer_id = texelFetch(daxa_utexture2D(push.uses.visbuffer), ivec2(gl_FragCoord.xy), 0).x;
     if (visbuffer_id == INVALID_MESHLET_INDEX) {
         f_out = vec4(0.4, 0.4, 0.9, 1);
@@ -124,6 +131,7 @@ void main() {
 
         f_out = vec4(color_correct(albedo * diffuse), 1);
     }
+#endif
 }
 
 #endif

@@ -9,7 +9,7 @@
 // MUST never be greater than MAX_TRIANGLES_PER_MESHLET * 3
 #define MAX_VERTICES_PER_MESHLET (MAX_FACES_PER_MESHLET * 4)
 
-#define MAX_MESHLET_COUNT 1000000
+#define MAX_MESHLET_COUNT (1 << 22)
 
 // MUST never be less than 2
 #define VOXEL_BRICK_SIZE_LOG2 3

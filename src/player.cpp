@@ -30,6 +30,7 @@ struct player::State {
     bool move_r : 1;
     bool move_u : 1;
     bool move_d : 1;
+    bool move_flat : 1;
     bool move_sprint : 1;
     bool rot_dirty : 1;
     bool trn_dirty : 1;
@@ -84,6 +85,9 @@ void player::on_key(Player self, int key_id, int action) {
     }
     if (key_id == GLFW_KEY_LEFT_CONTROL) {
         self->move_d = action != GLFW_RELEASE;
+    }
+    if (key_id == GLFW_KEY_Q && action == GLFW_RELEASE) {
+        self->move_flat = !self->move_flat;
     }
     if (key_id == GLFW_KEY_LEFT_SHIFT) {
         self->move_sprint = action != GLFW_RELEASE;
@@ -191,13 +195,40 @@ void update_camera(player::Player self) {
 
 void player::update(Player self, float dt) {
     float const speed = self->move_sprint ? 10.0f : 1.0f;
-    if (self->move_f) {
-        self->pos += self->forward * (speed * dt);
-        self->trn_dirty = true;
-    }
-    if (self->move_b) {
-        self->pos -= self->forward * (speed * dt);
-        self->trn_dirty = true;
+    if (self->move_flat) {
+        if (self->move_f) {
+            self->pos += glm::vec3(self->forward_flat, 0) * (speed * dt);
+            self->trn_dirty = true;
+        }
+        if (self->move_b) {
+            self->pos -= glm::vec3(self->forward_flat, 0) * (speed * dt);
+            self->trn_dirty = true;
+        }
+        if (self->move_u) {
+            self->pos += glm::vec3(0, 0, -1) * (speed * dt);
+            self->trn_dirty = true;
+        }
+        if (self->move_d) {
+            self->pos -= glm::vec3(0, 0, -1) * (speed * dt);
+            self->trn_dirty = true;
+        }
+    } else {
+        if (self->move_f) {
+            self->pos += self->forward * (speed * dt);
+            self->trn_dirty = true;
+        }
+        if (self->move_b) {
+            self->pos -= self->forward * (speed * dt);
+            self->trn_dirty = true;
+        }
+        if (self->move_u) {
+            self->pos += self->upwards * (speed * dt);
+            self->trn_dirty = true;
+        }
+        if (self->move_d) {
+            self->pos -= self->upwards * (speed * dt);
+            self->trn_dirty = true;
+        }
     }
     if (self->move_l) {
         self->pos -= self->lateral * (speed * dt);
@@ -205,14 +236,6 @@ void player::update(Player self, float dt) {
     }
     if (self->move_r) {
         self->pos += self->lateral * (speed * dt);
-        self->trn_dirty = true;
-    }
-    if (self->move_u) {
-        self->pos += self->upwards * (speed * dt);
-        self->trn_dirty = true;
-    }
-    if (self->move_d) {
-        self->pos -= self->upwards * (speed * dt);
         self->trn_dirty = true;
     }
     update_camera(self);

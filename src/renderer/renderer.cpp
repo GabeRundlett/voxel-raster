@@ -141,6 +141,47 @@ struct ShadeVisbufferTask : ShadeVisbufferH::Task {
     }
 };
 
+auto round_up_div(auto x, auto y) {
+    return (x + y - 1) / y;
+}
+
+struct AnalyzeVisbufferTask : AnalyzeVisbufferH::Task {
+    AttachmentViews views = {};
+    daxa::ComputePipeline *pipeline = {};
+    void callback(daxa::TaskInterface ti) {
+        auto const &image_attach_info = ti.get(AT.visbuffer);
+        auto image_info = ti.device.info_image(image_attach_info.ids[0]).value();
+        ti.recorder.set_pipeline(*pipeline);
+        AnalyzeVisbufferPush push = {};
+        ti.assign_attachment_shader_blob(push.uses.value);
+        ti.recorder.push_constant(push);
+        ti.recorder.dispatch({round_up_div(image_info.size.x, 16), round_up_div(image_info.size.y, 16), 1});
+    }
+};
+
+template <size_t N>
+inline void clear_task_images(daxa::TaskGraph &task_graph, std::array<daxa::TaskImageView, N> const &task_image_views, std::array<daxa::ClearValue, N> clear_values = {}) {
+    auto uses = std::vector<daxa::TaskAttachmentInfo>{};
+    auto use_count = task_image_views.size();
+    uses.reserve(use_count);
+    for (auto const &task_image : task_image_views) {
+        uses.push_back(daxa::inl_attachment(daxa::TaskImageAccess::TRANSFER_WRITE, daxa::ImageViewType::REGULAR_2D, task_image));
+    }
+    task_graph.add_task({
+        .attachments = std::move(uses),
+        .task = [use_count, clear_values](daxa::TaskInterface const &ti) {
+            for (uint8_t i = 0; i < use_count; ++i) {
+                ti.recorder.clear_image({
+                    .dst_image_layout = ti.get(daxa::TaskImageAttachmentIndex{i}).layout,
+                    .clear_value = clear_values[i],
+                    .dst_image = ti.get(daxa::TaskImageAttachmentIndex{i}).ids[0],
+                });
+            }
+        },
+        .name = "clear images",
+    });
+}
+
 void record_tasks(renderer::Renderer self) {
     self->loop_task_graph = daxa::TaskGraph({
         .device = self->device,
@@ -176,6 +217,14 @@ void record_tasks(renderer::Renderer self) {
         .size = {self->gpu_input.render_size.x, self->gpu_input.render_size.y, 1},
         .name = "depth",
     });
+#if ENABLE_DEBUG_VIS
+    auto task_debug_overdraw = self->loop_task_graph.create_transient_image({
+        .format = daxa::Format::R32_UINT,
+        .size = {self->gpu_input.render_size.x, self->gpu_input.render_size.y, 1},
+        .name = "debug_overdraw",
+    });
+    clear_task_images(self->loop_task_graph, std::array<daxa::TaskImageView, 1>{task_debug_overdraw}, std::array<daxa::ClearValue, 1>{std::array<uint32_t, 4>{0, 0, 0, 0}});
+#endif
     self->loop_task_graph.add_task(ResetMeshletAllocatorTask{
         .views = std::array{
             daxa::attachment_view(ResetMeshletAllocatorH::AT.gpu_input, task_input_buffer),
@@ -202,6 +251,9 @@ void record_tasks(renderer::Renderer self) {
             daxa::attachment_view(DrawVisbufferH::AT.meshes, self->task_brick_meshes),
             daxa::attachment_view(DrawVisbufferH::AT.pos_scl, self->task_brick_positions),
             daxa::attachment_view(DrawVisbufferH::AT.meshlet_allocator, self->task_brick_meshlet_allocator),
+#if ENABLE_DEBUG_VIS
+            daxa::attachment_view(DrawVisbufferH::AT.debug_overdraw, task_debug_overdraw),
+#endif
         },
         .pipeline = self->draw_visbuffer_pipeline.get(),
         .brick_n = &self->gpu_input.brick_n,
@@ -211,6 +263,9 @@ void record_tasks(renderer::Renderer self) {
             daxa::attachment_view(ShadeVisbufferH::AT.render_target, self->task_swapchain_image),
             daxa::attachment_view(ShadeVisbufferH::AT.gpu_input, task_input_buffer),
             daxa::attachment_view(ShadeVisbufferH::AT.visbuffer, task_visbuffer),
+#if ENABLE_DEBUG_VIS
+            daxa::attachment_view(ShadeVisbufferH::AT.debug_overdraw, task_debug_overdraw),
+#endif
             daxa::attachment_view(ShadeVisbufferH::AT.meshes, self->task_brick_meshes),
             daxa::attachment_view(ShadeVisbufferH::AT.meshlet_allocator, self->task_brick_meshlet_allocator),
             daxa::attachment_view(ShadeVisbufferH::AT.meshlet_metadata, self->task_brick_meshlet_metadata),
