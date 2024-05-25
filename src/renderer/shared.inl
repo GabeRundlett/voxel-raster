@@ -6,9 +6,17 @@
 
 #define ENABLE_DEBUG_VIS 1
 
+struct DispatchIndirectStruct {
+    daxa_u32 x;
+    daxa_u32 y;
+    daxa_u32 z;
+};
+DAXA_DECL_BUFFER_PTR(DispatchIndirectStruct)
+
 struct GpuInput {
     daxa_u32vec2 render_size;
     daxa_u32 brick_n;
+    daxa_f32 time;
     Camera cam;
 };
 DAXA_DECL_BUFFER_PTR(GpuInput)

@@ -63,9 +63,6 @@ layout(location = 0) out flat PackedVisbufferPayload v_payload[];
 layout(location = 1) out vec2 v_uv[];
 #endif
 
-shared uint current_vert_n;
-shared uint current_prim_n;
-
 mat4 world_to_clip;
 PackedVisbufferPayload o_packed_payload;
 
@@ -81,7 +78,6 @@ bool is_micropoly_visible(vec2 ndc_min, vec2 ndc_max, vec2 resolution) {
 }
 
 void emit_prim(vec3 in_p0, vec3 in_p1, vec3 in_p2, vec3 in_p3) {
-#if DISCARD_METHOD
     vec4 p0_h = world_to_clip * vec4(in_p0, 1);
     vec4 p1_h = world_to_clip * vec4(in_p1, 1);
     vec4 p2_h = world_to_clip * vec4(in_p2, 1);
@@ -89,58 +85,51 @@ void emit_prim(vec3 in_p0, vec3 in_p1, vec3 in_p2, vec3 in_p3) {
     vec2 p0 = p0_h.xy / p0_h.w;
     vec2 p1 = p1_h.xy / p1_h.w;
     vec2 p2 = p2_h.xy / p2_h.w;
+
+#if DISCARD_METHOD
     vec2 ndc_min = min(min(p0, p1), p2);
     vec2 ndc_max = max(max(p0, p1), p2);
+#else
+    vec4 p3_h = world_to_clip * vec4(in_p3, 1);
+    vec2 p3 = p3_h.xy / p3_h.w;
+    vec2 ndc_min = min(min(p0, p1), min(p2, p3));
+    vec2 ndc_max = max(max(p0, p1), max(p2, p3));
+#endif
+
     bool micro_poly_visible = is_micropoly_visible(ndc_min, ndc_max, vec2(deref(push.uses.gpu_input).render_size));
+    bool facing_camera = determinant(mat3(p0_h.xyw, p1_h.xyw, p2_h.xyw)) > 0;
+    uint face_id = gl_LocalInvocationIndex;
 
-    if (micro_poly_visible) {
-        uint vert_i = atomicAdd(current_vert_n, 3);
-        uint prim_i = atomicAdd(current_prim_n, 1);
+    bool cull_poly = !(micro_poly_visible && facing_camera);
 
-        gl_MeshPrimitivesEXT[prim_i].gl_CullPrimitiveEXT = false;
+#if DISCARD_METHOD
+    uint vert_i = face_id * 3;
+    uint prim_i = face_id * 1;
+    gl_MeshPrimitivesEXT[prim_i].gl_CullPrimitiveEXT = cull_poly;
+    if (!cull_poly) {
         gl_PrimitiveTriangleIndicesEXT[prim_i] = uvec3(0, 1, 2) + vert_i;
-
         v_uv[vert_i + 0] = vec2(0, 0);
         v_uv[vert_i + 1] = vec2(2, 0);
         v_uv[vert_i + 2] = vec2(0, 2);
-
         v_payload[vert_i + 0] = o_packed_payload;
         v_payload[vert_i + 1] = o_packed_payload;
         v_payload[vert_i + 2] = o_packed_payload;
-
         gl_MeshVerticesEXT[vert_i + 0].gl_Position = p0_h;
         gl_MeshVerticesEXT[vert_i + 1].gl_Position = p1_h;
         gl_MeshVerticesEXT[vert_i + 2].gl_Position = p2_h;
     }
 #else
-    vec4 p0_h = world_to_clip * vec4(in_p0, 1);
-    vec4 p1_h = world_to_clip * vec4(in_p1, 1);
-    vec4 p2_h = world_to_clip * vec4(in_p2, 1);
-    vec4 p3_h = world_to_clip * vec4(in_p3, 1);
-
-    vec2 p0 = p0_h.xy / p0_h.w;
-    vec2 p1 = p1_h.xy / p1_h.w;
-    vec2 p2 = p2_h.xy / p2_h.w;
-    vec2 p3 = p3_h.xy / p3_h.w;
-    vec2 ndc_min = min(min(p0, p1), min(p2, p3));
-    vec2 ndc_max = max(max(p0, p1), max(p2, p3));
-    bool micro_poly_visible = is_micropoly_visible(ndc_min, ndc_max, vec2(deref(push.uses.gpu_input).render_size));
-
-    if (micro_poly_visible) {
-        uint vert_i = atomicAdd(current_vert_n, 4);
-        uint prim_i = atomicAdd(current_prim_n, 2);
-
-        gl_MeshPrimitivesEXT[prim_i + 0].gl_CullPrimitiveEXT = false;
+    uint vert_i = face_id * 4;
+    uint prim_i = face_id * 2;
+    gl_MeshPrimitivesEXT[prim_i + 0].gl_CullPrimitiveEXT = cull_poly;
+    gl_MeshPrimitivesEXT[prim_i + 1].gl_CullPrimitiveEXT = cull_poly;
+    if (!cull_poly) {
         gl_PrimitiveTriangleIndicesEXT[prim_i + 0] = uvec3(0, 1, 2) + vert_i;
-
-        gl_MeshPrimitivesEXT[prim_i + 1].gl_CullPrimitiveEXT = false;
         gl_PrimitiveTriangleIndicesEXT[prim_i + 1] = uvec3(1, 2, 3) + vert_i;
-
         v_payload[vert_i + 0] = o_packed_payload;
         v_payload[vert_i + 1] = o_packed_payload;
         v_payload[vert_i + 2] = o_packed_payload;
         v_payload[vert_i + 3] = o_packed_payload;
-
         gl_MeshVerticesEXT[vert_i + 0].gl_Position = p0_h;
         gl_MeshVerticesEXT[vert_i + 1].gl_Position = p1_h;
         gl_MeshVerticesEXT[vert_i + 2].gl_Position = p2_h;
@@ -149,61 +138,61 @@ void emit_prim(vec3 in_p0, vec3 in_p1, vec3 in_p2, vec3 in_p3) {
 #endif
 }
 
-void emit_prim_x(vec3 pos, vec2 size) {
+void emit_prim_x(vec3 pos, vec2 size, int flip) {
 #if DISCARD_METHOD
+    float winding_flip_a = flip * 2.0;
+    float winding_flip_b = 2.0 - winding_flip_a;
     vec3 p0 = pos + vec3(0, -size.x * 0.0, -size.y * 0.0);
-    vec3 p1 = pos + vec3(0, +size.x * 2.0, -size.y * 0.0);
-    vec3 p2 = pos + vec3(0, -size.x * 0.0, +size.y * 2.0);
+    vec3 p1 = pos + vec3(0, size.x * winding_flip_a, size.y * winding_flip_b);
+    vec3 p2 = pos + vec3(0, size.x * winding_flip_b, size.y * winding_flip_a);
     vec3 p3 = vec3(0);
 #else
+    float winding_flip_a = flip;
+    float winding_flip_b = 1.0 - winding_flip_a;
     vec3 p0 = pos + vec3(0, -size.x * 0.0, -size.y * 0.0);
-    vec3 p1 = pos + vec3(0, +size.x * 1.0, -size.y * 0.0);
-    vec3 p2 = pos + vec3(0, -size.x * 0.0, +size.y * 1.0);
+    vec3 p1 = pos + vec3(0, size.x * winding_flip_a, size.y * winding_flip_b);
+    vec3 p2 = pos + vec3(0, size.x * winding_flip_b, size.y * winding_flip_a);
     vec3 p3 = pos + vec3(0, +size.x * 1.0, +size.y * 1.0);
 #endif
     emit_prim(p0, p1, p2, p3);
 }
 
-void emit_prim_y(vec3 pos, vec2 size) {
+void emit_prim_y(vec3 pos, vec2 size, int flip) {
 #if DISCARD_METHOD
+    float winding_flip_a = flip * 2.0;
+    float winding_flip_b = 2.0 - winding_flip_a;
     vec3 p0 = pos + vec3(-size.x * 0.0, 0, -size.y * 0.0);
-    vec3 p1 = pos + vec3(+size.x * 2.0, 0, -size.y * 0.0);
-    vec3 p2 = pos + vec3(-size.x * 0.0, 0, +size.y * 2.0);
+    vec3 p1 = pos + vec3(size.x * winding_flip_b, 0, size.y * winding_flip_a);
+    vec3 p2 = pos + vec3(size.x * winding_flip_a, 0, size.y * winding_flip_b);
     vec3 p3 = vec3(0);
 #else
+    float winding_flip_a = flip;
+    float winding_flip_b = 1.0 - winding_flip_a;
     vec3 p0 = pos + vec3(-size.x * 0.0, 0, -size.y * 0.0);
-    vec3 p1 = pos + vec3(+size.x * 1.0, 0, -size.y * 0.0);
-    vec3 p2 = pos + vec3(-size.x * 0.0, 0, +size.y * 1.0);
+    vec3 p1 = pos + vec3(size.x * winding_flip_b, 0, size.y * winding_flip_a);
+    vec3 p2 = pos + vec3(size.x * winding_flip_a, 0, size.y * winding_flip_b);
     vec3 p3 = pos + vec3(+size.x * 1.0, 0, +size.y * 1.0);
 #endif
     emit_prim(p0, p1, p2, p3);
 }
 
-void emit_prim_z(vec3 pos, vec2 size) {
+void emit_prim_z(vec3 pos, vec2 size, int flip) {
 #if DISCARD_METHOD
+    float winding_flip_a = flip * 2.0;
+    float winding_flip_b = 2.0 - winding_flip_a;
     vec3 p0 = pos + vec3(-size.x * 0.0, -size.y * 0.0, 0);
-    vec3 p1 = pos + vec3(+size.x * 2.0, -size.y * 0.0, 0);
-    vec3 p2 = pos + vec3(-size.x * 0.0, +size.y * 2.0, 0);
+    vec3 p1 = pos + vec3(size.x * winding_flip_a, size.y * winding_flip_b, 0);
+    vec3 p2 = pos + vec3(size.x * winding_flip_b, size.y * winding_flip_a, 0);
     vec3 p3 = vec3(0);
 #else
+    float winding_flip_a = flip;
+    float winding_flip_b = 1.0 - winding_flip_a;
     vec3 p0 = pos + vec3(-size.x * 0.0, -size.y * 0.0, 0);
-    vec3 p1 = pos + vec3(+size.x * 1.0, -size.y * 0.0, 0);
-    vec3 p2 = pos + vec3(-size.x * 0.0, +size.y * 1.0, 0);
+    vec3 p1 = pos + vec3(size.x * winding_flip_a, size.y * winding_flip_b, 0);
+    vec3 p2 = pos + vec3(size.x * winding_flip_b, size.y * winding_flip_a, 0);
     vec3 p3 = pos + vec3(+size.x * 1.0, +size.y * 1.0, 0);
 #endif
     emit_prim(p0, p1, p2, p3);
-}
-
-void begin_prim() {
-    if (gl_LocalInvocationIndex == 0) {
-        current_vert_n = 0;
-        current_prim_n = 0;
-    }
-    barrier();
-}
-void end_prim() {
-    barrier();
-    SetMeshOutputsEXT(current_vert_n, current_prim_n);
 }
 
 layout(local_size_x = 32) in;
@@ -211,18 +200,25 @@ void main() {
     world_to_clip = deref(push.uses.gpu_input).cam.view_to_clip * deref(push.uses.gpu_input).cam.world_to_view;
     TaskPayload payload = unpack(packed_payload);
 
-    begin_prim();
+    uint meshlet_index = gl_WorkGroupID.x;
+    uint in_meshlet_face_index = gl_LocalInvocationIndex;
+    uint meshlet_face_count = min(32, payload.face_count - meshlet_index * 32);
 
-    uint meshlet_index = gl_GlobalInvocationID.x / 32;
+#if DISCARD_METHOD
+    SetMeshOutputsEXT(meshlet_face_count * 3, meshlet_face_count * 1);
+#else
+    SetMeshOutputsEXT(meshlet_face_count * 4, meshlet_face_count * 2);
+#endif
+
     VoxelBrickMesh mesh = deref(push.uses.meshes[payload.brick_id]);
-    if (gl_GlobalInvocationID.x < payload.face_count && mesh.meshlet_start != 0) {
+    if (in_meshlet_face_index < meshlet_face_count && mesh.meshlet_start != 0) {
         VoxelMeshlet meshlet = deref(push.uses.meshlet_allocator[meshlet_index + mesh.meshlet_start]);
-        PackedVoxelBrickFace packed_face = meshlet.faces[gl_GlobalInvocationID.x % 32];
+        PackedVoxelBrickFace packed_face = meshlet.faces[gl_LocalInvocationIndex];
 
         VoxelBrickFace face = unpack(packed_face);
 
         VisbufferPayload o_payload;
-        o_payload.face_id = gl_GlobalInvocationID.x % 32;
+        o_payload.face_id = gl_LocalInvocationIndex;
         o_payload.meshlet_id = meshlet_index + mesh.meshlet_start;
         o_packed_payload = pack(o_payload);
 
@@ -234,25 +230,24 @@ void main() {
         switch (face.axis / 2) {
         case 0:
             pos.x += int(face.axis % 2);
-            emit_prim_x(vec3(pos) * SCL, vec2(SCL));
+            emit_prim_x(vec3(pos) * SCL, vec2(SCL), int(face.axis % 2));
             break;
         case 1:
             pos.y += int(face.axis % 2);
-            emit_prim_y(vec3(pos) * SCL, vec2(SCL));
+            emit_prim_y(vec3(pos) * SCL, vec2(SCL), int(face.axis % 2));
             break;
         case 2:
             pos.z += int(face.axis % 2);
-            emit_prim_z(vec3(pos) * SCL, vec2(SCL));
+            emit_prim_z(vec3(pos) * SCL, vec2(SCL), int(face.axis % 2));
             break;
         }
     }
-
-    end_prim();
 }
 
 #elif DAXA_SHADER_STAGE == DAXA_SHADER_STAGE_FRAGMENT
 
-DAXA_STORAGE_IMAGE_LAYOUT_WITH_FORMAT(r32ui) uniform uimage2D atomic_u32_table[];
+DAXA_STORAGE_IMAGE_LAYOUT_WITH_FORMAT(r32ui)
+uniform uimage2D atomic_u32_table[];
 
 layout(location = 0) in flat PackedVisbufferPayload v_payload;
 #if DISCARD_METHOD

@@ -9,10 +9,11 @@ namespace voxel_world {
     void init(VoxelWorld &self);
     void deinit(VoxelWorld self);
 
-    VoxelBrickBitmask *get_voxel_brick_bitmasks(VoxelWorld self);
-    int *get_voxel_brick_positions(VoxelWorld self);
-    unsigned int get_voxel_brick_count(VoxelWorld self);
-    bool bricks_changed(VoxelWorld self);
+    VoxelBrickBitmask *get_voxel_brick_bitmasks(VoxelWorld self, unsigned int chunk_index);
+    int *get_voxel_brick_positions(VoxelWorld self, unsigned int chunk_index);
+    unsigned int get_voxel_brick_count(VoxelWorld self, unsigned int chunk_index);
+    bool chunk_bricks_changed(VoxelWorld self, unsigned int chunk_index);
+    unsigned int get_chunk_count(VoxelWorld self);
     void update(VoxelWorld self);
     void load_model(char const *path);
 } // namespace voxel_world

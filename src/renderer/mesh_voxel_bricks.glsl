@@ -51,7 +51,7 @@ void main() {
     uint yi = gl_LocalInvocationID.y;
     uint fi = gl_LocalInvocationID.z;
 
-    uint bit_strip = load_strip(push.uses.bitmasks[gl_WorkGroupID.x], xi, yi, fi);
+    uint bit_strip = load_strip(push.uses.gpu_input, push.uses.bitmasks[gl_WorkGroupID.x], xi, yi, fi);
 
     uint b_edge_mask = bit_strip & ~(bit_strip << 1);
     uint t_edge_mask = bit_strip & ~(bit_strip >> 1);

@@ -7,7 +7,6 @@ add_executable(${PROJECT_NAME}
     "src/main.cpp"
     "src/player.cpp"
     "src/renderer/renderer.cpp"
-    "src/renderer/prepopulate_meshlets.cpp"
     "src/voxels/voxel_world.cpp"
 )
 target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_20)

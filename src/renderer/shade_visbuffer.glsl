@@ -88,7 +88,7 @@ vec3 color_correct(vec3 x) {
     return x;
 }
 
-#define VISUALIZE_OVERDRAW (ENABLE_DEBUG_VIS && 1)
+#define VISUALIZE_OVERDRAW (ENABLE_DEBUG_VIS && 0)
 
 void main() {
 #if VISUALIZE_OVERDRAW

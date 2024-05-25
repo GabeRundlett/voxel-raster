@@ -19,6 +19,16 @@
 #endif
 #include <GLFW/glfw3native.h>
 
+struct RenderChunk {
+    daxa::BufferId brick_meshes;
+    daxa::BufferId brick_bitmasks;
+    daxa::BufferId brick_positions;
+
+    uint32_t brick_count;
+};
+
+using Clock = std::chrono::steady_clock;
+
 struct renderer::State {
     daxa::Instance instance;
     daxa::Device device;
@@ -35,18 +45,43 @@ struct renderer::State {
 
     daxa::BufferId brick_meshlet_allocator;
     daxa::BufferId brick_meshlet_metadata;
-    daxa::BufferId brick_meshes;
-    daxa::BufferId brick_bitmasks;
-    daxa::BufferId brick_positions;
 
     daxa::TaskBuffer task_brick_meshlet_allocator;
     daxa::TaskBuffer task_brick_meshlet_metadata;
+
+    std::array<RenderChunk, MAX_CHUNK_COUNT> chunks;
+
+    std::vector<daxa::BufferId> tracked_brick_meshes;
+    std::vector<daxa::BufferId> tracked_brick_bitmasks;
+    std::vector<daxa::BufferId> tracked_brick_positions;
+
     daxa::TaskBuffer task_brick_meshes;
     daxa::TaskBuffer task_brick_bitmasks;
     daxa::TaskBuffer task_brick_positions;
 
     GpuInput gpu_input;
+    Clock::time_point start_time;
 };
+
+template <typename T>
+inline void task_fill_buffer(daxa::TaskGraph &tg, daxa::TaskBufferView buffer, T clear_value, uint32_t offset = 0) {
+    tg.add_task({
+        .attachments = {
+            daxa::inl_attachment(daxa::TaskBufferAccess::TRANSFER_WRITE, buffer),
+        },
+        .task = [=](daxa::TaskInterface ti) {
+            auto alloc = ti.allocator->allocate_fill(clear_value).value();
+            ti.recorder.copy_buffer_to_buffer({
+                .src_buffer = ti.allocator->buffer(),
+                .dst_buffer = ti.get(buffer).ids[0],
+                .src_offset = alloc.buffer_offset,
+                .dst_offset = offset,
+                .size = sizeof(T),
+            });
+        },
+        .name = "fill buffer",
+    });
+}
 
 template <typename T>
 inline void allocate_fill_copy(daxa::TaskInterface ti, T value, daxa::TaskBufferAttachmentInfo dst, uint32_t dst_offset = 0) {
@@ -58,6 +93,33 @@ inline void allocate_fill_copy(daxa::TaskInterface ti, T value, daxa::TaskBuffer
         .dst_offset = dst_offset,
         .size = sizeof(T),
     });
+}
+
+template <size_t N>
+inline void clear_task_images(daxa::TaskGraph &task_graph, std::array<daxa::TaskImageView, N> const &task_image_views, std::array<daxa::ClearValue, N> clear_values = {}) {
+    auto uses = std::vector<daxa::TaskAttachmentInfo>{};
+    auto use_count = task_image_views.size();
+    uses.reserve(use_count);
+    for (auto const &task_image : task_image_views) {
+        uses.push_back(daxa::inl_attachment(daxa::TaskImageAccess::TRANSFER_WRITE, daxa::ImageViewType::REGULAR_2D, task_image));
+    }
+    task_graph.add_task({
+        .attachments = std::move(uses),
+        .task = [use_count, clear_values](daxa::TaskInterface const &ti) {
+            for (uint8_t i = 0; i < use_count; ++i) {
+                ti.recorder.clear_image({
+                    .dst_image_layout = ti.get(daxa::TaskImageAttachmentIndex{i}).layout,
+                    .clear_value = clear_values[i],
+                    .dst_image = ti.get(daxa::TaskImageAttachmentIndex{i}).ids[0],
+                });
+            }
+        },
+        .name = "clear images",
+    });
+}
+
+auto round_up_div(auto x, auto y) {
+    return (x + y - 1) / y;
 }
 
 struct ResetMeshletAllocatorTask : ResetMeshletAllocatorH::Task {
@@ -141,10 +203,6 @@ struct ShadeVisbufferTask : ShadeVisbufferH::Task {
     }
 };
 
-auto round_up_div(auto x, auto y) {
-    return (x + y - 1) / y;
-}
-
 struct AnalyzeVisbufferTask : AnalyzeVisbufferH::Task {
     AttachmentViews views = {};
     daxa::ComputePipeline *pipeline = {};
@@ -158,29 +216,6 @@ struct AnalyzeVisbufferTask : AnalyzeVisbufferH::Task {
         ti.recorder.dispatch({round_up_div(image_info.size.x, 16), round_up_div(image_info.size.y, 16), 1});
     }
 };
-
-template <size_t N>
-inline void clear_task_images(daxa::TaskGraph &task_graph, std::array<daxa::TaskImageView, N> const &task_image_views, std::array<daxa::ClearValue, N> clear_values = {}) {
-    auto uses = std::vector<daxa::TaskAttachmentInfo>{};
-    auto use_count = task_image_views.size();
-    uses.reserve(use_count);
-    for (auto const &task_image : task_image_views) {
-        uses.push_back(daxa::inl_attachment(daxa::TaskImageAccess::TRANSFER_WRITE, daxa::ImageViewType::REGULAR_2D, task_image));
-    }
-    task_graph.add_task({
-        .attachments = std::move(uses),
-        .task = [use_count, clear_values](daxa::TaskInterface const &ti) {
-            for (uint8_t i = 0; i < use_count; ++i) {
-                ti.recorder.clear_image({
-                    .dst_image_layout = ti.get(daxa::TaskImageAttachmentIndex{i}).layout,
-                    .clear_value = clear_values[i],
-                    .dst_image = ti.get(daxa::TaskImageAttachmentIndex{i}).ids[0],
-                });
-            }
-        },
-        .name = "clear images",
-    });
-}
 
 void record_tasks(renderer::Renderer self) {
     self->loop_task_graph = daxa::TaskGraph({
@@ -422,6 +457,21 @@ void renderer::init(Renderer &self, void *glfw_window_ptr) {
     self->task_brick_meshes = daxa::TaskBuffer({.name = "task_brick_meshes"});
     self->task_brick_bitmasks = daxa::TaskBuffer({.name = "task_brick_bitmasks"});
     self->task_brick_positions = daxa::TaskBuffer({.name = "task_brick_positions"});
+
+    self->brick_meshlet_allocator = self->device.create_buffer({
+        // + 1 for the state at index 0
+        .size = sizeof(VoxelMeshlet) * (MAX_MESHLET_COUNT + 1),
+        .name = "brick_meshlet_allocator",
+    });
+    self->brick_meshlet_metadata = self->device.create_buffer({
+        // + 1 for the state at index 0
+        .size = sizeof(VoxelMeshletMetadata) * (MAX_MESHLET_COUNT + 1),
+        .name = "brick_meshlet_metadata",
+    });
+    self->task_brick_meshlet_allocator.set_buffers({.buffers = std::array{self->brick_meshlet_allocator}});
+    self->task_brick_meshlet_metadata.set_buffers({.buffers = std::array{self->brick_meshlet_metadata}});
+
+    self->start_time = Clock::now();
 }
 
 void renderer::deinit(Renderer self) {
@@ -434,14 +484,17 @@ void renderer::deinit(Renderer self) {
     if (!self->brick_meshlet_metadata.is_empty()) {
         self->device.destroy_buffer(self->brick_meshlet_metadata);
     }
-    if (!self->brick_meshes.is_empty()) {
-        self->device.destroy_buffer(self->brick_meshes);
-    }
-    if (!self->brick_bitmasks.is_empty()) {
-        self->device.destroy_buffer(self->brick_bitmasks);
-    }
-    if (!self->brick_positions.is_empty()) {
-        self->device.destroy_buffer(self->brick_positions);
+
+    for (auto &chunk : self->chunks) {
+        if (!chunk.brick_meshes.is_empty()) {
+            self->device.destroy_buffer(chunk.brick_meshes);
+        }
+        if (!chunk.brick_bitmasks.is_empty()) {
+            self->device.destroy_buffer(chunk.brick_bitmasks);
+        }
+        if (!chunk.brick_positions.is_empty()) {
+            self->device.destroy_buffer(chunk.brick_positions);
+        }
     }
 
     ImGui_ImplGlfw_Shutdown();
@@ -456,6 +509,10 @@ void renderer::on_resize(Renderer self, int size_x, int size_y) {
 }
 
 void renderer::draw(Renderer self, player::Player player, voxel_world::VoxelWorld voxel_world) {
+    auto now = Clock::now();
+    auto time = std::chrono::duration<float>(now - self->start_time).count();
+    self->gpu_input.time = time;
+
     auto swapchain_image = self->swapchain.acquire_next_image();
     if (swapchain_image.is_empty()) {
         return;
@@ -473,96 +530,121 @@ void renderer::draw(Renderer self, player::Player player, voxel_world::VoxelWorl
     }
     player::get_camera(player, &self->gpu_input.cam);
 
-    if (voxel_world::bricks_changed(voxel_world)) {
-        VoxelBrickBitmask *bitmasks = voxel_world::get_voxel_brick_bitmasks(voxel_world);
-        int *positions = voxel_world::get_voxel_brick_positions(voxel_world);
-        uint32_t brick_count = voxel_world::get_voxel_brick_count(voxel_world);
-        self->gpu_input.brick_n = brick_count;
-
-        self->device.wait_idle();
-
-        if (!self->brick_meshlet_allocator.is_empty()) {
-            self->device.destroy_buffer(self->brick_meshlet_allocator);
-        }
-        if (!self->brick_meshlet_metadata.is_empty()) {
-            self->device.destroy_buffer(self->brick_meshlet_metadata);
-        }
-        if (!self->brick_meshes.is_empty()) {
-            self->device.destroy_buffer(self->brick_meshes);
-        }
-        if (!self->brick_bitmasks.is_empty()) {
-            self->device.destroy_buffer(self->brick_bitmasks);
-        }
-        if (!self->brick_positions.is_empty()) {
-            self->device.destroy_buffer(self->brick_positions);
-        }
-
-        self->brick_meshlet_allocator = self->device.create_buffer({
-            // + 1 for the state at index 0
-            .size = sizeof(VoxelMeshlet) * (MAX_MESHLET_COUNT + 1),
-            .name = "brick_meshlet_allocator",
-        });
-        self->brick_meshlet_metadata = self->device.create_buffer({
-            // + 1 for the state at index 0
-            .size = sizeof(VoxelMeshletMetadata) * (MAX_MESHLET_COUNT + 1),
-            .name = "brick_meshlet_metadata",
-        });
-        self->brick_meshes = self->device.create_buffer({
-            .size = sizeof(VoxelBrickMesh) * brick_count,
-            .name = "brick_meshes",
-        });
-        self->brick_bitmasks = self->device.create_buffer({
-            .size = sizeof(VoxelBrickBitmask) * brick_count,
-            .name = "brick_bitmasks",
-        });
-        self->brick_positions = self->device.create_buffer({
-            .size = sizeof(daxa_i32vec4) * brick_count,
-            .name = "brick_positions",
-        });
-        self->task_brick_meshlet_allocator.set_buffers({.buffers = std::array{self->brick_meshlet_allocator}});
-        self->task_brick_meshlet_metadata.set_buffers({.buffers = std::array{self->brick_meshlet_metadata}});
-        self->task_brick_meshes.set_buffers({.buffers = std::array{self->brick_meshes}});
-        self->task_brick_bitmasks.set_buffers({.buffers = std::array{self->brick_bitmasks}});
-        self->task_brick_positions.set_buffers({.buffers = std::array{self->brick_positions}});
+    {
+        auto chunk_n = voxel_world::get_chunk_count(voxel_world);
+        bool needs_update = false;
+        bool has_waited = false;
 
         auto temp_task_graph = daxa::TaskGraph({
             .device = self->device,
             .name = "temp_task_graph",
         });
-
         temp_task_graph.use_persistent_buffer(self->task_brick_bitmasks);
         temp_task_graph.use_persistent_buffer(self->task_brick_positions);
 
-        temp_task_graph.add_task({
-            .attachments = {
-                daxa::inl_attachment(daxa::TaskBufferAccess::TRANSFER_WRITE, self->task_brick_bitmasks),
-                daxa::inl_attachment(daxa::TaskBufferAccess::TRANSFER_WRITE, self->task_brick_positions),
-            },
-            .task = [&](daxa::TaskInterface const &ti) {
-                auto upload = [&ti](daxa::TaskBufferView buffer_view, void *data, uint64_t size) {
-                    auto staging_input_buffer = ti.device.create_buffer({
-                        .size = size,
-                        .allocate_info = daxa::MemoryFlagBits::HOST_ACCESS_RANDOM,
-                        .name = "staging_input_buffer",
-                    });
-                    ti.recorder.destroy_buffer_deferred(staging_input_buffer);
-                    auto *buffer_ptr = ti.device.get_host_address(staging_input_buffer).value();
-                    memcpy(buffer_ptr, data, size);
-                    ti.recorder.copy_buffer_to_buffer({
-                        .src_buffer = staging_input_buffer,
-                        .dst_buffer = ti.get(buffer_view).ids[0],
-                        .size = size,
-                    });
-                };
+        self->tracked_brick_meshes.clear();
+        self->tracked_brick_bitmasks.clear();
+        self->tracked_brick_positions.clear();
 
-                upload(self->task_brick_bitmasks, bitmasks, sizeof(VoxelBrickBitmask) * brick_count);
-                upload(self->task_brick_positions, positions, sizeof(daxa_i32vec4) * brick_count);
-            },
-            .name = "upload bricks",
-        });
-        temp_task_graph.submit({});
-        temp_task_graph.complete({});
-        temp_task_graph.execute({});
+        for (uint32_t chunk_i = 0; chunk_i < chunk_n; ++chunk_i) {
+            auto &chunk = self->chunks[chunk_i];
+            chunk.brick_count = voxel_world::get_voxel_brick_count(voxel_world, chunk_i);
+
+            if (voxel_world::chunk_bricks_changed(voxel_world, chunk_i)) {
+                VoxelBrickBitmask *bitmasks = voxel_world::get_voxel_brick_bitmasks(voxel_world, chunk_i);
+                int *positions = voxel_world::get_voxel_brick_positions(voxel_world, chunk_i);
+
+                if (!has_waited) {
+                    self->device.wait_idle();
+                    has_waited = true;
+                }
+
+                if (!chunk.brick_meshes.is_empty()) {
+                    self->device.destroy_buffer(chunk.brick_meshes);
+                }
+                if (!chunk.brick_bitmasks.is_empty()) {
+                    self->device.destroy_buffer(chunk.brick_bitmasks);
+                }
+                if (!chunk.brick_positions.is_empty()) {
+                    self->device.destroy_buffer(chunk.brick_positions);
+                }
+
+                if (chunk.brick_count == 0) {
+                    continue;
+                }
+
+                chunk.brick_meshes = self->device.create_buffer({
+                    .size = sizeof(VoxelBrickMesh) * chunk.brick_count,
+                    .name = "brick_meshes",
+                });
+                chunk.brick_bitmasks = self->device.create_buffer({
+                    .size = sizeof(VoxelBrickBitmask) * chunk.brick_count,
+                    .name = "brick_bitmasks",
+                });
+                chunk.brick_positions = self->device.create_buffer({
+                    .size = sizeof(daxa_i32vec4) * chunk.brick_count,
+                    .name = "brick_positions",
+                });
+                // self->task_brick_meshes.set_buffers({.buffers = std::array{self->brick_meshes}});
+                // self->task_brick_bitmasks.set_buffers({.buffers = std::array{self->brick_bitmasks}});
+                // self->task_brick_positions.set_buffers({.buffers = std::array{self->brick_positions}});
+
+                // The buffer will be at the current size of tracked buffers.
+                auto buffer_view_index = self->tracked_brick_meshes.size();
+
+                temp_task_graph.add_task({
+                    .attachments = {
+                        daxa::inl_attachment(daxa::TaskBufferAccess::TRANSFER_WRITE, self->task_brick_bitmasks),
+                        daxa::inl_attachment(daxa::TaskBufferAccess::TRANSFER_WRITE, self->task_brick_positions),
+                    },
+                    .task = [&, buffer_view_index](daxa::TaskInterface const &ti) {
+                        auto upload = [&ti, buffer_view_index](daxa::TaskBufferView buffer_view, void *data, uint64_t size) {
+                            auto staging_input_buffer = ti.device.create_buffer({
+                                .size = size,
+                                .allocate_info = daxa::MemoryFlagBits::HOST_ACCESS_RANDOM,
+                                .name = "staging_input_buffer",
+                            });
+                            ti.recorder.destroy_buffer_deferred(staging_input_buffer);
+                            auto *buffer_ptr = ti.device.get_host_address(staging_input_buffer).value();
+                            memcpy(buffer_ptr, data, size);
+                            ti.recorder.copy_buffer_to_buffer({
+                                .src_buffer = staging_input_buffer,
+                                .dst_buffer = ti.get(buffer_view).ids[buffer_view_index],
+                                .size = size,
+                            });
+                        };
+
+                        upload(self->task_brick_bitmasks, bitmasks, sizeof(VoxelBrickBitmask) * chunk.brick_count);
+                        upload(self->task_brick_positions, positions, sizeof(daxa_i32vec4) * chunk.brick_count);
+                    },
+                    .name = "upload bricks",
+                });
+
+                needs_update = true;
+            }
+
+            if (chunk.brick_count > 0) {
+                // put buffers into tracked buffer list
+                self->tracked_brick_meshes.push_back(chunk.brick_meshes);
+                self->tracked_brick_bitmasks.push_back(chunk.brick_bitmasks);
+                self->tracked_brick_positions.push_back(chunk.brick_positions);
+            }
+        }
+
+        if (has_waited) {
+            self->gpu_input.brick_n = self->chunks[0].brick_count;
+
+            // Theoretically only needs to happen if `has_waited` is true, because that's when buffers are recreated.
+            self->task_brick_meshes.set_buffers({.buffers = self->tracked_brick_meshes});
+            self->task_brick_bitmasks.set_buffers({.buffers = self->tracked_brick_bitmasks});
+            self->task_brick_positions.set_buffers({.buffers = self->tracked_brick_positions});
+        }
+
+        if (needs_update) {
+            temp_task_graph.submit({});
+            temp_task_graph.complete({});
+            temp_task_graph.execute({});
+        }
     }
 
     self->loop_task_graph.execute({});
