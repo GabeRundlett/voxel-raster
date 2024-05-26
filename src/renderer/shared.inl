@@ -21,14 +21,11 @@ struct GpuInput {
 };
 DAXA_DECL_BUFFER_PTR(GpuInput)
 
-DAXA_DECL_TASK_HEAD_BEGIN(ResetMeshletAllocatorH)
-DAXA_TH_BUFFER_PTR(COMPUTE_SHADER_READ, daxa_BufferPtr(GpuInput), gpu_input)
-DAXA_TH_BUFFER_PTR(COMPUTE_SHADER_READ_WRITE, daxa_RWBufferPtr(VoxelMeshletAllocatorState), meshlet_allocator_state)
-DAXA_DECL_TASK_HEAD_END
-
-struct ResetMeshletAllocatorPush {
-    DAXA_TH_BLOB(ResetMeshletAllocatorH, uses)
+struct BrickInstance {
+    daxa_u32 chunk_index;
+    daxa_u32 brick_index;
 };
+DAXA_DECL_BUFFER_PTR(BrickInstance)
 
 DAXA_DECL_TASK_HEAD_BEGIN(MeshVoxelBricksH)
 DAXA_TH_BUFFER_PTR(COMPUTE_SHADER_READ, daxa_BufferPtr(GpuInput), gpu_input)
@@ -75,7 +72,6 @@ struct ShadeVisbufferPush {
 };
 
 DAXA_DECL_TASK_HEAD_BEGIN(AnalyzeVisbufferH)
-DAXA_TH_BUFFER_PTR(FRAGMENT_SHADER_READ, daxa_BufferPtr(GpuInput), gpu_input)
 DAXA_TH_BUFFER_PTR(FRAGMENT_SHADER_READ, daxa_BufferPtr(VoxelBrickMesh), meshes)
 DAXA_TH_BUFFER_PTR(FRAGMENT_SHADER_READ, daxa_BufferPtr(VoxelMeshlet), meshlet_allocator)
 DAXA_TH_BUFFER_PTR(FRAGMENT_SHADER_READ, daxa_BufferPtr(VoxelMeshletMetadata), meshlet_metadata)

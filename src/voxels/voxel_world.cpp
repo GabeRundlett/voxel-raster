@@ -12,6 +12,12 @@
 #include <array>
 
 struct BrickMetadata {
+    uint32_t exposed_nx : 1 {};
+    uint32_t exposed_ny : 1 {};
+    uint32_t exposed_nz : 1 {};
+    uint32_t exposed_px : 1 {};
+    uint32_t exposed_py : 1 {};
+    uint32_t exposed_pz : 1 {};
     uint32_t has_air_nx : 1 {};
     uint32_t has_air_ny : 1 {};
     uint32_t has_air_nz : 1 {};
@@ -22,7 +28,6 @@ struct BrickMetadata {
 };
 
 struct Chunk {
-    std::array<BrickMetadata, BRICKS_PER_CHUNK> brick_metadata{};
     std::array<VoxelBrickBitmask, BRICKS_PER_CHUNK> voxel_brick_bitmasks{};
     std::vector<VoxelBrickBitmask> surface_brick_bitmasks;
     std::vector<glm::ivec4> surface_brick_positions;
@@ -46,11 +51,15 @@ void voxel_world::init(VoxelWorld &self) {
         chunk = std::make_unique<Chunk>();
         chunk->pos = {chunk_index * 1.0f, 0.0f, 0.0f};
 
+        auto get_brick_metadata = [&](auto brick_index) -> BrickMetadata & {
+            return *reinterpret_cast<BrickMetadata*>(&chunk->voxel_brick_bitmasks[brick_index].metadata);
+        };
+
         for (int32_t brick_zi = 0; brick_zi < BRICK_CHUNK_SIZE; ++brick_zi) {
             for (int32_t brick_yi = 0; brick_yi < BRICK_CHUNK_SIZE; ++brick_yi) {
                 for (int32_t brick_xi = 0; brick_xi < BRICK_CHUNK_SIZE; ++brick_xi) {
                     auto brick_index = brick_xi + brick_yi * BRICK_CHUNK_SIZE + brick_zi * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
-                    auto &brick_metadata = chunk->brick_metadata[brick_index];
+                    auto &brick_metadata = get_brick_metadata(brick_index);
                     auto &bitmask = chunk->voxel_brick_bitmasks[brick_index];
 
                     brick_metadata = {};
@@ -101,48 +110,48 @@ void voxel_world::init(VoxelWorld &self) {
             for (int32_t brick_yi = 0; brick_yi < BRICK_CHUNK_SIZE; ++brick_yi) {
                 for (int32_t brick_xi = 0; brick_xi < BRICK_CHUNK_SIZE; ++brick_xi) {
                     auto brick_index = brick_xi + brick_yi * BRICK_CHUNK_SIZE + brick_zi * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
-                    auto &brick_metadata = chunk->brick_metadata[brick_index];
+                    auto &brick_metadata = get_brick_metadata(brick_index);
                     auto &bitmask = chunk->voxel_brick_bitmasks[brick_index];
 
-                    bool exposed_nx = true;
-                    bool exposed_px = true;
-                    bool exposed_ny = true;
-                    bool exposed_py = true;
-                    bool exposed_nz = true;
-                    bool exposed_pz = true;
+                    brick_metadata.exposed_nx = true;
+                    brick_metadata.exposed_px = true;
+                    brick_metadata.exposed_ny = true;
+                    brick_metadata.exposed_py = true;
+                    brick_metadata.exposed_nz = true;
+                    brick_metadata.exposed_pz = true;
 
                     if (brick_xi != 0) {
                         auto neighbor_brick_index = (brick_xi - 1) + brick_yi * BRICK_CHUNK_SIZE + brick_zi * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
-                        auto &neighbor_brick_metadata = chunk->brick_metadata[neighbor_brick_index];
-                        exposed_nx = neighbor_brick_metadata.has_air_px;
+                        auto &neighbor_brick_metadata = get_brick_metadata(neighbor_brick_index);
+                        brick_metadata.exposed_nx = neighbor_brick_metadata.has_air_px;
                     }
                     if (brick_yi != 0) {
                         auto neighbor_brick_index = brick_xi + (brick_yi - 1) * BRICK_CHUNK_SIZE + brick_zi * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
-                        auto &neighbor_brick_metadata = chunk->brick_metadata[neighbor_brick_index];
-                        exposed_ny = neighbor_brick_metadata.has_air_py;
+                        auto &neighbor_brick_metadata = get_brick_metadata(neighbor_brick_index);
+                        brick_metadata.exposed_ny = neighbor_brick_metadata.has_air_py;
                     }
                     if (brick_zi != 0) {
                         auto neighbor_brick_index = brick_xi + brick_yi * BRICK_CHUNK_SIZE + (brick_zi - 1) * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
-                        auto &neighbor_brick_metadata = chunk->brick_metadata[neighbor_brick_index];
-                        exposed_nz = neighbor_brick_metadata.has_air_pz;
+                        auto &neighbor_brick_metadata = get_brick_metadata(neighbor_brick_index);
+                        brick_metadata.exposed_nz = neighbor_brick_metadata.has_air_pz;
                     }
                     if (brick_xi != BRICK_CHUNK_SIZE - 1) {
                         auto neighbor_brick_index = (brick_xi + 1) + brick_yi * BRICK_CHUNK_SIZE + brick_zi * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
-                        auto &neighbor_brick_metadata = chunk->brick_metadata[neighbor_brick_index];
-                        exposed_px = neighbor_brick_metadata.has_air_nx;
+                        auto &neighbor_brick_metadata = get_brick_metadata(neighbor_brick_index);
+                        brick_metadata.exposed_px = neighbor_brick_metadata.has_air_nx;
                     }
                     if (brick_yi != BRICK_CHUNK_SIZE - 1) {
                         auto neighbor_brick_index = brick_xi + (brick_yi + 1) * BRICK_CHUNK_SIZE + brick_zi * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
-                        auto &neighbor_brick_metadata = chunk->brick_metadata[neighbor_brick_index];
-                        exposed_py = neighbor_brick_metadata.has_air_ny;
+                        auto &neighbor_brick_metadata = get_brick_metadata(neighbor_brick_index);
+                        brick_metadata.exposed_py = neighbor_brick_metadata.has_air_ny;
                     }
                     if (brick_zi != BRICK_CHUNK_SIZE - 1) {
                         auto neighbor_brick_index = brick_xi + brick_yi * BRICK_CHUNK_SIZE + (brick_zi + 1) * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
-                        auto &neighbor_brick_metadata = chunk->brick_metadata[neighbor_brick_index];
-                        exposed_pz = neighbor_brick_metadata.has_air_nz;
+                        auto &neighbor_brick_metadata = get_brick_metadata(neighbor_brick_index);
+                        brick_metadata.exposed_pz = neighbor_brick_metadata.has_air_nz;
                     }
 
-                    bool exposed = exposed_nx || exposed_px || exposed_ny || exposed_py || exposed_nz || exposed_pz;
+                    bool exposed = brick_metadata.exposed_nx || brick_metadata.exposed_px || brick_metadata.exposed_ny || brick_metadata.exposed_py || brick_metadata.exposed_nz || brick_metadata.exposed_pz;
 
                     auto position = glm::ivec4{brick_xi, brick_yi, brick_zi, 0};
                     if (brick_metadata.has_voxel && exposed) {

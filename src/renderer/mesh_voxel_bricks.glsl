@@ -52,10 +52,13 @@ void main() {
     uint fi = gl_LocalInvocationID.z;
 
     uint bit_strip = load_strip(push.uses.gpu_input, push.uses.bitmasks[gl_WorkGroupID.x], xi, yi, fi);
+    uvec2 edges_exposed = load_brick_faces_exposed(push.uses.gpu_input, push.uses.bitmasks[gl_WorkGroupID.x], fi);
 
     uint b_edge_mask = bit_strip & ~(bit_strip << 1);
     uint t_edge_mask = bit_strip & ~(bit_strip >> 1);
-    uint edge_mask = b_edge_mask | t_edge_mask;
+
+    b_edge_mask &= ~(1 - edges_exposed[0]);
+    t_edge_mask &= ~((1 - edges_exposed[1]) << (VOXEL_BRICK_SIZE - 1));
 
     uint strip_index = face_bitmask_strip_index(xi, yi, fi);
     uint bit_index = strip_index * VOXEL_BRICK_SIZE;

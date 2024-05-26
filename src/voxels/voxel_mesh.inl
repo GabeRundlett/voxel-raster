@@ -36,6 +36,7 @@ static_assert(MAX_OUTER_FACES_PER_BRICK / 32 < 256);
 #endif
 
 struct VoxelBrickBitmask {
+    daxa_u32 metadata;
     daxa_u32 bits[VOXELS_PER_BRICK / 32];
 };
 DAXA_DECL_BUFFER_PTR(VoxelBrickBitmask)
