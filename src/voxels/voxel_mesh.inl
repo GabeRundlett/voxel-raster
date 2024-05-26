@@ -25,8 +25,8 @@
 #define VOXEL_CHUNK_SIZE (1u << VOXEL_CHUNK_SIZE_LOG2)
 
 #define MAX_MESHLET_COUNT (1 << 24)
-#define MAX_BRICK_COUNT (1 << 20)
 #define MAX_CHUNK_COUNT (1 << 16)
+#define MAX_BRICK_INSTANCE_COUNT (1 << 20)
 
 #if defined(__cplusplus)
 // Below, we pack meshlet start offsets into 8-bit integers. Since
@@ -69,3 +69,24 @@ struct VoxelMeshletAllocatorState {
     daxa_u32 _pad[31];
 };
 DAXA_DECL_BUFFER_PTR(VoxelMeshletAllocatorState)
+
+struct BrickInstance {
+    daxa_u32 chunk_index;
+    daxa_u32 brick_index;
+};
+DAXA_DECL_BUFFER_PTR(BrickInstance)
+
+struct BrickInstanceAllocatorState {
+    daxa_u32 instance_count;
+    daxa_u32 _pad[1];
+};
+DAXA_DECL_BUFFER_PTR(BrickInstanceAllocatorState)
+
+struct VoxelChunk {
+    daxa_BufferPtr(VoxelBrickBitmask) bitmasks;
+    daxa_BufferPtr(VoxelBrickMesh) meshes;
+    daxa_BufferPtr(daxa_i32vec4) pos_scl;
+    daxa_u32 brick_n;
+    daxa_f32vec3 pos;
+};
+DAXA_DECL_BUFFER_PTR(VoxelChunk)

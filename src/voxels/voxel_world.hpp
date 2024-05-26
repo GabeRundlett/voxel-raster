@@ -14,6 +14,7 @@ namespace voxel_world {
     unsigned int get_voxel_brick_count(VoxelWorld self, unsigned int chunk_index);
     bool chunk_bricks_changed(VoxelWorld self, unsigned int chunk_index);
     unsigned int get_chunk_count(VoxelWorld self);
+    void get_chunk_pos(VoxelWorld self, unsigned int chunk_index, float *o_pos);
     void update(VoxelWorld self);
     void load_model(char const *path);
 } // namespace voxel_world

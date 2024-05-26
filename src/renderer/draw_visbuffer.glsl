@@ -1,6 +1,7 @@
 #include <shared.inl>
 #include <renderer/visbuffer.glsl>
 #include <voxels/voxel_mesh.glsl>
+#include <renderer/meshlet_allocator.glsl>
 
 #define DISCARD_METHOD 0
 
@@ -35,17 +36,20 @@ taskPayloadSharedEXT PackedTaskPayload packed_payload;
 
 layout(local_size_x = 32) in;
 void main() {
-    uint brick_id = gl_WorkGroupID.x;
-    if (brick_id >= deref(push.uses.gpu_input).brick_n) {
+    uint brick_instance_index = gl_WorkGroupID.x + 1;
+
+    if (!is_valid_index(daxa_BufferPtr(BrickInstance)(push.uses.brick_instance_allocator), brick_instance_index)) {
         return;
     }
 
-    VoxelBrickMesh mesh = deref(push.uses.meshes[brick_id]);
+    BrickInstance brick_instance = deref(push.uses.brick_instance_allocator[brick_instance_index]);
+    VoxelChunk voxel_chunk = deref(push.uses.chunks[brick_instance.chunk_index]);
+    VoxelBrickMesh mesh = deref(voxel_chunk.meshes[brick_instance.brick_index]);
 
     if (gl_LocalInvocationIndex == 0) {
         TaskPayload payload;
         payload.face_count = mesh.face_count;
-        payload.brick_id = brick_id;
+        payload.brick_id = brick_instance_index;
         packed_payload = pack(payload);
         EmitMeshTasksEXT((mesh.face_count + 31) / 32, 1, 1);
     }
@@ -210,7 +214,10 @@ void main() {
     SetMeshOutputsEXT(meshlet_face_count * 4, meshlet_face_count * 2);
 #endif
 
-    VoxelBrickMesh mesh = deref(push.uses.meshes[payload.brick_id]);
+    BrickInstance brick_instance = deref(push.uses.brick_instance_allocator[payload.brick_id]);
+    VoxelChunk voxel_chunk = deref(push.uses.chunks[brick_instance.chunk_index]);
+    VoxelBrickMesh mesh = deref(voxel_chunk.meshes[brick_instance.brick_index]);
+
     if (in_meshlet_face_index < meshlet_face_count && mesh.meshlet_start != 0) {
         VoxelMeshlet meshlet = deref(push.uses.meshlet_allocator[meshlet_index + mesh.meshlet_start]);
         PackedVoxelBrickFace packed_face = meshlet.faces[gl_LocalInvocationIndex];
@@ -222,8 +229,8 @@ void main() {
         o_payload.meshlet_id = meshlet_index + mesh.meshlet_start;
         o_packed_payload = pack(o_payload);
 
-        ivec4 pos_scl = deref(push.uses.pos_scl[payload.brick_id]);
-        ivec3 pos = pos_scl.xyz * int(VOXEL_BRICK_SIZE) + ivec3(face.pos);
+        ivec4 pos_scl = deref(voxel_chunk.pos_scl[brick_instance.brick_index]);
+        ivec3 pos = pos_scl.xyz * int(VOXEL_BRICK_SIZE) + ivec3(face.pos) + ivec3(voxel_chunk.pos);
         int scl = pos_scl.w;
 
 #define SCL (1.0 / VOXEL_BRICK_SIZE * (1 << scl))

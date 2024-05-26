@@ -10,6 +10,8 @@
 
 #include <fstream>
 #include <array>
+#include <vector>
+#include <thread>
 
 struct BrickMetadata {
     uint32_t exposed_nx : 1 {};
@@ -37,22 +39,21 @@ struct Chunk {
 
 struct voxel_world::State {
     std::array<std::unique_ptr<Chunk>, MAX_CHUNK_COUNT> chunks;
-
-    // std::vector<std::byte> brick_aux_buffer;
-    // std::vector<GvoxBrick> brick_heap;
-    // std::vector<uint64_t> brick_free_list;
 };
+
+constexpr int32_t CHUNK_N = 4;
 
 void voxel_world::init(VoxelWorld &self) {
     self = new State{};
 
-    for (uint32_t chunk_index = 0; chunk_index < 1; ++chunk_index) {
+    auto generate_chunk = [self](int32_t chunk_xi, int32_t chunk_yi, int32_t chunk_zi) {
+        int32_t chunk_index = chunk_xi + chunk_yi * CHUNK_N + chunk_zi * CHUNK_N * CHUNK_N;
         auto &chunk = self->chunks[chunk_index];
         chunk = std::make_unique<Chunk>();
-        chunk->pos = {chunk_index * 1.0f, 0.0f, 0.0f};
+        chunk->pos = {chunk_xi * VOXEL_CHUNK_SIZE, chunk_yi * VOXEL_CHUNK_SIZE, chunk_zi * VOXEL_CHUNK_SIZE};
 
         auto get_brick_metadata = [&](auto brick_index) -> BrickMetadata & {
-            return *reinterpret_cast<BrickMetadata*>(&chunk->voxel_brick_bitmasks[brick_index].metadata);
+            return *reinterpret_cast<BrickMetadata *>(&chunk->voxel_brick_bitmasks[brick_index].metadata);
         };
 
         for (int32_t brick_zi = 0; brick_zi < BRICK_CHUNK_SIZE; ++brick_zi) {
@@ -71,15 +72,16 @@ void voxel_world::init(VoxelWorld &self) {
                                 uint32_t voxel_index = xi + yi * VOXEL_BRICK_SIZE + zi * VOXEL_BRICK_SIZE * VOXEL_BRICK_SIZE;
                                 uint32_t voxel_word_index = voxel_index / 32;
                                 uint32_t voxel_in_word_index = voxel_index % 32;
-                                float x = ((float(xi + brick_xi * VOXEL_BRICK_SIZE) + 0.5f) - 0.5f * VOXEL_CHUNK_SIZE) / 16.0f;
-                                float y = ((float(yi + brick_yi * VOXEL_BRICK_SIZE) + 0.5f) - 0.5f * VOXEL_CHUNK_SIZE) / 16.0f;
-                                float z = ((float(zi + brick_zi * VOXEL_BRICK_SIZE) + 0.5f) - 0.5f * VOXEL_CHUNK_SIZE) / 16.0f;
+                                float x = (float(xi + brick_xi * VOXEL_BRICK_SIZE + chunk_xi * VOXEL_CHUNK_SIZE) + 0.5f) / 16.0f;
+                                float y = (float(yi + brick_yi * VOXEL_BRICK_SIZE + chunk_yi * VOXEL_CHUNK_SIZE) + 0.5f) / 16.0f;
+                                float z = (float(zi + brick_zi * VOXEL_BRICK_SIZE + chunk_zi * VOXEL_CHUNK_SIZE) + 0.5f) / 16.0f;
 
-                                x = glm::fract(x * 0.25f) * 4.0f - 2.0f;
-                                y = glm::fract(y * 0.25f) * 4.0f - 2.0f;
-                                z = glm::fract(z * 0.25f) * 4.0f - 2.0f;
+                                const float r = 2.0f;
+                                x = glm::fract(x * 0.5f / r) * 2 * r - r;
+                                y = glm::fract(y * 0.5f / r) * 2 * r - r;
+                                z = glm::fract(z * 0.5f / r) * 2 * r - r;
+                                uint32_t value = (x * x + y * y + z * z) < float(r * r * 0.5f) ? 1 : 0;
 
-                                uint32_t value = (x * x + y * y + z * z) < float(2 * 2) ? 1 : 0;
                                 if (value != 0) {
                                     brick_metadata.has_voxel = true;
                                 }
@@ -163,6 +165,21 @@ void voxel_world::init(VoxelWorld &self) {
         }
 
         chunk->bricks_changed = true;
+    };
+
+    std::vector<std::thread> threads;
+    threads.reserve(CHUNK_N * CHUNK_N * CHUNK_N);
+
+    for (int32_t chunk_zi = 0; chunk_zi < CHUNK_N; ++chunk_zi) {
+        for (int32_t chunk_yi = 0; chunk_yi < CHUNK_N; ++chunk_yi) {
+            for (int32_t chunk_xi = 0; chunk_xi < CHUNK_N; ++chunk_xi) {
+                threads.emplace_back([=]() { generate_chunk(chunk_xi, chunk_yi, chunk_zi); });
+            }
+        }
+    }
+
+    for (auto &thread : threads) {
+        thread.join();
     }
 }
 void voxel_world::deinit(VoxelWorld self) {
@@ -170,7 +187,7 @@ void voxel_world::deinit(VoxelWorld self) {
 }
 
 unsigned int voxel_world::get_chunk_count(VoxelWorld self) {
-    return 1;
+    return CHUNK_N * CHUNK_N * CHUNK_N;
 }
 
 VoxelBrickBitmask *voxel_world::get_voxel_brick_bitmasks(VoxelWorld self, unsigned int chunk_index) {
@@ -181,6 +198,12 @@ int *voxel_world::get_voxel_brick_positions(VoxelWorld self, unsigned int chunk_
 }
 uint32_t voxel_world::get_voxel_brick_count(VoxelWorld self, unsigned int chunk_index) {
     return self->chunks[chunk_index]->surface_brick_bitmasks.size();
+}
+void voxel_world::get_chunk_pos(VoxelWorld self, unsigned int chunk_index, float *o_pos) {
+    auto pos = self->chunks[chunk_index]->pos;
+    o_pos[0] = pos.x;
+    o_pos[1] = pos.y;
+    o_pos[2] = pos.z;
 }
 bool voxel_world::chunk_bricks_changed(VoxelWorld self, unsigned int chunk_index) {
     return self->chunks[chunk_index]->bricks_changed;

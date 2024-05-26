@@ -8,6 +8,9 @@ shared VoxelBrickMesh result_mesh;
 
 // TODO: How can I remove this?
 shared uint face_ids[MAX_OUTER_FACES_PER_BRICK];
+uint brick_instance_index;
+BrickInstance brick_instance;
+VoxelChunk chunk;
 
 void init_results() {
     if (gl_LocalInvocationIndex == 0) {
@@ -24,8 +27,8 @@ void write_results() {
     if (gl_LocalInvocationIndex == 0) {
         result_mesh.meshlet_start = allocate_meshlets(push.uses.meshlet_allocator, meshlet_n);
 
-        deref(push.uses.meshes[gl_WorkGroupID.x]).face_count = result_mesh.face_count;
-        deref(push.uses.meshes[gl_WorkGroupID.x]).meshlet_start = result_mesh.meshlet_start;
+        deref(chunk.meshes[brick_instance.brick_index]).face_count = result_mesh.face_count;
+        deref(chunk.meshes[brick_instance.brick_index]).meshlet_start = result_mesh.meshlet_start;
     }
 
     barrier();
@@ -39,20 +42,29 @@ void write_results() {
             }
             deref(push.uses.meshlet_allocator[result_mesh.meshlet_start + gl_LocalInvocationIndex]).faces[i] = PackedVoxelBrickFace(face_id);
         }
-        deref(push.uses.meshlet_metadata[result_mesh.meshlet_start + gl_LocalInvocationIndex]).brick_id = gl_WorkGroupID.x;
+        deref(push.uses.meshlet_metadata[result_mesh.meshlet_start + gl_LocalInvocationIndex]).brick_id = brick_instance_index;
     }
 }
 
 layout(local_size_x = VOXEL_BRICK_SIZE, local_size_y = VOXEL_BRICK_SIZE, local_size_z = 3) in;
 void main() {
+    brick_instance_index = gl_WorkGroupID.x + 1;
+
+    if (!is_valid_index(daxa_BufferPtr(BrickInstance)(push.uses.brick_instance_allocator), brick_instance_index)) {
+        return;
+    }
+
+    brick_instance = deref(push.uses.brick_instance_allocator[brick_instance_index]);
+    chunk = deref(push.uses.chunks[brick_instance.chunk_index]);
+
     init_results();
 
     uint xi = gl_LocalInvocationID.x;
     uint yi = gl_LocalInvocationID.y;
     uint fi = gl_LocalInvocationID.z;
 
-    uint bit_strip = load_strip(push.uses.gpu_input, push.uses.bitmasks[gl_WorkGroupID.x], xi, yi, fi);
-    uvec2 edges_exposed = load_brick_faces_exposed(push.uses.gpu_input, push.uses.bitmasks[gl_WorkGroupID.x], fi);
+    uint bit_strip = load_strip(push.uses.gpu_input, chunk.bitmasks[brick_instance.brick_index], xi, yi, fi);
+    uvec2 edges_exposed = load_brick_faces_exposed(push.uses.gpu_input, chunk.bitmasks[brick_instance.brick_index], fi);
 
     uint b_edge_mask = bit_strip & ~(bit_strip << 1);
     uint t_edge_mask = bit_strip & ~(bit_strip >> 1);

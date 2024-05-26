@@ -107,6 +107,7 @@ void main() {
         VoxelBrickFace face = unpack(packed_face);
 
         VoxelMeshletMetadata metadata = deref(push.uses.meshlet_metadata[payload.meshlet_id]);
+        BrickInstance brick_instance = deref(push.uses.brick_instance_allocator[metadata.brick_id]);
 
         vec3 nrm = vec3(0, 0, 0);
         switch (face.axis / 2) {
@@ -122,7 +123,7 @@ void main() {
         // albedo = vec3(nrm * 0.5 + 0.5);
         // albedo = voxel_center / VOXEL_BRICK_SIZE;
         // albedo = hsv2rgb(vec3(hash11(payload.meshlet_id), hash11(payload.face_id) * 0.4 + 0.7, 0.9));
-        albedo = hsv2rgb(vec3(hash11(metadata.brick_id), hash11(packed_face.data) * 0.4 + 0.6, 0.9));
+        albedo = hsv2rgb(vec3(hash11(brick_instance.chunk_index) * 0.8 + hash11(brick_instance.brick_index) * 0.2, hash11(packed_face.data) * 0.4 + 0.6, 0.9));
 
         vec3 diffuse = vec3(0);
         diffuse += vec3(1);
