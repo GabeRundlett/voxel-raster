@@ -107,7 +107,7 @@ void main() {
         VoxelBrickFace face = unpack(packed_face);
 
         VoxelMeshletMetadata metadata = deref(push.uses.meshlet_metadata[payload.meshlet_id]);
-        BrickInstance brick_instance = deref(push.uses.brick_instance_allocator[metadata.brick_id]);
+        BrickInstance brick_instance = deref(push.uses.brick_instance_allocator[metadata.brick_instance_index]);
 
         vec3 nrm = vec3(0, 0, 0);
         switch (face.axis / 2) {

@@ -60,7 +60,7 @@ struct VoxelMeshlet {
 DAXA_DECL_BUFFER_PTR(VoxelMeshlet)
 
 struct VoxelMeshletMetadata {
-    daxa_u32 brick_id;
+    daxa_u32 brick_instance_index;
 };
 DAXA_DECL_BUFFER_PTR(VoxelMeshletMetadata)
 

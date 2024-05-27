@@ -42,7 +42,7 @@ void write_results() {
             }
             deref(push.uses.meshlet_allocator[result_mesh.meshlet_start + gl_LocalInvocationIndex]).faces[i] = PackedVoxelBrickFace(face_id);
         }
-        deref(push.uses.meshlet_metadata[result_mesh.meshlet_start + gl_LocalInvocationIndex]).brick_id = brick_instance_index;
+        deref(push.uses.meshlet_metadata[result_mesh.meshlet_start + gl_LocalInvocationIndex]).brick_instance_index = brick_instance_index;
     }
 }
 

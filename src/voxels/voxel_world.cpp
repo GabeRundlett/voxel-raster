@@ -77,10 +77,10 @@ void voxel_world::init(VoxelWorld &self) {
                                 float z = (float(zi + brick_zi * VOXEL_BRICK_SIZE + chunk_zi * VOXEL_CHUNK_SIZE) + 0.5f) / 16.0f;
 
                                 const float r = 2.0f;
-                                x = glm::fract(x * 0.5f / r) * 2 * r - r;
-                                y = glm::fract(y * 0.5f / r) * 2 * r - r;
-                                z = glm::fract(z * 0.5f / r) * 2 * r - r;
-                                uint32_t value = (x * x + y * y + z * z) < float(r * r * 0.5f) ? 1 : 0;
+                                x = glm::fract(x / r) * r - r * 0.5f;
+                                y = glm::fract(y / r) * r - r * 0.5f;
+                                z = glm::fract(z / r) * r - r * 0.5f;
+                                uint32_t value = (x * x + y * y + z * z) < float(r * r * 0.25f) ? 1 : 0;
 
                                 if (value != 0) {
                                     brick_metadata.has_voxel = true;

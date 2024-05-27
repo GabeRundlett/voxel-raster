@@ -9,7 +9,7 @@ DAXA_DECL_PUSH_CONSTANT(DrawVisbufferPush, push)
 
 struct TaskPayload {
     uint face_count;
-    uint brick_id;
+    uint brick_instance_index;
 };
 struct PackedTaskPayload {
     uint data;
@@ -18,14 +18,14 @@ struct PackedTaskPayload {
 PackedTaskPayload pack(TaskPayload payload) {
     PackedTaskPayload result;
     result.data = payload.face_count & 0xfff;
-    result.data |= (payload.brick_id & 0xfffff) << 12;
+    result.data |= (payload.brick_instance_index & 0xfffff) << 12;
     return result;
 }
 
 TaskPayload unpack(PackedTaskPayload packed_payload) {
     TaskPayload result;
     result.face_count = packed_payload.data & 0xfff;
-    result.brick_id = (packed_payload.data >> 12) & 0xfffff;
+    result.brick_instance_index = (packed_payload.data >> 12) & 0xfffff;
     return result;
 }
 
@@ -49,7 +49,7 @@ void main() {
     if (gl_LocalInvocationIndex == 0) {
         TaskPayload payload;
         payload.face_count = mesh.face_count;
-        payload.brick_id = brick_instance_index;
+        payload.brick_instance_index = brick_instance_index;
         packed_payload = pack(payload);
         EmitMeshTasksEXT((mesh.face_count + 31) / 32, 1, 1);
     }
@@ -214,7 +214,7 @@ void main() {
     SetMeshOutputsEXT(meshlet_face_count * 4, meshlet_face_count * 2);
 #endif
 
-    BrickInstance brick_instance = deref(push.uses.brick_instance_allocator[payload.brick_id]);
+    BrickInstance brick_instance = deref(push.uses.brick_instance_allocator[payload.brick_instance_index]);
     VoxelChunk voxel_chunk = deref(push.uses.chunks[brick_instance.chunk_index]);
     VoxelBrickMesh mesh = deref(voxel_chunk.meshes[brick_instance.brick_index]);
 
