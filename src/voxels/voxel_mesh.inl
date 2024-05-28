@@ -35,11 +35,22 @@
 static_assert(MAX_OUTER_FACES_PER_BRICK / 32 < 256);
 #endif
 
+struct Voxel {
+    daxa_f32vec3 col;
+    daxa_f32vec3 nrm;
+};
+struct PackedVoxel {
+    daxa_u32 data;
+};
 struct VoxelBrickBitmask {
     daxa_u32 metadata;
     daxa_u32 bits[VOXELS_PER_BRICK / 32];
 };
 DAXA_DECL_BUFFER_PTR(VoxelBrickBitmask)
+struct VoxelAttribBrick {
+    PackedVoxel packed_voxels[VOXELS_PER_BRICK];
+};
+DAXA_DECL_BUFFER_PTR(VoxelAttribBrick)
 struct VoxelBrickMesh {
     daxa_u32 face_count;
     daxa_u32 meshlet_start;
@@ -86,6 +97,7 @@ struct VoxelChunk {
     daxa_BufferPtr(VoxelBrickBitmask) bitmasks;
     daxa_BufferPtr(VoxelBrickMesh) meshes;
     daxa_BufferPtr(daxa_i32vec4) pos_scl;
+    daxa_BufferPtr(VoxelAttribBrick) attribs;
     daxa_u32 brick_n;
     daxa_f32vec3 pos;
 };

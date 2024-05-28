@@ -64,6 +64,14 @@ void init(AppState &self) {
                 glfwSetCursorPos(glfw_window, double(center.x), double(center.y));
             }
         });
+    glfwSetScrollCallback(
+        self.glfw_window_ptr,
+        [](GLFWwindow *glfw_window, double x, double y) {
+            auto &self = *reinterpret_cast<AppState *>(glfwGetWindowUserPointer(glfw_window));
+            if (!self.paused) {
+                player::on_mouse_scroll(self.player, x, y);
+            }
+        });
     glfwSetKeyCallback(
         self.glfw_window_ptr,
         [](GLFWwindow *glfw_window, int key, int, int action, int) {

@@ -2,6 +2,7 @@
 #include "renderer.hpp"
 #include "../player.hpp"
 #include <daxa/command_recorder.hpp>
+#include <daxa/gpu_resources.hpp>
 #include <daxa/utils/task_graph_types.hpp>
 #include <voxels/voxel_mesh.inl>
 #include <voxels/voxel_world.hpp>
@@ -15,6 +16,8 @@
 
 #include <GLFW/glfw3.h>
 #if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
 #define GLFW_EXPOSE_NATIVE_WIN32
 #elif defined(__linux__)
 #define GLFW_EXPOSE_NATIVE_X11
@@ -25,6 +28,7 @@ struct RenderChunk {
     daxa::BufferId brick_meshes;
     daxa::BufferId brick_bitmasks;
     daxa::BufferId brick_positions;
+    daxa::BufferId brick_attribs;
 
     uint32_t brick_count;
 };
@@ -42,8 +46,10 @@ struct renderer::State {
     std::shared_ptr<daxa::ComputePipeline> set_indirect_infos0;
     std::shared_ptr<daxa::ComputePipeline> mesh_voxel_bricks_pipeline;
     std::shared_ptr<daxa::RasterPipeline> draw_visbuffer_pipeline;
+    std::shared_ptr<daxa::RasterPipeline> draw_visbuffer_depth_cull_pipeline;
     std::shared_ptr<daxa::RasterPipeline> shade_visbuffer_pipeline;
     std::shared_ptr<daxa::ComputePipeline> analyze_visbuffer_pipeline;
+    std::shared_ptr<daxa::ComputePipeline> gen_hiz_pipeline;
     daxa::TaskImage task_swapchain_image;
     daxa::TaskGraph loop_task_graph;
 
@@ -63,10 +69,12 @@ struct renderer::State {
     std::vector<daxa::BufferId> tracked_brick_meshes;
     std::vector<daxa::BufferId> tracked_brick_bitmasks;
     std::vector<daxa::BufferId> tracked_brick_positions;
+    std::vector<daxa::BufferId> tracked_brick_attribs;
 
     daxa::TaskBuffer task_brick_meshes;
     daxa::TaskBuffer task_brick_bitmasks;
     daxa::TaskBuffer task_brick_positions;
+    daxa::TaskBuffer task_brick_attribs;
 
     daxa::BufferId brick_visibility_bits;
     daxa::TaskBuffer task_brick_visibility_bits;
@@ -141,8 +149,21 @@ inline void clear_task_images(daxa::TaskGraph &task_graph, std::array<daxa::Task
     });
 }
 
-auto round_up_div(auto x, auto y) {
+inline constexpr auto round_up_div(auto x, auto y) {
     return (x + y - 1) / y;
+}
+
+inline constexpr auto find_msb(uint32_t v) -> uint32_t {
+    uint32_t index = 0;
+    while (v != 0) {
+        v = v >> 1;
+        index = index + 1;
+    }
+    return index;
+}
+inline constexpr auto find_next_lower_po2(uint32_t v) -> uint32_t {
+    auto const msb = find_msb(v);
+    return 1u << ((msb == 0 ? 1 : msb) - 1);
 }
 
 struct AllocateBrickInstancesTask : AllocateBrickInstancesH::Task {
@@ -254,6 +275,50 @@ struct AnalyzeVisbufferTask : AnalyzeVisbufferH::Task {
     }
 };
 
+struct GenHizTask : GenHizH::Task {
+    AttachmentViews views = {};
+    daxa::ComputePipeline *pipeline = {};
+    void callback(daxa::TaskInterface ti) {
+        ti.recorder.set_pipeline(*pipeline);
+        auto const &image_attach_info = ti.get(AT.src);
+        auto image_info = ti.device.info_image(image_attach_info.ids[0]).value();
+        auto const dispatch_x = round_up_div(find_next_lower_po2(image_info.size.x) * 2, GEN_HIZ_WINDOW_X);
+        auto const dispatch_y = round_up_div(find_next_lower_po2(image_info.size.y) * 2, GEN_HIZ_WINDOW_Y);
+        GenHizPush push = {
+            .counter = ti.allocator->allocate_fill(0u).value().device_address,
+            .mip_count = ti.get(AT.mips).view.slice.level_count,
+            .total_workgroup_count = dispatch_x * dispatch_y,
+        };
+        ti.assign_attachment_shader_blob(push.uses.value);
+        ti.recorder.push_constant(push);
+        ti.recorder.dispatch({dispatch_x, dispatch_y, 1});
+    }
+};
+
+auto task_gen_hiz_single_pass(renderer::Renderer self, daxa::TaskGraph &task_graph, daxa::TaskBufferView gpu_input, daxa::TaskImageView depth) -> daxa::TaskImageView {
+    auto const x_ = self->gpu_input.next_lower_po2_render_size.x;
+    auto const y_ = self->gpu_input.next_lower_po2_render_size.y;
+    auto mip_count = static_cast<uint32_t>(std::ceil(std::log2(std::max(x_, y_))));
+    mip_count = std::min(mip_count, uint32_t(GEN_HIZ_LEVELS_PER_DISPATCH));
+    auto task_hiz = task_graph.create_transient_image({
+        .format = daxa::Format::R32_SFLOAT,
+        .size = {x_, y_, 1},
+        .mip_level_count = mip_count,
+        .array_layer_count = 1,
+        .sample_count = 1,
+        .name = "hiz",
+    });
+    task_graph.add_task(GenHizTask{
+        .views = std::array{
+            daxa::attachment_view(GenHizH::AT.gpu_input, gpu_input),
+            daxa::attachment_view(GenHizH::AT.src, depth),
+            daxa::attachment_view(GenHizH::AT.mips, task_hiz),
+        },
+        .pipeline = self->gen_hiz_pipeline.get(),
+    });
+    return task_hiz;
+}
+
 void record_tasks(renderer::Renderer self) {
     self->loop_task_graph = daxa::TaskGraph({
         .device = self->device,
@@ -268,6 +333,7 @@ void record_tasks(renderer::Renderer self) {
     self->loop_task_graph.use_persistent_buffer(self->task_brick_meshes);
     self->loop_task_graph.use_persistent_buffer(self->task_brick_bitmasks);
     self->loop_task_graph.use_persistent_buffer(self->task_brick_positions);
+    self->loop_task_graph.use_persistent_buffer(self->task_brick_attribs);
     self->loop_task_graph.use_persistent_buffer(self->task_brick_visibility_bits);
     self->loop_task_graph.use_persistent_buffer(self->task_visible_brick_instance_allocator);
     auto task_input_buffer = self->loop_task_graph.create_transient_buffer({
@@ -299,26 +365,15 @@ void record_tasks(renderer::Renderer self) {
         .size = {self->gpu_input.render_size.x, self->gpu_input.render_size.y, 1},
         .name = "debug_overdraw",
     });
+    clear_task_images(self->loop_task_graph, std::array<daxa::TaskImageView, 1>{task_debug_overdraw}, std::array<daxa::ClearValue, 1>{std::array<uint32_t, 4>{0, 0, 0, 0}});
 #endif
-
-    // ResetMeshletAllocatorTask
-    task_fill_buffer(self->loop_task_graph, self->task_brick_instance_allocator, uint32_t{0});
-    self->loop_task_graph.add_task(AllocateBrickInstancesTask{
-        .views = std::array{
-            daxa::attachment_view(AllocateBrickInstancesH::AT.gpu_input, task_input_buffer),
-            daxa::attachment_view(AllocateBrickInstancesH::AT.chunks, self->task_chunks),
-            daxa::attachment_view(AllocateBrickInstancesH::AT.brick_instance_allocator, self->task_brick_instance_allocator),
-        },
-        .pipeline = self->allocate_brick_instances_pipeline.get(),
-        .chunk_n = &self->gpu_input.chunk_n,
-    });
 
     auto task_indirect_infos = self->loop_task_graph.create_transient_buffer({
         .size = sizeof(DispatchIndirectStruct) * 2,
         .name = "indirect_infos",
     });
 
-    auto draw_brick_instances = [&](daxa::TaskBufferView task_brick_instance_allocator) {
+    auto draw_brick_instances = [&](daxa::TaskBufferView task_brick_instance_allocator, daxa::TaskImageView hiz, bool shade) {
         task_fill_buffer(self->loop_task_graph, self->task_brick_meshlet_allocator, uint32_t{0});
 
         self->loop_task_graph.add_task(SetIndirectInfos0Task{
@@ -345,10 +400,6 @@ void record_tasks(renderer::Renderer self) {
             .indirect_offset = sizeof(DispatchIndirectStruct) * 0,
         });
 
-#if ENABLE_DEBUG_VIS
-        clear_task_images(self->loop_task_graph, std::array<daxa::TaskImageView, 1>{task_debug_overdraw}, std::array<daxa::ClearValue, 1>{std::array<uint32_t, 4>{0, 0, 0, 0}});
-#endif
-
         self->loop_task_graph.add_task(DrawVisbufferTask{
             .views = std::array{
                 daxa::attachment_view(DrawVisbufferH::AT.render_target, task_visbuffer),
@@ -363,30 +414,53 @@ void record_tasks(renderer::Renderer self) {
                 daxa::attachment_view(DrawVisbufferH::AT.debug_overdraw, task_debug_overdraw),
 #endif
                 daxa::attachment_view(DrawVisbufferH::AT.indirect_info, task_indirect_infos),
+                daxa::attachment_view(DrawVisbufferH::AT.hiz, hiz),
             },
-            .pipeline = self->draw_visbuffer_pipeline.get(),
+            .pipeline = hiz == daxa::NullTaskImage ? self->draw_visbuffer_pipeline.get() : self->draw_visbuffer_depth_cull_pipeline.get(),
             .indirect_offset = sizeof(DispatchIndirectStruct) * 1,
         });
 
-        self->loop_task_graph.add_task(ShadeVisbufferTask{
-            .views = std::array{
-                daxa::attachment_view(ShadeVisbufferH::AT.render_target, self->task_swapchain_image),
-                daxa::attachment_view(ShadeVisbufferH::AT.gpu_input, task_input_buffer),
-                daxa::attachment_view(ShadeVisbufferH::AT.visbuffer, task_visbuffer),
+        if (shade) {
+            self->loop_task_graph.add_task(ShadeVisbufferTask{
+                .views = std::array{
+                    daxa::attachment_view(ShadeVisbufferH::AT.render_target, self->task_swapchain_image),
+                    daxa::attachment_view(ShadeVisbufferH::AT.gpu_input, task_input_buffer),
+                    daxa::attachment_view(ShadeVisbufferH::AT.visbuffer, task_visbuffer),
 #if ENABLE_DEBUG_VIS
-                daxa::attachment_view(ShadeVisbufferH::AT.debug_overdraw, task_debug_overdraw),
+                    daxa::attachment_view(ShadeVisbufferH::AT.debug_overdraw, task_debug_overdraw),
 #endif
-                daxa::attachment_view(ShadeVisbufferH::AT.chunks, self->task_chunks),
-                daxa::attachment_view(ShadeVisbufferH::AT.meshes, self->task_brick_meshes),
-                daxa::attachment_view(ShadeVisbufferH::AT.brick_instance_allocator, task_brick_instance_allocator),
-                daxa::attachment_view(ShadeVisbufferH::AT.meshlet_allocator, self->task_brick_meshlet_allocator),
-                daxa::attachment_view(ShadeVisbufferH::AT.meshlet_metadata, self->task_brick_meshlet_metadata),
-            },
-            .pipeline = self->shade_visbuffer_pipeline.get(),
-        });
+                    daxa::attachment_view(ShadeVisbufferH::AT.chunks, self->task_chunks),
+                    daxa::attachment_view(ShadeVisbufferH::AT.attribs, self->task_brick_attribs),
+                    daxa::attachment_view(ShadeVisbufferH::AT.brick_instance_allocator, task_brick_instance_allocator),
+                    daxa::attachment_view(ShadeVisbufferH::AT.meshlet_allocator, self->task_brick_meshlet_allocator),
+                    daxa::attachment_view(ShadeVisbufferH::AT.meshlet_metadata, self->task_brick_meshlet_metadata),
+                },
+                .pipeline = self->shade_visbuffer_pipeline.get(),
+            });
+        }
     };
 
-    draw_brick_instances(self->task_brick_instance_allocator);
+    // draw previously visible bricks
+    draw_brick_instances(self->task_visible_brick_instance_allocator, daxa::NullTaskImage, false);
+
+    // build hi-z
+    auto hiz = task_gen_hiz_single_pass(self, self->loop_task_graph, task_input_buffer, task_depth);
+
+    // cull and draw the rest
+    // ResetMeshletAllocatorTask
+    task_fill_buffer(self->loop_task_graph, self->task_brick_instance_allocator, uint32_t{0});
+    self->loop_task_graph.add_task(AllocateBrickInstancesTask{
+        .views = std::array{
+            daxa::attachment_view(AllocateBrickInstancesH::AT.gpu_input, task_input_buffer),
+            daxa::attachment_view(AllocateBrickInstancesH::AT.chunks, self->task_chunks),
+            daxa::attachment_view(AllocateBrickInstancesH::AT.pos_scl, self->task_brick_positions),
+            daxa::attachment_view(AllocateBrickInstancesH::AT.brick_instance_allocator, self->task_brick_instance_allocator),
+            daxa::attachment_view(AllocateBrickInstancesH::AT.hiz, hiz),
+        },
+        .pipeline = self->allocate_brick_instances_pipeline.get(),
+        .chunk_n = &self->gpu_input.chunk_n,
+    });
+    draw_brick_instances(self->task_brick_instance_allocator, hiz, true);
 
     task_fill_buffer(self->loop_task_graph, self->task_visible_brick_instance_allocator, uint32_t{0});
     clear_task_buffers(self->loop_task_graph, std::array<daxa::TaskBufferView, 1>{self->task_brick_visibility_bits}, std::array{daxa::BufferClearInfo{.size = sizeof(uint32_t) * MAX_BRICK_INSTANCE_COUNT + 1}});
@@ -394,7 +468,6 @@ void record_tasks(renderer::Renderer self) {
         .views = std::array{
             daxa::attachment_view(AnalyzeVisbufferH::AT.gpu_input, task_input_buffer),
             daxa::attachment_view(AnalyzeVisbufferH::AT.chunks, self->task_chunks),
-            daxa::attachment_view(AnalyzeVisbufferH::AT.meshes, self->task_brick_meshes),
             daxa::attachment_view(AnalyzeVisbufferH::AT.brick_instance_allocator, self->task_brick_instance_allocator),
             daxa::attachment_view(AnalyzeVisbufferH::AT.meshlet_allocator, self->task_brick_meshlet_allocator),
             daxa::attachment_view(AnalyzeVisbufferH::AT.meshlet_metadata, self->task_brick_meshlet_metadata),
@@ -404,8 +477,6 @@ void record_tasks(renderer::Renderer self) {
         },
         .pipeline = self->analyze_visbuffer_pipeline.get(),
     });
-
-    // draw_brick_instances(self->task_visible_brick_instance_allocator);
 
     self->loop_task_graph.add_task({
         .attachments = {
@@ -446,6 +517,7 @@ void renderer::init(Renderer &self, void *glfw_window_ptr) {
         .flags = daxa::DeviceFlags2{
             .mesh_shader_bit = true,
         },
+        .max_allowed_buffers = 1 << 16,
         .name = "my device",
     });
 
@@ -546,6 +618,27 @@ void renderer::init(Renderer &self, void *glfw_window_ptr) {
         }
         self->draw_visbuffer_pipeline = result.value();
     }
+    {
+        auto result = self->pipeline_manager.add_raster_pipeline({
+            .mesh_shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"draw_visbuffer.glsl"}, .compile_options = {.defines = {{"DO_DEPTH_CULL", "1"}}, .required_subgroup_size = 32}},
+            .fragment_shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"draw_visbuffer.glsl"}},
+            .task_shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"draw_visbuffer.glsl"}, .compile_options = {.defines = {{"DO_DEPTH_CULL", "1"}}, .required_subgroup_size = 32}},
+            .color_attachments = {{.format = daxa::Format::R32_UINT}},
+            .depth_test = daxa::DepthTestInfo{
+                .depth_attachment_format = daxa::Format::D32_SFLOAT,
+                .enable_depth_write = true,
+                .depth_test_compare_op = daxa::CompareOp::GREATER,
+            },
+            .raster = {.polygon_mode = daxa::PolygonMode::FILL},
+            .push_constant_size = sizeof(DrawVisbufferPush),
+            .name = "draw_visbuffer",
+        });
+        if (result.is_err()) {
+            std::cerr << result.message() << std::endl;
+            std::terminate();
+        }
+        self->draw_visbuffer_depth_cull_pipeline = result.value();
+    }
 
     {
         auto result = self->pipeline_manager.add_raster_pipeline({
@@ -567,13 +660,26 @@ void renderer::init(Renderer &self, void *glfw_window_ptr) {
         auto result = self->pipeline_manager.add_compute_pipeline({
             .shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"analyze_visbuffer.glsl"}},
             .push_constant_size = sizeof(AnalyzeVisbufferPush),
-            .name = "mesh_voxel_bricks",
+            .name = "analyze_visbuffer",
         });
         if (result.is_err()) {
             std::cerr << result.message() << std::endl;
             std::terminate();
         }
         self->analyze_visbuffer_pipeline = result.value();
+    }
+
+    {
+        auto result = self->pipeline_manager.add_compute_pipeline({
+            .shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"gen_hiz.glsl"}},
+            .push_constant_size = sizeof(GenHizPush),
+            .name = "gen_hiz",
+        });
+        if (result.is_err()) {
+            std::cerr << result.message() << std::endl;
+            std::terminate();
+        }
+        self->gen_hiz_pipeline = result.value();
     }
 
     self->task_swapchain_image = daxa::TaskImage{{.swapchain_image = true, .name = "swapchain image"}};
@@ -587,6 +693,7 @@ void renderer::init(Renderer &self, void *glfw_window_ptr) {
     self->task_brick_meshes = daxa::TaskBuffer({.name = "task_brick_meshes"});
     self->task_brick_bitmasks = daxa::TaskBuffer({.name = "task_brick_bitmasks"});
     self->task_brick_positions = daxa::TaskBuffer({.name = "task_brick_positions"});
+    self->task_brick_attribs = daxa::TaskBuffer({.name = "task_brick_attribs"});
 
     self->brick_meshlet_allocator = self->device.create_buffer({
         // + 1 for the state at index 0
@@ -619,6 +726,27 @@ void renderer::init(Renderer &self, void *glfw_window_ptr) {
         .name = "brick_visibility_bits",
     });
     self->task_brick_visibility_bits.set_buffers({.buffers = std::array{self->brick_visibility_bits}});
+
+    self->gpu_input.samplers = {
+        .llc = self->device.create_sampler({
+            .magnification_filter = daxa::Filter::LINEAR,
+            .minification_filter = daxa::Filter::LINEAR,
+            .mipmap_filter = daxa::Filter::LINEAR,
+            .address_mode_u = daxa::SamplerAddressMode::CLAMP_TO_EDGE,
+            .address_mode_v = daxa::SamplerAddressMode::CLAMP_TO_EDGE,
+            .address_mode_w = daxa::SamplerAddressMode::CLAMP_TO_EDGE,
+            .name = "llc",
+        }),
+        .nnc = self->device.create_sampler({
+            .magnification_filter = daxa::Filter::NEAREST,
+            .minification_filter = daxa::Filter::NEAREST,
+            .mipmap_filter = daxa::Filter::NEAREST,
+            .address_mode_u = daxa::SamplerAddressMode::CLAMP_TO_EDGE,
+            .address_mode_v = daxa::SamplerAddressMode::CLAMP_TO_EDGE,
+            .address_mode_w = daxa::SamplerAddressMode::CLAMP_TO_EDGE,
+            .name = "nnc",
+        }),
+    };
 
     self->start_time = Clock::now();
 }
@@ -657,7 +785,13 @@ void renderer::deinit(Renderer self) {
         if (!chunk.brick_positions.is_empty()) {
             self->device.destroy_buffer(chunk.brick_positions);
         }
+        if (!chunk.brick_attribs.is_empty()) {
+            self->device.destroy_buffer(chunk.brick_attribs);
+        }
     }
+
+    self->device.destroy_sampler(std::bit_cast<daxa::SamplerId>(self->gpu_input.samplers.llc));
+    self->device.destroy_sampler(std::bit_cast<daxa::SamplerId>(self->gpu_input.samplers.nnc));
 
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
@@ -671,6 +805,7 @@ void renderer::on_resize(Renderer self, int size_x, int size_y) {
     if (size_x * size_y == 0) {
         return;
     }
+    self->gpu_input.next_lower_po2_render_size = daxa_u32vec2{find_next_lower_po2(self->gpu_input.render_size.x), find_next_lower_po2(self->gpu_input.render_size.y)};
 
     if (!self->visible_brick_instance_allocator.is_empty()) {
         self->device.destroy_buffer(self->visible_brick_instance_allocator);
@@ -681,6 +816,16 @@ void renderer::on_resize(Renderer self, int size_x, int size_y) {
         .name = "visible_brick_instance_allocator",
     });
     self->task_visible_brick_instance_allocator.set_buffers({.buffers = std::array{self->visible_brick_instance_allocator}});
+
+    auto temp_task_graph = daxa::TaskGraph({
+        .device = self->device,
+        .name = "temp_task_graph",
+    });
+    temp_task_graph.use_persistent_buffer(self->task_visible_brick_instance_allocator);
+    task_fill_buffer(temp_task_graph, self->task_visible_brick_instance_allocator, uint32_t{0});
+    temp_task_graph.submit({});
+    temp_task_graph.complete({});
+    temp_task_graph.execute({});
 
     record_tasks(self);
 }
@@ -734,11 +879,13 @@ void renderer::draw(Renderer self, player::Player player, voxel_world::VoxelWorl
         });
         temp_task_graph.use_persistent_buffer(self->task_brick_bitmasks);
         temp_task_graph.use_persistent_buffer(self->task_brick_positions);
+        temp_task_graph.use_persistent_buffer(self->task_brick_attribs);
         temp_task_graph.use_persistent_buffer(self->task_chunks);
 
         self->tracked_brick_meshes.clear();
         self->tracked_brick_bitmasks.clear();
         self->tracked_brick_positions.clear();
+        self->tracked_brick_attribs.clear();
 
         for (uint32_t chunk_i = 0; chunk_i < self->gpu_input.chunk_n; ++chunk_i) {
             auto &chunk = self->chunks[chunk_i];
@@ -750,6 +897,7 @@ void renderer::draw(Renderer self, player::Player player, voxel_world::VoxelWorl
                 needs_write_chunk = true;
                 VoxelBrickBitmask *bitmasks = voxel_world::get_voxel_brick_bitmasks(voxel_world, chunk_i);
                 int *positions = voxel_world::get_voxel_brick_positions(voxel_world, chunk_i);
+                VoxelAttribBrick *attribs = voxel_world::get_chunk_brick_attribs(voxel_world, chunk_i);
 
                 if (!has_waited) {
                     self->device.wait_idle();
@@ -764,6 +912,9 @@ void renderer::draw(Renderer self, player::Player player, voxel_world::VoxelWorl
                 }
                 if (!chunk.brick_positions.is_empty()) {
                     self->device.destroy_buffer(chunk.brick_positions);
+                }
+                if (!chunk.brick_attribs.is_empty()) {
+                    self->device.destroy_buffer(chunk.brick_attribs);
                 }
 
                 if (chunk.brick_count == 0) {
@@ -782,6 +933,10 @@ void renderer::draw(Renderer self, player::Player player, voxel_world::VoxelWorl
                     .size = sizeof(daxa_i32vec4) * chunk.brick_count,
                     .name = "brick_positions",
                 });
+                chunk.brick_attribs = self->device.create_buffer({
+                    .size = sizeof(VoxelAttribBrick) * chunk.brick_count,
+                    .name = "brick_attribs",
+                });
 
                 // The buffer will be at the current size of tracked buffers.
                 auto buffer_view_index = self->tracked_brick_meshes.size();
@@ -790,8 +945,9 @@ void renderer::draw(Renderer self, player::Player player, voxel_world::VoxelWorl
                     .attachments = {
                         daxa::inl_attachment(daxa::TaskBufferAccess::TRANSFER_WRITE, self->task_brick_bitmasks),
                         daxa::inl_attachment(daxa::TaskBufferAccess::TRANSFER_WRITE, self->task_brick_positions),
+                        daxa::inl_attachment(daxa::TaskBufferAccess::TRANSFER_WRITE, self->task_brick_attribs),
                     },
-                    .task = [&, bitmasks, positions, buffer_view_index](daxa::TaskInterface const &ti) {
+                    .task = [&, bitmasks, positions, attribs, buffer_view_index](daxa::TaskInterface const &ti) {
                         auto upload = [&ti, buffer_view_index](daxa::TaskBufferView buffer_view, void *data, uint64_t size) {
                             auto staging_input_buffer = ti.device.create_buffer({
                                 .size = size,
@@ -810,6 +966,7 @@ void renderer::draw(Renderer self, player::Player player, voxel_world::VoxelWorl
 
                         upload(self->task_brick_bitmasks, bitmasks, sizeof(VoxelBrickBitmask) * chunk.brick_count);
                         upload(self->task_brick_positions, positions, sizeof(daxa_i32vec4) * chunk.brick_count);
+                        upload(self->task_brick_attribs, attribs, sizeof(VoxelAttribBrick) * chunk.brick_count);
                     },
                     .name = "upload bricks",
                 });
@@ -822,6 +979,7 @@ void renderer::draw(Renderer self, player::Player player, voxel_world::VoxelWorl
                 self->tracked_brick_meshes.push_back(chunk.brick_meshes);
                 self->tracked_brick_bitmasks.push_back(chunk.brick_bitmasks);
                 self->tracked_brick_positions.push_back(chunk.brick_positions);
+                self->tracked_brick_attribs.push_back(chunk.brick_attribs);
             }
 
             if (needs_write_chunk) {
@@ -829,6 +987,7 @@ void renderer::draw(Renderer self, player::Player player, voxel_world::VoxelWorl
                     .bitmasks = self->device.get_device_address(chunk.brick_bitmasks).value(),
                     .meshes = self->device.get_device_address(chunk.brick_meshes).value(),
                     .pos_scl = self->device.get_device_address(chunk.brick_positions).value(),
+                    .attribs = self->device.get_device_address(chunk.brick_attribs).value(),
                     .brick_n = chunk.brick_count,
                 };
                 voxel_world::get_chunk_pos(voxel_world, chunk_i, &voxel_chunk.pos.x);
@@ -841,6 +1000,7 @@ void renderer::draw(Renderer self, player::Player player, voxel_world::VoxelWorl
             self->task_brick_meshes.set_buffers({.buffers = self->tracked_brick_meshes});
             self->task_brick_bitmasks.set_buffers({.buffers = self->tracked_brick_bitmasks});
             self->task_brick_positions.set_buffers({.buffers = self->tracked_brick_positions});
+            self->task_brick_attribs.set_buffers({.buffers = self->tracked_brick_attribs});
         }
 
         if (needs_update) {

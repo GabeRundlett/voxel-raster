@@ -18,6 +18,7 @@ struct player::State {
     float aspect;
     float vertical_fov_degrees;
     float near;
+    float speed;
 
     glm::mat4 view_to_world;
     glm::mat4 world_to_view;
@@ -51,6 +52,7 @@ void player::init(Player &self) {
     self->aspect = 1.0f;
     self->vertical_fov_degrees = 74.0f;
     self->near = 0.01f;
+    self->speed = 1.0f;
 
     self->rot_dirty = true;
     self->prj_dirty = true;
@@ -65,6 +67,15 @@ void player::on_mouse_move(Player self, float x, float y) {
     self->pitch = glm::clamp(self->pitch, MAX_ROT_EPS, M_PI - MAX_ROT_EPS);
 
     self->rot_dirty = true;
+}
+
+void player::on_mouse_scroll(Player self, float x, float y) {
+    if (y < 0) {
+        self->speed *= 0.85f;
+    } else {
+        self->speed *= 1.2f;
+    }
+    self->speed = glm::clamp(self->speed, 1.0f, 64.0f);
 }
 
 void player::on_key(Player self, int key_id, int action) {
@@ -194,7 +205,7 @@ void update_camera(player::Player self) {
 }
 
 void player::update(Player self, float dt) {
-    float const speed = self->move_sprint ? 10.0f : 1.0f;
+    float const speed = (self->move_sprint ? 10.0f : 1.0f) * self->speed;
     if (self->move_flat) {
         if (self->move_f) {
             self->pos += glm::vec3(self->forward_flat, 0) * (speed * dt);

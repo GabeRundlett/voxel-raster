@@ -1,5 +1,6 @@
 #include <shared.inl>
 #include <renderer/visbuffer.glsl>
+#include <voxels/pack_unpack.inl>
 #include <voxels/voxel_mesh.glsl>
 
 DAXA_DECL_PUSH_CONSTANT(ShadeVisbufferPush, push)
@@ -88,7 +89,9 @@ vec3 color_correct(vec3 x) {
     return x;
 }
 
-#define VISUALIZE_OVERDRAW (ENABLE_DEBUG_VIS && 0)
+#define VISUALIZE_OVERDRAW (ENABLE_DEBUG_VIS && 1)
+
+const vec3 SKY_COL = vec3(100, 121, 255) / 255;
 
 void main() {
 #if VISUALIZE_OVERDRAW
@@ -98,7 +101,7 @@ void main() {
 #else
     uint visbuffer_id = texelFetch(daxa_utexture2D(push.uses.visbuffer), ivec2(gl_FragCoord.xy), 0).x;
     if (visbuffer_id == INVALID_MESHLET_INDEX) {
-        f_out = vec4(0.4, 0.4, 0.9, 1);
+        f_out = vec4(SKY_COL, 255);
     } else {
         VisbufferPayload payload = unpack(PackedVisbufferPayload(visbuffer_id));
 
@@ -109,26 +112,31 @@ void main() {
         VoxelMeshletMetadata metadata = deref(push.uses.meshlet_metadata[payload.meshlet_id]);
         BrickInstance brick_instance = deref(push.uses.brick_instance_allocator[metadata.brick_instance_index]);
 
-        vec3 nrm = vec3(0, 0, 0);
-        switch (face.axis / 2) {
-        case 0: nrm.x = float(face.axis % 2) * 2.0 - 1.0; break;
-        case 1: nrm.y = float(face.axis % 2) * 2.0 - 1.0; break;
-        case 2: nrm.z = float(face.axis % 2) * 2.0 - 1.0; break;
-        }
+        VoxelChunk voxel_chunk = deref(push.uses.chunks[brick_instance.chunk_index]);
+        uint voxel_index = face.pos.x + face.pos.y * VOXEL_BRICK_SIZE + face.pos.z * VOXEL_BRICK_SIZE * VOXEL_BRICK_SIZE;
+        Voxel voxel = unpack_voxel(deref(voxel_chunk.attribs[brick_instance.brick_index]).packed_voxels[voxel_index]);
 
-        // nrm = normalize((vec3(face.pos) + 0.5) - 0.5);
+        // vec3 face_nrm = vec3(0, 0, 0);
+        // switch (face.axis / 2) {
+        // case 0: face_nrm.x = float(face.axis % 2) * 2.0 - 1.0; break;
+        // case 1: face_nrm.y = float(face.axis % 2) * 2.0 - 1.0; break;
+        // case 2: face_nrm.z = float(face.axis % 2) * 2.0 - 1.0; break;
+        // }
+        // voxel.nrm = normalize(face_nrm * 0.1 + voxel.nrm);
+
         const vec3 voxel_center = (vec3(face.pos) + 0.5);
 
         vec3 albedo = vec3(1);
-        // albedo = vec3(nrm * 0.5 + 0.5);
+        // albedo = vec3(voxel.nrm);
         // albedo = voxel_center / VOXEL_BRICK_SIZE;
         // albedo = hsv2rgb(vec3(hash11(payload.meshlet_id), hash11(payload.face_id) * 0.4 + 0.7, 0.9));
-        albedo = hsv2rgb(vec3(hash11(brick_instance.chunk_index) * 0.8 + hash11(brick_instance.brick_index) * 0.2, hash11(packed_face.data) * 0.4 + 0.6, 0.9));
+        // albedo = hsv2rgb(vec3(hash11(brick_instance.chunk_index) * 0.8 + hash11(brick_instance.brick_index) * 0.2, hash11(packed_face.data) * 0.4 + 0.6, 0.9));
+        albedo = voxel.col;
 
         vec3 diffuse = vec3(0);
-        diffuse += vec3(1);
-        // diffuse += max(0.0, dot(nrm, normalize(vec3(-1, 2, -3)))) * vec3(0.9, 0.7, 0.5) * 2;
-        // diffuse += max(0.0, dot(nrm, normalize(vec3(0, 0, -1))) * 0.2 + 0.8) * vec3(0.4, 0.4, 0.9);
+        // diffuse += vec3(1);
+        diffuse += max(0.0, dot(voxel.nrm, normalize(vec3(-1, 2, -3)))) * vec3(0.9, 0.7, 0.5) * 2;
+        diffuse += max(0.0, dot(voxel.nrm, normalize(vec3(0, 0, -1))) * 0.4 + 0.6) * SKY_COL;
 
         f_out = vec4(color_correct(albedo * diffuse), 1);
     }

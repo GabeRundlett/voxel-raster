@@ -1,6 +1,7 @@
 #pragma once
 
 struct VoxelBrickBitmask;
+struct VoxelAttribBrick;
 
 namespace voxel_world {
     struct State;
@@ -11,6 +12,7 @@ namespace voxel_world {
 
     VoxelBrickBitmask *get_voxel_brick_bitmasks(VoxelWorld self, unsigned int chunk_index);
     int *get_voxel_brick_positions(VoxelWorld self, unsigned int chunk_index);
+    VoxelAttribBrick *get_chunk_brick_attribs(VoxelWorld self, unsigned int chunk_index);
     unsigned int get_voxel_brick_count(VoxelWorld self, unsigned int chunk_index);
     bool chunk_bricks_changed(VoxelWorld self, unsigned int chunk_index);
     unsigned int get_chunk_count(VoxelWorld self);

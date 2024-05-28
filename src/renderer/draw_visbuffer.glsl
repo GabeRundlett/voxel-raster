@@ -58,6 +58,8 @@ void main() {
 #elif DAXA_SHADER_STAGE == DAXA_SHADER_STAGE_MESH
 #extension GL_EXT_mesh_shader : enable
 
+#include <renderer/hiz.glsl>
+
 taskPayloadSharedEXT PackedTaskPayload packed_payload;
 layout(triangles) out;
 layout(max_vertices = MAX_VERTICES_PER_MESHLET, max_primitives = MAX_TRIANGLES_PER_MESHLET) out;
@@ -70,15 +72,14 @@ layout(location = 1) out vec2 v_uv[];
 mat4 world_to_clip;
 PackedVisbufferPayload o_packed_payload;
 
-bool is_micropoly_visible(vec2 ndc_min, vec2 ndc_max, vec2 resolution) {
+bool is_micropoly_invisible(vec2 ndc_min, vec2 ndc_max, vec2 resolution) {
     // Cope epsilon to be conservative
     const float EPS = 1.0 / 256.0f;
     vec2 sample_grid_min = (ndc_min * 0.5f + 0.5f) * resolution - 0.5f - EPS;
     vec2 sample_grid_max = (ndc_max * 0.5f + 0.5f) * resolution - 0.5f + EPS;
     // Checks if the min and the max positions are right next to the same sample grid line.
     // If we are next to the same sample grid line in one dimension we are not rasterized.
-    bool prim_visible = !any(equal(floor(sample_grid_max), floor(sample_grid_min)));
-    return prim_visible && !(any(greaterThan(ndc_min, vec2(1))) || any(lessThan(ndc_max, vec2(-1))));
+    return any(equal(floor(sample_grid_max), floor(sample_grid_min))) || outside_frustum(ndc_min, ndc_max);
 }
 
 void emit_prim(vec3 in_p0, vec3 in_p1, vec3 in_p2, vec3 in_p3) {
@@ -86,25 +87,30 @@ void emit_prim(vec3 in_p0, vec3 in_p1, vec3 in_p2, vec3 in_p3) {
     vec4 p1_h = world_to_clip * vec4(in_p1, 1);
     vec4 p2_h = world_to_clip * vec4(in_p2, 1);
 
-    vec2 p0 = p0_h.xy / p0_h.w;
-    vec2 p1 = p1_h.xy / p1_h.w;
-    vec2 p2 = p2_h.xy / p2_h.w;
+    vec3 p0 = p0_h.xyz / p0_h.w;
+    vec3 p1 = p1_h.xyz / p1_h.w;
+    vec3 p2 = p2_h.xyz / p2_h.w;
 
 #if DISCARD_METHOD
-    vec2 ndc_min = min(min(p0, p1), p2);
-    vec2 ndc_max = max(max(p0, p1), p2);
+    vec3 ndc_min = min(min(p0, p1), p2);
+    vec3 ndc_max = max(max(p0, p1), p2);
 #else
     vec4 p3_h = world_to_clip * vec4(in_p3, 1);
-    vec2 p3 = p3_h.xy / p3_h.w;
-    vec2 ndc_min = min(min(p0, p1), min(p2, p3));
-    vec2 ndc_max = max(max(p0, p1), max(p2, p3));
+    vec3 p3 = p3_h.xyz / p3_h.w;
+    vec3 ndc_min = min(min(p0, p1), min(p2, p3));
+    vec3 ndc_max = max(max(p0, p1), max(p2, p3));
 #endif
 
-    bool micro_poly_visible = is_micropoly_visible(ndc_min, ndc_max, vec2(deref(push.uses.gpu_input).render_size));
-    bool facing_camera = determinant(mat3(p0_h.xyw, p1_h.xyw, p2_h.xyw)) > 0;
+    bool micro_poly_invisible = is_micropoly_invisible(ndc_min.xy, ndc_max.xy, vec2(deref(push.uses.gpu_input).render_size));
+    bool facing_away = determinant(mat3(p0_h.xyw, p1_h.xyw, p2_h.xyw)) <= 0;
     uint face_id = gl_LocalInvocationIndex;
 
-    bool cull_poly = !(micro_poly_visible && facing_camera);
+#if DO_DEPTH_CULL
+    const bool depth_occluded = is_ndc_aabb_hiz_depth_occluded(ndc_min, ndc_max, deref(push.uses.gpu_input).next_lower_po2_render_size, push.uses.hiz);
+    bool cull_poly = micro_poly_invisible || facing_away || depth_occluded;
+#else
+    bool cull_poly = micro_poly_invisible || facing_away;
+#endif
 
 #if DISCARD_METHOD
     uint vert_i = face_id * 3;
