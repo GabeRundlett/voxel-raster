@@ -89,7 +89,7 @@ vec3 color_correct(vec3 x) {
     return x;
 }
 
-#define VISUALIZE_OVERDRAW (ENABLE_DEBUG_VIS && 1)
+#define VISUALIZE_OVERDRAW (ENABLE_DEBUG_VIS && 0)
 
 const vec3 SKY_COL = vec3(100, 121, 255) / 255;
 

@@ -107,6 +107,7 @@ glm::vec2 minmax_gradient_z(glm::vec3 p0, glm::vec3 p1, float slope, float offse
 constexpr int32_t CHUNK_NX = 8;
 constexpr int32_t CHUNK_NY = 8;
 constexpr int32_t CHUNK_NZ = 4;
+constexpr int32_t CHUNK_LEVELS = 1;
 constexpr mat3 m = mat3(0.00, 0.80, 0.60,
                         -0.80, 0.36, -0.48,
                         -0.60, -0.48, 0.64);
@@ -117,79 +118,87 @@ const float NOISE_LACUNARITY = 4.0f;
 const float NOISE_SCALE = 0.05f;
 const float NOISE_AMPLITUDE = 20.0f;
 
+auto get_brick_metadata(std::unique_ptr<Chunk> &chunk, auto brick_index) -> BrickMetadata & {
+    return *reinterpret_cast<BrickMetadata *>(&chunk->voxel_brick_bitmasks[brick_index].metadata);
+}
+
+auto voxel_value(glm::vec3 pos) {
+    auto result = 0.0f;
+    result += gradient_z(pos, -1, 8.0f).val;
+    {
+        float noise_persistence = NOISE_PERSISTENCE;
+        float noise_lacunarity = NOISE_LACUNARITY;
+        float noise_scale = NOISE_SCALE;
+        float noise_amplitude = NOISE_AMPLITUDE;
+        for (uint32_t i = 0; i < 5; ++i) {
+            result += noise(pos, noise_scale, noise_amplitude).val;
+            noise_scale *= noise_lacunarity;
+            noise_amplitude *= noise_persistence;
+            // pos = m * pos;
+        }
+    }
+    return result;
+}
+auto voxel_nrm(glm::vec3 pos) {
+    auto result = DensityNrm(0, glm::vec3(0));
+    {
+        auto dn = gradient_z(pos, -1, 8.0f);
+        result.val += dn.val;
+        result.nrm += dn.nrm;
+    }
+    {
+        float noise_persistence = NOISE_PERSISTENCE;
+        float noise_lacunarity = NOISE_LACUNARITY;
+        float noise_scale = NOISE_SCALE;
+        float noise_amplitude = NOISE_AMPLITUDE;
+        auto inv = mat3(1, 0, 0, 0, 1, 0, 0, 0, 1);
+        for (uint32_t i = 0; i < 5; ++i) {
+            auto dn = noise(pos, noise_scale, noise_amplitude);
+            result.val += dn.val;
+            result.nrm += inv * dn.nrm;
+            noise_scale *= noise_lacunarity;
+            noise_amplitude *= noise_persistence;
+            // pos = m * pos;
+            // inv = mi * inv;
+        }
+    }
+    result.nrm = normalize(result.nrm);
+    return result;
+}
+auto voxel_minmax_value(glm::vec3 p0, glm::vec3 p1) {
+    auto result = glm::vec2(0);
+    result += minmax_gradient_z(p0, p1, -1, 8.0f);
+    {
+        float noise_persistence = NOISE_PERSISTENCE;
+        float noise_lacunarity = NOISE_LACUNARITY;
+        float noise_scale = NOISE_SCALE;
+        float noise_amplitude = NOISE_AMPLITUDE;
+        for (uint32_t i = 0; i < 5; ++i) {
+            result += minmax_noise_in_region((p0 + p1) * 0.5f, abs(p1 - p0), noise_scale, noise_amplitude);
+            noise_scale *= noise_lacunarity;
+            noise_amplitude *= noise_persistence;
+            // p0 = m * p0;
+            // p1 = m * p1;
+        }
+    }
+    return result;
+}
+
 void voxel_world::init(VoxelWorld &self) {
     self = new State{};
 
-    auto generate_chunk = [self](int32_t chunk_xi, int32_t chunk_yi, int32_t chunk_zi) {
-        auto voxel_value = [](glm::vec3 pos) {
-            auto result = 0.0f;
-            result += gradient_z(pos, -1, 8.0f).val;
-            {
-                float noise_persistence = NOISE_PERSISTENCE;
-                float noise_lacunarity = NOISE_LACUNARITY;
-                float noise_scale = NOISE_SCALE;
-                float noise_amplitude = NOISE_AMPLITUDE;
-                for (uint32_t i = 0; i < 5; ++i) {
-                    result += noise(pos, noise_scale, noise_amplitude).val;
-                    noise_scale *= noise_lacunarity;
-                    noise_amplitude *= noise_persistence;
-                    pos = m * pos;
-                }
-            }
-            return result;
-        };
-        auto voxel_nrm = [](glm::vec3 pos) {
-            auto result = DensityNrm(0, glm::vec3(0));
-            {
-                auto dn = gradient_z(pos, -1, 8.0f);
-                result.val += dn.val;
-                result.nrm += dn.nrm;
-            }
-            {
-                float noise_persistence = NOISE_PERSISTENCE;
-                float noise_lacunarity = NOISE_LACUNARITY;
-                float noise_scale = NOISE_SCALE;
-                float noise_amplitude = NOISE_AMPLITUDE;
-                auto inv = mat3(1, 0, 0, 0, 1, 0, 0, 0, 1);
-                for (uint32_t i = 0; i < 5; ++i) {
-                    auto dn = noise(pos, noise_scale, noise_amplitude);
-                    result.val += dn.val;
-                    result.nrm += inv * dn.nrm;
-                    noise_scale *= noise_lacunarity;
-                    noise_amplitude *= noise_persistence;
-                    pos = m * pos;
-                    inv = mi * inv;
-                }
-            }
-            result.nrm = normalize(result.nrm);
-            return result;
-        };
-        auto voxel_minmax_value = [](glm::vec3 p0, glm::vec3 p1) {
-            auto result = glm::vec2(0);
-            result += minmax_gradient_z(p0, p1, -1, 8.0f);
-            {
-                float noise_persistence = NOISE_PERSISTENCE;
-                float noise_lacunarity = NOISE_LACUNARITY;
-                float noise_scale = NOISE_SCALE;
-                float noise_amplitude = NOISE_AMPLITUDE;
-                for (uint32_t i = 0; i < 5; ++i) {
-                    result += minmax_noise_in_region((p0 + p1) * 0.5f, abs(p1 - p0), noise_scale, noise_amplitude);
-                    noise_scale *= noise_lacunarity;
-                    noise_amplitude *= noise_persistence;
-                    p0 = m * p0;
-                    p1 = m * p1;
-                }
-            }
-            return result;
-        };
+    auto generate_chunk = [self](int32_t chunk_xi, int32_t chunk_yi, int32_t chunk_zi, int32_t level) {
+        if (level > 0 && chunk_xi < 2 && chunk_yi < 2 && chunk_zi < 2) {
+            return;
+        }
 
         {
             auto p0 = glm::vec3{
-                ((chunk_xi * VOXEL_CHUNK_SIZE) + 0.5f) / 16.0f,
-                ((chunk_yi * VOXEL_CHUNK_SIZE) + 0.5f) / 16.0f,
-                ((chunk_zi * VOXEL_CHUNK_SIZE) + 0.5f) / 16.0f,
+                (float((chunk_xi * VOXEL_CHUNK_SIZE) << level) + 0.5f) / 16.0f,
+                (float((chunk_yi * VOXEL_CHUNK_SIZE) << level) + 0.5f) / 16.0f,
+                (float((chunk_zi * VOXEL_CHUNK_SIZE) << level) + 0.5f) / 16.0f,
             };
-            auto p1 = p0 + BRICK_CHUNK_SIZE * (VOXEL_BRICK_SIZE - 1) / 16.0f;
+            auto p1 = p0 + BRICK_CHUNK_SIZE * VOXEL_BRICK_SIZE / 16.0f;
             auto minmax = voxel_minmax_value(p0, p1);
             if (minmax[0] >= 0.0f || minmax[1] < 0.0f) {
                 // uniform
@@ -202,20 +211,16 @@ void voxel_world::init(VoxelWorld &self) {
             }
         }
 
-        int32_t chunk_index = chunk_xi + chunk_yi * CHUNK_NX + chunk_zi * CHUNK_NX * CHUNK_NY;
+        int32_t chunk_index = chunk_xi + chunk_yi * CHUNK_NX + chunk_zi * CHUNK_NX * CHUNK_NY + level * CHUNK_NX * CHUNK_NY * CHUNK_NZ;
         auto &chunk = self->chunks[chunk_index];
         chunk = std::make_unique<Chunk>();
-        chunk->pos = {chunk_xi * VOXEL_CHUNK_SIZE, chunk_yi * VOXEL_CHUNK_SIZE, chunk_zi * VOXEL_CHUNK_SIZE};
-
-        auto get_brick_metadata = [&](auto brick_index) -> BrickMetadata & {
-            return *reinterpret_cast<BrickMetadata *>(&chunk->voxel_brick_bitmasks[brick_index].metadata);
-        };
+        chunk->pos = {chunk_xi, chunk_yi, chunk_zi};
 
         for (int32_t brick_zi = 0; brick_zi < BRICK_CHUNK_SIZE; ++brick_zi) {
             for (int32_t brick_yi = 0; brick_yi < BRICK_CHUNK_SIZE; ++brick_yi) {
                 for (int32_t brick_xi = 0; brick_xi < BRICK_CHUNK_SIZE; ++brick_xi) {
                     auto brick_index = brick_xi + brick_yi * BRICK_CHUNK_SIZE + brick_zi * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
-                    auto &brick_metadata = get_brick_metadata(brick_index);
+                    auto &brick_metadata = get_brick_metadata(chunk, brick_index);
                     auto &bitmask = chunk->voxel_brick_bitmasks[brick_index];
 
                     brick_metadata = {};
@@ -225,11 +230,11 @@ void voxel_world::init(VoxelWorld &self) {
 
                     {
                         auto p0 = glm::vec3{
-                            (float(brick_xi * VOXEL_BRICK_SIZE + chunk_xi * VOXEL_CHUNK_SIZE) + 0.5f) / 16.0f,
-                            (float(brick_yi * VOXEL_BRICK_SIZE + chunk_yi * VOXEL_CHUNK_SIZE) + 0.5f) / 16.0f,
-                            (float(brick_zi * VOXEL_BRICK_SIZE + chunk_zi * VOXEL_CHUNK_SIZE) + 0.5f) / 16.0f,
+                            (float((brick_xi * VOXEL_BRICK_SIZE + chunk_xi * VOXEL_CHUNK_SIZE) << level) + 0.5f) / 16.0f,
+                            (float((brick_yi * VOXEL_BRICK_SIZE + chunk_yi * VOXEL_CHUNK_SIZE) << level) + 0.5f) / 16.0f,
+                            (float((brick_zi * VOXEL_BRICK_SIZE + chunk_zi * VOXEL_CHUNK_SIZE) << level) + 0.5f) / 16.0f,
                         };
-                        auto p1 = p0 + (VOXEL_BRICK_SIZE - 1) / 16.0f;
+                        auto p1 = p0 + VOXEL_BRICK_SIZE / 16.0f;
                         auto minmax = voxel_minmax_value(p0, p1);
                         if (minmax[0] >= 0.0f || minmax[1] < 0.0f) {
                             // uniform
@@ -258,9 +263,9 @@ void voxel_world::init(VoxelWorld &self) {
                                 uint32_t voxel_index = xi + yi * VOXEL_BRICK_SIZE + zi * VOXEL_BRICK_SIZE * VOXEL_BRICK_SIZE;
                                 uint32_t voxel_word_index = voxel_index / 32;
                                 uint32_t voxel_in_word_index = voxel_index % 32;
-                                float x = (float(xi + brick_xi * VOXEL_BRICK_SIZE + chunk_xi * VOXEL_CHUNK_SIZE) + 0.5f) / 16.0f;
-                                float y = (float(yi + brick_yi * VOXEL_BRICK_SIZE + chunk_yi * VOXEL_CHUNK_SIZE) + 0.5f) / 16.0f;
-                                float z = (float(zi + brick_zi * VOXEL_BRICK_SIZE + chunk_zi * VOXEL_CHUNK_SIZE) + 0.5f) / 16.0f;
+                                float x = (float((xi + brick_xi * VOXEL_BRICK_SIZE + chunk_xi * VOXEL_CHUNK_SIZE) << level) + 0.5f) / 16.0f;
+                                float y = (float((yi + brick_yi * VOXEL_BRICK_SIZE + chunk_yi * VOXEL_CHUNK_SIZE) << level) + 0.5f) / 16.0f;
+                                float z = (float((zi + brick_zi * VOXEL_BRICK_SIZE + chunk_zi * VOXEL_CHUNK_SIZE) << level) + 0.5f) / 16.0f;
 
                                 uint32_t value = voxel_value(glm::vec3(x, y, z)) < 0.0f ? 1 : 0;
 
@@ -289,55 +294,123 @@ void voxel_world::init(VoxelWorld &self) {
                 }
             }
         }
+    };
+
+    auto generate_chunk2 = [self](int32_t chunk_xi, int32_t chunk_yi, int32_t chunk_zi, int32_t level) {
+        int32_t chunk_index = chunk_xi + chunk_yi * CHUNK_NX + chunk_zi * CHUNK_NX * CHUNK_NY + level * CHUNK_NX * CHUNK_NY * CHUNK_NZ;
+        auto &chunk = self->chunks[chunk_index];
+        if (!chunk) {
+            return;
+        }
 
         for (int32_t brick_zi = 0; brick_zi < BRICK_CHUNK_SIZE; ++brick_zi) {
             for (int32_t brick_yi = 0; brick_yi < BRICK_CHUNK_SIZE; ++brick_yi) {
                 for (int32_t brick_xi = 0; brick_xi < BRICK_CHUNK_SIZE; ++brick_xi) {
                     auto brick_index = brick_xi + brick_yi * BRICK_CHUNK_SIZE + brick_zi * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
-                    auto &brick_metadata = get_brick_metadata(brick_index);
+                    auto &brick_metadata = get_brick_metadata(chunk, brick_index);
                     auto &bitmask = chunk->voxel_brick_bitmasks[brick_index];
 
-                    brick_metadata.exposed_nx = true;
-                    brick_metadata.exposed_px = true;
-                    brick_metadata.exposed_ny = true;
-                    brick_metadata.exposed_py = true;
-                    brick_metadata.exposed_nz = true;
-                    brick_metadata.exposed_pz = true;
+                    brick_metadata.exposed_nx = false;
+                    brick_metadata.exposed_px = false;
+                    brick_metadata.exposed_ny = false;
+                    brick_metadata.exposed_py = false;
+                    brick_metadata.exposed_nz = false;
+                    brick_metadata.exposed_pz = false;
 
                     if (brick_xi != 0) {
                         auto neighbor_brick_index = (brick_xi - 1) + brick_yi * BRICK_CHUNK_SIZE + brick_zi * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
-                        auto &neighbor_brick_metadata = get_brick_metadata(neighbor_brick_index);
+                        auto &neighbor_brick_metadata = get_brick_metadata(chunk, neighbor_brick_index);
                         brick_metadata.exposed_nx = neighbor_brick_metadata.has_air_px;
+                    } else if (chunk_xi != 0) {
+                        int32_t neighbor_chunk_index = (chunk_xi - 1) + chunk_yi * CHUNK_NX + chunk_zi * CHUNK_NX * CHUNK_NY + level * CHUNK_NX * CHUNK_NY * CHUNK_NZ;
+                        auto &neighbor_chunk = self->chunks[neighbor_chunk_index];
+                        if (neighbor_chunk) {
+                            auto neighbor_brick_index = (BRICK_CHUNK_SIZE - 1) + brick_yi * BRICK_CHUNK_SIZE + brick_zi * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
+                            auto &neighbor_brick_metadata = get_brick_metadata(neighbor_chunk, neighbor_brick_index);
+                            brick_metadata.exposed_nx = neighbor_brick_metadata.has_air_px;
+                        } else {
+                            brick_metadata.exposed_nx = true;
+                        }
                     }
                     if (brick_yi != 0) {
                         auto neighbor_brick_index = brick_xi + (brick_yi - 1) * BRICK_CHUNK_SIZE + brick_zi * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
-                        auto &neighbor_brick_metadata = get_brick_metadata(neighbor_brick_index);
+                        auto &neighbor_brick_metadata = get_brick_metadata(chunk, neighbor_brick_index);
                         brick_metadata.exposed_ny = neighbor_brick_metadata.has_air_py;
+                    } else if (chunk_yi != 0) {
+                        int32_t neighbor_chunk_index = chunk_xi + (chunk_yi - 1) * CHUNK_NX + chunk_zi * CHUNK_NX * CHUNK_NY + level * CHUNK_NX * CHUNK_NY * CHUNK_NZ;
+                        auto &neighbor_chunk = self->chunks[neighbor_chunk_index];
+                        if (neighbor_chunk) {
+                            auto neighbor_brick_index = brick_xi + (BRICK_CHUNK_SIZE - 1) * BRICK_CHUNK_SIZE + brick_zi * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
+                            auto &neighbor_brick_metadata = get_brick_metadata(neighbor_chunk, neighbor_brick_index);
+                            brick_metadata.exposed_ny = neighbor_brick_metadata.has_air_py;
+                        } else {
+                            brick_metadata.exposed_ny = true;
+                        }
                     }
                     if (brick_zi != 0) {
                         auto neighbor_brick_index = brick_xi + brick_yi * BRICK_CHUNK_SIZE + (brick_zi - 1) * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
-                        auto &neighbor_brick_metadata = get_brick_metadata(neighbor_brick_index);
+                        auto &neighbor_brick_metadata = get_brick_metadata(chunk, neighbor_brick_index);
                         brick_metadata.exposed_nz = neighbor_brick_metadata.has_air_pz;
+                    } else if (chunk_zi != 0) {
+                        int32_t neighbor_chunk_index = chunk_xi + chunk_yi * CHUNK_NX + (chunk_zi - 1) * CHUNK_NX * CHUNK_NY + level * CHUNK_NX * CHUNK_NY * CHUNK_NZ;
+                        auto &neighbor_chunk = self->chunks[neighbor_chunk_index];
+                        if (neighbor_chunk) {
+                            auto neighbor_brick_index = brick_xi + brick_yi * BRICK_CHUNK_SIZE + (BRICK_CHUNK_SIZE - 1) * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
+                            auto &neighbor_brick_metadata = get_brick_metadata(neighbor_chunk, neighbor_brick_index);
+                            brick_metadata.exposed_nz = neighbor_brick_metadata.has_air_pz;
+                        } else {
+                            brick_metadata.exposed_nz = true;
+                        }
                     }
                     if (brick_xi != BRICK_CHUNK_SIZE - 1) {
                         auto neighbor_brick_index = (brick_xi + 1) + brick_yi * BRICK_CHUNK_SIZE + brick_zi * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
-                        auto &neighbor_brick_metadata = get_brick_metadata(neighbor_brick_index);
+                        auto &neighbor_brick_metadata = get_brick_metadata(chunk, neighbor_brick_index);
                         brick_metadata.exposed_px = neighbor_brick_metadata.has_air_nx;
+                    } else if (chunk_xi != CHUNK_NX - 1) {
+                        int32_t neighbor_chunk_index = (chunk_xi + 1) + chunk_yi * CHUNK_NX + chunk_zi * CHUNK_NX * CHUNK_NY + level * CHUNK_NX * CHUNK_NY * CHUNK_NZ;
+                        auto &neighbor_chunk = self->chunks[neighbor_chunk_index];
+                        if (neighbor_chunk) {
+                            auto neighbor_brick_index = 0 + brick_yi * BRICK_CHUNK_SIZE + brick_zi * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
+                            auto &neighbor_brick_metadata = get_brick_metadata(neighbor_chunk, neighbor_brick_index);
+                            brick_metadata.exposed_px = neighbor_brick_metadata.has_air_nx;
+                        } else {
+                            brick_metadata.exposed_px = true;
+                        }
                     }
                     if (brick_yi != BRICK_CHUNK_SIZE - 1) {
                         auto neighbor_brick_index = brick_xi + (brick_yi + 1) * BRICK_CHUNK_SIZE + brick_zi * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
-                        auto &neighbor_brick_metadata = get_brick_metadata(neighbor_brick_index);
+                        auto &neighbor_brick_metadata = get_brick_metadata(chunk, neighbor_brick_index);
                         brick_metadata.exposed_py = neighbor_brick_metadata.has_air_ny;
+                    } else if (chunk_yi != CHUNK_NY - 1) {
+                        int32_t neighbor_chunk_index = chunk_xi + (chunk_yi + 1) * CHUNK_NX + chunk_zi * CHUNK_NX * CHUNK_NY + level * CHUNK_NX * CHUNK_NY * CHUNK_NZ;
+                        auto &neighbor_chunk = self->chunks[neighbor_chunk_index];
+                        if (neighbor_chunk) {
+                            auto neighbor_brick_index = brick_xi + 0 * BRICK_CHUNK_SIZE + brick_zi * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
+                            auto &neighbor_brick_metadata = get_brick_metadata(neighbor_chunk, neighbor_brick_index);
+                            brick_metadata.exposed_py = neighbor_brick_metadata.has_air_ny;
+                        } else {
+                            brick_metadata.exposed_py = true;
+                        }
                     }
                     if (brick_zi != BRICK_CHUNK_SIZE - 1) {
                         auto neighbor_brick_index = brick_xi + brick_yi * BRICK_CHUNK_SIZE + (brick_zi + 1) * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
-                        auto &neighbor_brick_metadata = get_brick_metadata(neighbor_brick_index);
+                        auto &neighbor_brick_metadata = get_brick_metadata(chunk, neighbor_brick_index);
                         brick_metadata.exposed_pz = neighbor_brick_metadata.has_air_nz;
+                    } else if (chunk_zi != CHUNK_NZ - 1) {
+                        int32_t neighbor_chunk_index = chunk_xi + chunk_yi * CHUNK_NX + (chunk_zi + 1) * CHUNK_NX * CHUNK_NY + level * CHUNK_NX * CHUNK_NY * CHUNK_NZ;
+                        auto &neighbor_chunk = self->chunks[neighbor_chunk_index];
+                        if (neighbor_chunk) {
+                            auto neighbor_brick_index = brick_xi + brick_yi * BRICK_CHUNK_SIZE + 0 * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
+                            auto &neighbor_brick_metadata = get_brick_metadata(neighbor_chunk, neighbor_brick_index);
+                            brick_metadata.exposed_pz = neighbor_brick_metadata.has_air_nz;
+                        } else {
+                            brick_metadata.exposed_pz = true;
+                        }
                     }
 
                     bool exposed = brick_metadata.exposed_nx || brick_metadata.exposed_px || brick_metadata.exposed_ny || brick_metadata.exposed_py || brick_metadata.exposed_nz || brick_metadata.exposed_pz;
 
-                    auto position = glm::ivec4{brick_xi, brick_yi, brick_zi, 0};
+                    auto position = glm::ivec4{brick_xi, brick_yi, brick_zi, -4 + level};
                     if (brick_metadata.has_voxel && exposed) {
                         // generate surface brick data
                         auto &attrib_brick = chunk->voxel_brick_attribs[brick_index];
@@ -347,9 +420,9 @@ void voxel_world::init(VoxelWorld &self) {
                             for (uint32_t yi = 0; yi < VOXEL_BRICK_SIZE; ++yi) {
                                 for (uint32_t xi = 0; xi < VOXEL_BRICK_SIZE; ++xi) {
                                     uint32_t voxel_index = xi + yi * VOXEL_BRICK_SIZE + zi * VOXEL_BRICK_SIZE * VOXEL_BRICK_SIZE;
-                                    float x = (float(xi + brick_xi * VOXEL_BRICK_SIZE + chunk_xi * VOXEL_CHUNK_SIZE) + 0.5f) / 16.0f;
-                                    float y = (float(yi + brick_yi * VOXEL_BRICK_SIZE + chunk_yi * VOXEL_CHUNK_SIZE) + 0.5f) / 16.0f;
-                                    float z = (float(zi + brick_zi * VOXEL_BRICK_SIZE + chunk_zi * VOXEL_CHUNK_SIZE) + 0.5f) / 16.0f;
+                                    float x = (float((xi + brick_xi * VOXEL_BRICK_SIZE + chunk_xi * VOXEL_CHUNK_SIZE) << level) + 0.5f) / 16.0f;
+                                    float y = (float((yi + brick_yi * VOXEL_BRICK_SIZE + chunk_yi * VOXEL_CHUNK_SIZE) << level) + 0.5f) / 16.0f;
+                                    float z = (float((zi + brick_zi * VOXEL_BRICK_SIZE + chunk_zi * VOXEL_CHUNK_SIZE) << level) + 0.5f) / 16.0f;
                                     auto dn = voxel_nrm(glm::vec3(x, y, z));
                                     auto col = glm::vec3(0.0f);
                                     if (dot(dn.nrm, vec3(0, 0, -1)) > 0.5f && dn.val > -0.5f) {
@@ -369,21 +442,36 @@ void voxel_world::init(VoxelWorld &self) {
                 }
             }
         }
-
         chunk->bricks_changed = true;
     };
 
     std::vector<std::thread> threads;
-    threads.reserve(CHUNK_NX * CHUNK_NY * CHUNK_NZ);
+    threads.reserve(CHUNK_NX * CHUNK_NY * CHUNK_NZ * CHUNK_LEVELS);
 
-    for (int32_t chunk_zi = 0; chunk_zi < CHUNK_NZ; ++chunk_zi) {
-        for (int32_t chunk_yi = 0; chunk_yi < CHUNK_NY; ++chunk_yi) {
-            for (int32_t chunk_xi = 0; chunk_xi < CHUNK_NX; ++chunk_xi) {
-                threads.emplace_back([=]() { generate_chunk(chunk_xi, chunk_yi, chunk_zi); });
+    for (int32_t level_i = 0; level_i < CHUNK_LEVELS; ++level_i) {
+        for (int32_t chunk_zi = 0; chunk_zi < CHUNK_NZ; ++chunk_zi) {
+            for (int32_t chunk_yi = 0; chunk_yi < CHUNK_NY; ++chunk_yi) {
+                for (int32_t chunk_xi = 0; chunk_xi < CHUNK_NX; ++chunk_xi) {
+                    threads.emplace_back([=]() { generate_chunk(chunk_xi, chunk_yi, chunk_zi, level_i); });
+                }
             }
         }
     }
 
+    for (auto &thread : threads) {
+        thread.join();
+    }
+    threads.clear();
+
+    for (int32_t level_i = 0; level_i < CHUNK_LEVELS; ++level_i) {
+        for (int32_t chunk_zi = 0; chunk_zi < CHUNK_NZ; ++chunk_zi) {
+            for (int32_t chunk_yi = 0; chunk_yi < CHUNK_NY; ++chunk_yi) {
+                for (int32_t chunk_xi = 0; chunk_xi < CHUNK_NX; ++chunk_xi) {
+                    threads.emplace_back([=]() { generate_chunk2(chunk_xi, chunk_yi, chunk_zi, level_i); });
+                }
+            }
+        }
+    }
     for (auto &thread : threads) {
         thread.join();
     }
@@ -393,7 +481,7 @@ void voxel_world::deinit(VoxelWorld self) {
 }
 
 unsigned int voxel_world::get_chunk_count(VoxelWorld self) {
-    return CHUNK_NX * CHUNK_NY * CHUNK_NZ;
+    return CHUNK_NX * CHUNK_NY * CHUNK_NZ * CHUNK_LEVELS;
 }
 
 VoxelBrickBitmask *voxel_world::get_voxel_brick_bitmasks(VoxelWorld self, unsigned int chunk_index) {

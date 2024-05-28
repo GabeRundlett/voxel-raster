@@ -236,10 +236,10 @@ void main() {
         o_packed_payload = pack(o_payload);
 
         ivec4 pos_scl = deref(voxel_chunk.pos_scl[brick_instance.brick_index]);
-        ivec3 pos = pos_scl.xyz * int(VOXEL_BRICK_SIZE) + ivec3(face.pos) + ivec3(voxel_chunk.pos);
-        int scl = pos_scl.w;
+        ivec3 pos = ivec3(voxel_chunk.pos) * int(VOXEL_CHUNK_SIZE) + pos_scl.xyz * int(VOXEL_BRICK_SIZE) + ivec3(face.pos);
+        int scl = pos_scl.w + 8;
 
-#define SCL (1.0 / VOXEL_BRICK_SIZE * (1 << scl))
+#define SCL (float(1 << scl) / float(1 << 8))
         switch (face.axis / 2) {
         case 0:
             pos.x += int(face.axis % 2);
