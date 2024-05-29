@@ -48,7 +48,7 @@ void write_results() {
 
 layout(local_size_x = VOXEL_BRICK_SIZE, local_size_y = VOXEL_BRICK_SIZE, local_size_z = 3) in;
 void main() {
-    brick_instance_index = gl_WorkGroupID.x + 1;
+    brick_instance_index = gl_WorkGroupID.x + 1 + deref(push.uses.indirect_info).offset;
 
     if (!is_valid_index(daxa_BufferPtr(BrickInstance)(push.uses.brick_instance_allocator), brick_instance_index)) {
         return;

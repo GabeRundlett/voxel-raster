@@ -4,6 +4,13 @@
 
 DAXA_DECL_PUSH_CONSTANT(AllocateBrickInstancesPush, push)
 
+bool is_brick_instance_already_in_drawlist(BrickInstance brick_instance) {
+    // return false;
+    VoxelChunk voxel_chunk = deref(push.uses.chunks[brick_instance.chunk_index]);
+    uint flags = deref(voxel_chunk.flags[brick_instance.brick_index]);
+    return flags != 0;
+}
+
 bool is_brick_instance_visible(BrickInstance brick_instance) {
     VoxelChunk voxel_chunk = deref(push.uses.chunks[brick_instance.chunk_index]);
     ivec4 pos_scl = deref(voxel_chunk.pos_scl[brick_instance.brick_index]);
@@ -52,9 +59,13 @@ void main() {
         BrickInstance brick_instance;
         brick_instance.chunk_index = chunk_index;
         brick_instance.brick_index = brick_index;
-        if (is_brick_instance_visible(brick_instance)) {
+        if (is_brick_instance_visible(brick_instance) && !is_brick_instance_already_in_drawlist(brick_instance)) {
+            // Add to draw list
             uint brick_instance_index = allocate_brick_instances(push.uses.brick_instance_allocator, 1);
             deref(push.uses.brick_instance_allocator[brick_instance_index]) = brick_instance;
+            // Also mark as drawn
+            VoxelChunk voxel_chunk = deref(push.uses.chunks[brick_instance.chunk_index]);
+            deref(voxel_chunk.flags[brick_instance.brick_index]) = 1;
         }
     }
 }

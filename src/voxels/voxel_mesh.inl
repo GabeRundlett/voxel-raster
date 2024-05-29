@@ -98,6 +98,7 @@ struct VoxelChunk {
     daxa_BufferPtr(VoxelBrickMesh) meshes;
     daxa_BufferPtr(daxa_i32vec4) pos_scl;
     daxa_BufferPtr(VoxelAttribBrick) attribs;
+    daxa_BufferPtr(daxa_u32) flags;
     daxa_u32 brick_n;
     daxa_f32vec3 pos;
 };

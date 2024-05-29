@@ -36,7 +36,7 @@ taskPayloadSharedEXT PackedTaskPayload packed_payload;
 
 layout(local_size_x = 32) in;
 void main() {
-    uint brick_instance_index = gl_WorkGroupID.x + 1;
+    uint brick_instance_index = gl_WorkGroupID.x + 1 + deref(push.uses.indirect_info).offset;
 
     if (!is_valid_index(daxa_BufferPtr(BrickInstance)(push.uses.brick_instance_allocator), brick_instance_index)) {
         return;

@@ -10,6 +10,7 @@ struct DispatchIndirectStruct {
     daxa_u32 x;
     daxa_u32 y;
     daxa_u32 z;
+    daxa_u32 offset;
 };
 DAXA_DECL_BUFFER_PTR(DispatchIndirectStruct)
 
@@ -28,6 +29,17 @@ struct GpuInput {
 };
 DAXA_DECL_BUFFER_PTR(GpuInput)
 
+DAXA_DECL_TASK_HEAD_BEGIN(ClearDrawFlagsH)
+DAXA_TH_BUFFER_PTR(COMPUTE_SHADER_READ, daxa_BufferPtr(VoxelChunk), chunks)
+DAXA_TH_BUFFER(COMPUTE_SHADER_READ_WRITE, brick_data)
+DAXA_TH_BUFFER_PTR(COMPUTE_SHADER_READ, daxa_BufferPtr(BrickInstance), brick_instance_allocator)
+DAXA_TH_BUFFER(COMPUTE_SHADER_READ, indirect_info)
+DAXA_DECL_TASK_HEAD_END
+
+struct ClearDrawFlagsPush {
+    DAXA_TH_BLOB(ClearDrawFlagsH, uses)
+};
+
 DAXA_DECL_TASK_HEAD_BEGIN(AllocateBrickInstancesH)
 DAXA_TH_BUFFER_PTR(COMPUTE_SHADER_READ, daxa_BufferPtr(GpuInput), gpu_input)
 DAXA_TH_BUFFER_PTR(COMPUTE_SHADER_READ, daxa_BufferPtr(VoxelChunk), chunks)
@@ -40,14 +52,14 @@ struct AllocateBrickInstancesPush {
     DAXA_TH_BLOB(AllocateBrickInstancesH, uses)
 };
 
-DAXA_DECL_TASK_HEAD_BEGIN(SetIndirectInfos0H)
+DAXA_DECL_TASK_HEAD_BEGIN(SetIndirectInfosH)
 DAXA_TH_BUFFER_PTR(COMPUTE_SHADER_READ, daxa_BufferPtr(GpuInput), gpu_input)
 DAXA_TH_BUFFER_PTR(COMPUTE_SHADER_READ, daxa_BufferPtr(BrickInstanceAllocatorState), brick_instance_allocator)
-DAXA_TH_BUFFER_PTR(COMPUTE_SHADER_READ_WRITE, daxa_RWBufferPtr(DispatchIndirectStruct), indirect_infos)
+DAXA_TH_BUFFER_PTR(COMPUTE_SHADER_READ_WRITE, daxa_RWBufferPtr(DispatchIndirectStruct), indirect_info)
 DAXA_DECL_TASK_HEAD_END
 
-struct SetIndirectInfos0Push {
-    DAXA_TH_BLOB(SetIndirectInfos0H, uses)
+struct SetIndirectInfosPush {
+    DAXA_TH_BLOB(SetIndirectInfosH, uses)
 };
 
 DAXA_DECL_TASK_HEAD_BEGIN(MeshVoxelBricksH)
@@ -57,7 +69,7 @@ DAXA_TH_BUFFER(COMPUTE_SHADER_READ_WRITE, brick_data)
 DAXA_TH_BUFFER_PTR(COMPUTE_SHADER_READ, daxa_BufferPtr(BrickInstance), brick_instance_allocator)
 DAXA_TH_BUFFER_PTR(COMPUTE_SHADER_READ_WRITE, daxa_RWBufferPtr(VoxelMeshlet), meshlet_allocator)
 DAXA_TH_BUFFER_PTR(COMPUTE_SHADER_READ_WRITE, daxa_RWBufferPtr(VoxelMeshletMetadata), meshlet_metadata)
-DAXA_TH_BUFFER(COMPUTE_SHADER_READ, indirect_info)
+DAXA_TH_BUFFER_PTR(COMPUTE_SHADER_READ, daxa_BufferPtr(DispatchIndirectStruct), indirect_info)
 DAXA_DECL_TASK_HEAD_END
 
 struct MeshVoxelBricksPush {
@@ -72,7 +84,7 @@ DAXA_TH_BUFFER_PTR(TASK_SHADER_READ, daxa_BufferPtr(VoxelChunk), chunks)
 DAXA_TH_BUFFER(TASK_SHADER_READ, brick_data)
 DAXA_TH_BUFFER_PTR(COMPUTE_SHADER_READ, daxa_BufferPtr(BrickInstance), brick_instance_allocator)
 DAXA_TH_BUFFER_PTR(MESH_SHADER_READ, daxa_BufferPtr(VoxelMeshlet), meshlet_allocator)
-DAXA_TH_BUFFER(DRAW_INDIRECT_INFO_READ, indirect_info)
+DAXA_TH_BUFFER_PTR(DRAW_INDIRECT_INFO_READ, daxa_BufferPtr(DispatchIndirectStruct), indirect_info)
 #if ENABLE_DEBUG_VIS
 DAXA_TH_IMAGE_INDEX(FRAGMENT_SHADER_STORAGE_READ_WRITE, REGULAR_2D, debug_overdraw)
 #endif
@@ -104,6 +116,7 @@ struct ShadeVisbufferPush {
 DAXA_DECL_TASK_HEAD_BEGIN(AnalyzeVisbufferH)
 DAXA_TH_BUFFER_PTR(COMPUTE_SHADER_READ, daxa_BufferPtr(GpuInput), gpu_input)
 DAXA_TH_BUFFER_PTR(COMPUTE_SHADER_READ, daxa_BufferPtr(VoxelChunk), chunks)
+DAXA_TH_BUFFER(COMPUTE_SHADER_READ_WRITE, brick_data)
 DAXA_TH_BUFFER_PTR(COMPUTE_SHADER_READ, daxa_BufferPtr(BrickInstance), brick_instance_allocator)
 DAXA_TH_BUFFER_PTR(COMPUTE_SHADER_READ, daxa_BufferPtr(VoxelMeshlet), meshlet_allocator)
 DAXA_TH_BUFFER_PTR(COMPUTE_SHADER_READ, daxa_BufferPtr(VoxelMeshletMetadata), meshlet_metadata)

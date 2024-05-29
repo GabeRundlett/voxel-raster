@@ -15,8 +15,11 @@ void write_visible_brick(uint brick_instance_index) {
         uint visible_brick_instance_index = allocate_brick_instances(push.uses.visible_brick_instance_allocator, 1);
         // it should be impossible for this to ever be bad, but we'll check anyway.
         if (visible_brick_instance_index != 0) {
-            deref(push.uses.visible_brick_instance_allocator[visible_brick_instance_index]) =
-                deref(push.uses.brick_instance_allocator[brick_instance_index]);
+            BrickInstance brick_instance = deref(push.uses.brick_instance_allocator[brick_instance_index]);
+            deref(push.uses.visible_brick_instance_allocator[visible_brick_instance_index]) = brick_instance;
+            // Also mark as submitted for drawing
+            VoxelChunk voxel_chunk = deref(push.uses.chunks[brick_instance.chunk_index]);
+            deref(voxel_chunk.flags[brick_instance.brick_index]) = 1;
         }
     }
 }
