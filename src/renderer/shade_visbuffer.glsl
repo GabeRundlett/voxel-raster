@@ -122,7 +122,7 @@ void main() {
         // case 1: face_nrm.y = float(face.axis % 2) * 2.0 - 1.0; break;
         // case 2: face_nrm.z = float(face.axis % 2) * 2.0 - 1.0; break;
         // }
-        // voxel.nrm = normalize(face_nrm * 0.1 + voxel.nrm);
+        // voxel.nrm = normalize(face_nrm * 0.25 + voxel.nrm);
 
         const vec3 voxel_center = (vec3(face.pos) + 0.5);
 

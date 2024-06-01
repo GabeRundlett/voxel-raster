@@ -17,7 +17,7 @@ uint load_bit(daxa_BufferPtr(GpuInput) gpu_input, daxa_BufferPtr(VoxelBrickBitma
     return (deref(bitmask).bits[word_index] >> in_word_index) & 1; // | x;
 }
 
-uvec2 load_brick_faces_exposed(daxa_BufferPtr(GpuInput) gpu_input, daxa_BufferPtr(VoxelBrickBitmask) bitmask, uint axis) {
+uvec2 load_brick_faces_exposed(daxa_BufferPtr(GpuInput) gpu_input, daxa_BufferPtr(VoxelBrickBitmask) bitmask, uint xi, uint yi, uint axis) {
     // return uvec2(1);
     uint brick_bitmask_metadata = deref(bitmask).metadata;
     uint b_exposed = (brick_bitmask_metadata >> (axis + 0)) & 1;

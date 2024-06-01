@@ -58,7 +58,7 @@ void main() {
 #elif DAXA_SHADER_STAGE == DAXA_SHADER_STAGE_MESH
 #extension GL_EXT_mesh_shader : enable
 
-#include <renderer/hiz.glsl>
+#include <renderer/culling.glsl>
 
 taskPayloadSharedEXT PackedTaskPayload packed_payload;
 layout(triangles) out;
@@ -71,16 +71,6 @@ layout(location = 1) out vec2 v_uv[];
 
 mat4 world_to_clip;
 PackedVisbufferPayload o_packed_payload;
-
-bool is_micropoly_invisible(vec2 ndc_min, vec2 ndc_max, vec2 resolution) {
-    // Cope epsilon to be conservative
-    const float EPS = 1.0 / 256.0f;
-    vec2 sample_grid_min = (ndc_min * 0.5f + 0.5f) * resolution - 0.5f - EPS;
-    vec2 sample_grid_max = (ndc_max * 0.5f + 0.5f) * resolution - 0.5f + EPS;
-    // Checks if the min and the max positions are right next to the same sample grid line.
-    // If we are next to the same sample grid line in one dimension we are not rasterized.
-    return any(equal(floor(sample_grid_max), floor(sample_grid_min))) || outside_frustum(ndc_min, ndc_max);
-}
 
 void emit_prim(vec3 in_p0, vec3 in_p1, vec3 in_p2, vec3 in_p3) {
     vec4 p0_h = world_to_clip * vec4(in_p0, 1);
@@ -101,15 +91,16 @@ void emit_prim(vec3 in_p0, vec3 in_p1, vec3 in_p2, vec3 in_p3) {
     vec3 ndc_max = max(max(p0, p1), max(p2, p3));
 #endif
 
-    bool micro_poly_invisible = is_micropoly_invisible(ndc_min.xy, ndc_max.xy, vec2(deref(push.uses.gpu_input).render_size));
+    bool between_raster_grid_lines = is_between_raster_grid_lines(ndc_min.xy, ndc_max.xy, vec2(deref(push.uses.gpu_input).render_size));
     bool facing_away = determinant(mat3(p0_h.xyw, p1_h.xyw, p2_h.xyw)) <= 0;
+    bool outside_frustum = is_outside_frustum(ndc_min.xy, ndc_max.xy);
     uint face_id = gl_LocalInvocationIndex;
 
 #if DO_DEPTH_CULL
     const bool depth_occluded = is_ndc_aabb_hiz_depth_occluded(ndc_min, ndc_max, deref(push.uses.gpu_input).next_lower_po2_render_size, push.uses.hiz);
-    bool cull_poly = micro_poly_invisible || facing_away || depth_occluded;
+    bool cull_poly = outside_frustum || between_raster_grid_lines || facing_away || depth_occluded;
 #else
-    bool cull_poly = micro_poly_invisible || facing_away;
+    bool cull_poly = outside_frustum || between_raster_grid_lines || facing_away;
 #endif
 
 #if DISCARD_METHOD
@@ -148,66 +139,13 @@ void emit_prim(vec3 in_p0, vec3 in_p1, vec3 in_p2, vec3 in_p3) {
 #endif
 }
 
-void emit_prim_x(vec3 pos, vec2 size, int flip) {
-#if DISCARD_METHOD
-    float winding_flip_a = flip * 2.0;
-    float winding_flip_b = 2.0 - winding_flip_a;
-    vec3 p0 = pos + vec3(0, -size.x * 0.0, -size.y * 0.0);
-    vec3 p1 = pos + vec3(0, size.x * winding_flip_a, size.y * winding_flip_b);
-    vec3 p2 = pos + vec3(0, size.x * winding_flip_b, size.y * winding_flip_a);
-    vec3 p3 = vec3(0);
-#else
-    float winding_flip_a = flip;
-    float winding_flip_b = 1.0 - winding_flip_a;
-    vec3 p0 = pos + vec3(0, -size.x * 0.0, -size.y * 0.0);
-    vec3 p1 = pos + vec3(0, size.x * winding_flip_a, size.y * winding_flip_b);
-    vec3 p2 = pos + vec3(0, size.x * winding_flip_b, size.y * winding_flip_a);
-    vec3 p3 = pos + vec3(0, +size.x * 1.0, +size.y * 1.0);
-#endif
-    emit_prim(p0, p1, p2, p3);
-}
-
-void emit_prim_y(vec3 pos, vec2 size, int flip) {
-#if DISCARD_METHOD
-    float winding_flip_a = flip * 2.0;
-    float winding_flip_b = 2.0 - winding_flip_a;
-    vec3 p0 = pos + vec3(-size.x * 0.0, 0, -size.y * 0.0);
-    vec3 p1 = pos + vec3(size.x * winding_flip_b, 0, size.y * winding_flip_a);
-    vec3 p2 = pos + vec3(size.x * winding_flip_a, 0, size.y * winding_flip_b);
-    vec3 p3 = vec3(0);
-#else
-    float winding_flip_a = flip;
-    float winding_flip_b = 1.0 - winding_flip_a;
-    vec3 p0 = pos + vec3(-size.x * 0.0, 0, -size.y * 0.0);
-    vec3 p1 = pos + vec3(size.x * winding_flip_b, 0, size.y * winding_flip_a);
-    vec3 p2 = pos + vec3(size.x * winding_flip_a, 0, size.y * winding_flip_b);
-    vec3 p3 = pos + vec3(+size.x * 1.0, 0, +size.y * 1.0);
-#endif
-    emit_prim(p0, p1, p2, p3);
-}
-
-void emit_prim_z(vec3 pos, vec2 size, int flip) {
-#if DISCARD_METHOD
-    float winding_flip_a = flip * 2.0;
-    float winding_flip_b = 2.0 - winding_flip_a;
-    vec3 p0 = pos + vec3(-size.x * 0.0, -size.y * 0.0, 0);
-    vec3 p1 = pos + vec3(size.x * winding_flip_a, size.y * winding_flip_b, 0);
-    vec3 p2 = pos + vec3(size.x * winding_flip_b, size.y * winding_flip_a, 0);
-    vec3 p3 = vec3(0);
-#else
-    float winding_flip_a = flip;
-    float winding_flip_b = 1.0 - winding_flip_a;
-    vec3 p0 = pos + vec3(-size.x * 0.0, -size.y * 0.0, 0);
-    vec3 p1 = pos + vec3(size.x * winding_flip_a, size.y * winding_flip_b, 0);
-    vec3 p2 = pos + vec3(size.x * winding_flip_b, size.y * winding_flip_a, 0);
-    vec3 p3 = pos + vec3(+size.x * 1.0, +size.y * 1.0, 0);
-#endif
-    emit_prim(p0, p1, p2, p3);
-}
-
 layout(local_size_x = 32) in;
 void main() {
+#if DRAW_FROM_OBSERVER
+    world_to_clip = deref(push.uses.gpu_input).observer_cam.view_to_clip * deref(push.uses.gpu_input).observer_cam.world_to_view;
+#else
     world_to_clip = deref(push.uses.gpu_input).cam.view_to_clip * deref(push.uses.gpu_input).cam.world_to_view;
+#endif
     TaskPayload payload = unpack(packed_payload);
 
     uint meshlet_index = gl_WorkGroupID.x;
@@ -225,8 +163,7 @@ void main() {
     VoxelBrickMesh mesh = deref(voxel_chunk.meshes[brick_instance.brick_index]);
 
     if (in_meshlet_face_index < meshlet_face_count && mesh.meshlet_start != 0) {
-        VoxelMeshlet meshlet = deref(push.uses.meshlet_allocator[meshlet_index + mesh.meshlet_start]);
-        PackedVoxelBrickFace packed_face = meshlet.faces[gl_LocalInvocationIndex];
+        PackedVoxelBrickFace packed_face = deref(push.uses.meshlet_allocator[meshlet_index + mesh.meshlet_start]).faces[gl_LocalInvocationIndex];
 
         VoxelBrickFace face = unpack(packed_face);
 
@@ -239,21 +176,31 @@ void main() {
         ivec3 pos = ivec3(voxel_chunk.pos) * int(VOXEL_CHUNK_SIZE) + pos_scl.xyz * int(VOXEL_BRICK_SIZE) + ivec3(face.pos);
         int scl = pos_scl.w + 8;
 
+        // guaranteed 0, 1, or 2.
+        uint axis = face.axis / 2;
+
+        ivec3 offset = ivec3(0);
+        offset[axis] = 1;
+        pos += offset * int(face.axis % 2);
+
+        int flip = int(face.axis % 2);
+        // For some reason we need to flip for the y-axis
+        flip = flip ^ int(axis == 1);
+
 #define SCL (float(1 << scl) / float(1 << 8))
-        switch (face.axis / 2) {
-        case 0:
-            pos.x += int(face.axis % 2);
-            emit_prim_x(vec3(pos) * SCL, vec2(SCL), int(face.axis % 2));
-            break;
-        case 1:
-            pos.y += int(face.axis % 2);
-            emit_prim_y(vec3(pos) * SCL, vec2(SCL), int(face.axis % 2));
-            break;
-        case 2:
-            pos.z += int(face.axis % 2);
-            emit_prim_z(vec3(pos) * SCL, vec2(SCL), int(face.axis % 2));
-            break;
-        }
+
+#if DISCARD_METHOD
+        int winding_flip_a = flip * 2;
+        int winding_flip_b = 2 - winding_flip_a;
+#else
+        int winding_flip_a = flip;
+        int winding_flip_b = 1 - winding_flip_a;
+#endif
+        ivec3 p0 = pos;
+        ivec3 p1 = pos + ivec3(int(axis != 0) * winding_flip_a, int(axis == 0) * winding_flip_a + int(axis == 2) * winding_flip_b, int(axis != 2) * winding_flip_b);
+        ivec3 p2 = pos + ivec3(int(axis != 0) * winding_flip_b, int(axis == 0) * winding_flip_b + int(axis == 2) * winding_flip_a, int(axis != 2) * winding_flip_a);
+        ivec3 p3 = pos + ivec3(int(axis != 0), int(axis != 1), int(axis != 2));
+        emit_prim(p0 * SCL, p1 * SCL, p2 * SCL, p3 * SCL);
     }
 }
 

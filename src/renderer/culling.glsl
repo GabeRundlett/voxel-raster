@@ -35,6 +35,16 @@ bool is_ndc_aabb_hiz_depth_occluded(
     return depth_cull;
 }
 
-bool outside_frustum(vec2 ndc_min, vec2 ndc_max) {
+bool is_outside_frustum(vec2 ndc_min, vec2 ndc_max) {
     return any(greaterThan(ndc_min, vec2(1))) || any(lessThan(ndc_max, vec2(-1)));
+}
+
+bool is_between_raster_grid_lines(vec2 ndc_min, vec2 ndc_max, vec2 resolution) {
+    // Cope epsilon to be conservative
+    const float EPS = 1.0 / 256.0f;
+    vec2 sample_grid_min = (ndc_min * 0.5f + 0.5f) * resolution - 0.5f - EPS;
+    vec2 sample_grid_max = (ndc_max * 0.5f + 0.5f) * resolution - 0.5f + EPS;
+    // Checks if the min and the max positions are right next to the same sample grid line.
+    // If we are next to the same sample grid line in one dimension we are not rasterized.
+    return any(equal(floor(sample_grid_max), floor(sample_grid_min)));
 }

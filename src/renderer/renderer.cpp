@@ -45,6 +45,9 @@ struct renderer::State {
     std::shared_ptr<daxa::ComputePipeline> mesh_voxel_bricks_pipeline;
     std::shared_ptr<daxa::RasterPipeline> draw_visbuffer_pipeline;
     std::shared_ptr<daxa::RasterPipeline> draw_visbuffer_depth_cull_pipeline;
+    std::shared_ptr<daxa::RasterPipeline> draw_visbuffer_wireframe_pipeline;
+    std::shared_ptr<daxa::RasterPipeline> draw_visbuffer_observer_pipeline;
+    std::shared_ptr<daxa::RasterPipeline> draw_visbuffer_observer_wireframe_pipeline;
     std::shared_ptr<daxa::RasterPipeline> shade_visbuffer_pipeline;
     std::shared_ptr<daxa::ComputePipeline> analyze_visbuffer_pipeline;
     std::shared_ptr<daxa::ComputePipeline> gen_hiz_pipeline;
@@ -75,6 +78,10 @@ struct renderer::State {
 
     GpuInput gpu_input;
     Clock::time_point start_time;
+
+    bool show_wireframe = false;
+    bool draw_from_observer = false;
+    bool needs_record = false;
 };
 
 template <typename T>
@@ -375,7 +382,7 @@ void record_tasks(renderer::Renderer self) {
         .name = "indirect_infos",
     });
 
-    auto draw_brick_instances = [&, first_draw = true](daxa::TaskBufferView task_brick_instance_allocator, daxa::TaskImageView hiz, bool shade) mutable {
+    auto draw_brick_instances = [&, first_draw = true](daxa::TaskBufferView task_brick_instance_allocator, daxa::TaskImageView hiz) mutable {
         if (first_draw) {
             task_fill_buffer(self->loop_task_graph, self->task_brick_meshlet_allocator, uint32_t{0});
             task_fill_buffer(self->loop_task_graph, task_indirect_infos, DispatchIndirectStruct{});
@@ -425,29 +432,10 @@ void record_tasks(renderer::Renderer self) {
         });
 
         first_draw = false;
-
-        if (shade) {
-            self->loop_task_graph.add_task(ShadeVisbufferTask{
-                .views = std::array{
-                    daxa::attachment_view(ShadeVisbufferH::AT.render_target, self->task_swapchain_image),
-                    daxa::attachment_view(ShadeVisbufferH::AT.gpu_input, task_input_buffer),
-                    daxa::attachment_view(ShadeVisbufferH::AT.visbuffer, task_visbuffer),
-#if ENABLE_DEBUG_VIS
-                    daxa::attachment_view(ShadeVisbufferH::AT.debug_overdraw, task_debug_overdraw),
-#endif
-                    daxa::attachment_view(ShadeVisbufferH::AT.chunks, self->task_chunks),
-                    daxa::attachment_view(ShadeVisbufferH::AT.brick_data, self->task_brick_data),
-                    daxa::attachment_view(ShadeVisbufferH::AT.brick_instance_allocator, task_brick_instance_allocator),
-                    daxa::attachment_view(ShadeVisbufferH::AT.meshlet_allocator, self->task_brick_meshlet_allocator),
-                    daxa::attachment_view(ShadeVisbufferH::AT.meshlet_metadata, self->task_brick_meshlet_metadata),
-                },
-                .pipeline = self->shade_visbuffer_pipeline.get(),
-            });
-        }
     };
 
     // draw previously visible bricks
-    draw_brick_instances(self->task_brick_instance_allocator, daxa::NullTaskImage, false);
+    draw_brick_instances(self->task_brick_instance_allocator, daxa::NullTaskImage);
 
     // build hi-z
     auto hiz = task_gen_hiz_single_pass(self, self->loop_task_graph, task_input_buffer, task_depth);
@@ -464,7 +452,7 @@ void record_tasks(renderer::Renderer self) {
         .pipeline = self->allocate_brick_instances_pipeline.get(),
         .chunk_n = &self->gpu_input.chunk_n,
     });
-    draw_brick_instances(self->task_brick_instance_allocator, hiz, true);
+    draw_brick_instances(self->task_brick_instance_allocator, hiz);
 
     // clear draw flags. This needs to be done before the Analyze visbuffer pass,
     // since AnalyzeVisbuffer populates them again.
@@ -503,6 +491,45 @@ void record_tasks(renderer::Renderer self) {
         .pipeline = self->analyze_visbuffer_pipeline.get(),
     });
 
+    if (self->show_wireframe || self->draw_from_observer) {
+        self->loop_task_graph.add_task(DrawVisbufferTask{
+            .views = std::array{
+                daxa::attachment_view(DrawVisbufferH::AT.render_target, task_visbuffer),
+                daxa::attachment_view(DrawVisbufferH::AT.depth_target, task_depth),
+                daxa::attachment_view(DrawVisbufferH::AT.gpu_input, task_input_buffer),
+                daxa::attachment_view(DrawVisbufferH::AT.chunks, self->task_chunks),
+                daxa::attachment_view(DrawVisbufferH::AT.brick_data, self->task_brick_data),
+                daxa::attachment_view(DrawVisbufferH::AT.brick_instance_allocator, self->task_brick_instance_allocator),
+                daxa::attachment_view(DrawVisbufferH::AT.meshlet_allocator, self->task_brick_meshlet_allocator),
+#if ENABLE_DEBUG_VIS
+                daxa::attachment_view(DrawVisbufferH::AT.debug_overdraw, task_debug_overdraw),
+#endif
+                daxa::attachment_view(DrawVisbufferH::AT.indirect_info, task_indirect_infos),
+                daxa::attachment_view(DrawVisbufferH::AT.hiz, daxa::NullTaskImage),
+            },
+            .pipeline = self->show_wireframe ? (self->draw_from_observer ? self->draw_visbuffer_observer_wireframe_pipeline.get() : self->draw_visbuffer_wireframe_pipeline.get()) : self->draw_visbuffer_observer_pipeline.get(),
+            .indirect_offset = sizeof(DispatchIndirectStruct) * 0,
+            .first = true,
+        });
+    }
+
+    self->loop_task_graph.add_task(ShadeVisbufferTask{
+        .views = std::array{
+            daxa::attachment_view(ShadeVisbufferH::AT.render_target, self->task_swapchain_image),
+            daxa::attachment_view(ShadeVisbufferH::AT.gpu_input, task_input_buffer),
+            daxa::attachment_view(ShadeVisbufferH::AT.visbuffer, task_visbuffer),
+#if ENABLE_DEBUG_VIS
+            daxa::attachment_view(ShadeVisbufferH::AT.debug_overdraw, task_debug_overdraw),
+#endif
+            daxa::attachment_view(ShadeVisbufferH::AT.chunks, self->task_chunks),
+            daxa::attachment_view(ShadeVisbufferH::AT.brick_data, self->task_brick_data),
+            daxa::attachment_view(ShadeVisbufferH::AT.brick_instance_allocator, self->task_brick_instance_allocator),
+            daxa::attachment_view(ShadeVisbufferH::AT.meshlet_allocator, self->task_brick_meshlet_allocator),
+            daxa::attachment_view(ShadeVisbufferH::AT.meshlet_metadata, self->task_brick_meshlet_metadata),
+        },
+        .pipeline = self->shade_visbuffer_pipeline.get(),
+    });
+
     self->loop_task_graph.add_task({
         .attachments = {
             daxa::inl_attachment(daxa::TaskBufferAccess::TRANSFER_READ, self->task_visible_brick_instance_allocator),
@@ -531,6 +558,7 @@ void record_tasks(renderer::Renderer self) {
     self->loop_task_graph.submit({});
     self->loop_task_graph.present({});
     self->loop_task_graph.complete({});
+    self->needs_record = false;
 }
 
 auto get_native_handle(void *glfw_window_ptr) -> daxa::NativeWindowHandle {
@@ -704,6 +732,69 @@ void renderer::init(Renderer &self, void *glfw_window_ptr) {
             std::terminate();
         }
         self->draw_visbuffer_depth_cull_pipeline = result.value();
+    }
+    {
+        auto result = self->pipeline_manager.add_raster_pipeline({
+            .mesh_shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"draw_visbuffer.glsl"}, .compile_options = {.required_subgroup_size = 32}},
+            .fragment_shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"draw_visbuffer.glsl"}},
+            .task_shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"draw_visbuffer.glsl"}, .compile_options = {.required_subgroup_size = 32}},
+            .color_attachments = {{.format = daxa::Format::R32_UINT}},
+            .depth_test = daxa::DepthTestInfo{
+                .depth_attachment_format = daxa::Format::D32_SFLOAT,
+                .enable_depth_write = true,
+                .depth_test_compare_op = daxa::CompareOp::GREATER,
+            },
+            .raster = {.polygon_mode = daxa::PolygonMode::LINE},
+            .push_constant_size = sizeof(DrawVisbufferPush),
+            .name = "draw_visbuffer",
+        });
+        if (result.is_err()) {
+            std::cerr << result.message() << std::endl;
+            std::terminate();
+        }
+        self->draw_visbuffer_wireframe_pipeline = result.value();
+    }
+    {
+        auto result = self->pipeline_manager.add_raster_pipeline({
+            .mesh_shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"draw_visbuffer.glsl"}, .compile_options = {.defines = {{"DRAW_FROM_OBSERVER", "1"}}, .required_subgroup_size = 32}},
+            .fragment_shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"draw_visbuffer.glsl"}},
+            .task_shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"draw_visbuffer.glsl"}, .compile_options = {.defines = {{"DRAW_FROM_OBSERVER", "1"}}, .required_subgroup_size = 32}},
+            .color_attachments = {{.format = daxa::Format::R32_UINT}},
+            .depth_test = daxa::DepthTestInfo{
+                .depth_attachment_format = daxa::Format::D32_SFLOAT,
+                .enable_depth_write = true,
+                .depth_test_compare_op = daxa::CompareOp::GREATER,
+            },
+            .raster = {.polygon_mode = daxa::PolygonMode::FILL},
+            .push_constant_size = sizeof(DrawVisbufferPush),
+            .name = "draw_visbuffer",
+        });
+        if (result.is_err()) {
+            std::cerr << result.message() << std::endl;
+            std::terminate();
+        }
+        self->draw_visbuffer_observer_pipeline = result.value();
+    }
+    {
+        auto result = self->pipeline_manager.add_raster_pipeline({
+            .mesh_shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"draw_visbuffer.glsl"}, .compile_options = {.defines = {{"DRAW_FROM_OBSERVER", "1"}}, .required_subgroup_size = 32}},
+            .fragment_shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"draw_visbuffer.glsl"}},
+            .task_shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"draw_visbuffer.glsl"}, .compile_options = {.defines = {{"DRAW_FROM_OBSERVER", "1"}}, .required_subgroup_size = 32}},
+            .color_attachments = {{.format = daxa::Format::R32_UINT}},
+            .depth_test = daxa::DepthTestInfo{
+                .depth_attachment_format = daxa::Format::D32_SFLOAT,
+                .enable_depth_write = true,
+                .depth_test_compare_op = daxa::CompareOp::GREATER,
+            },
+            .raster = {.polygon_mode = daxa::PolygonMode::LINE},
+            .push_constant_size = sizeof(DrawVisbufferPush),
+            .name = "draw_visbuffer",
+        });
+        if (result.is_err()) {
+            std::cerr << result.message() << std::endl;
+            std::terminate();
+        }
+        self->draw_visbuffer_observer_wireframe_pipeline = result.value();
     }
 
     {
@@ -885,6 +976,18 @@ void renderer::on_resize(Renderer self, int size_x, int size_y) {
 }
 
 void renderer::draw(Renderer self, player::Player player, voxel_world::VoxelWorld voxel_world) {
+    {
+        auto new_draw_from_observer = player::should_draw_from_observer(player);
+        if (self->draw_from_observer != new_draw_from_observer) {
+            self->draw_from_observer = new_draw_from_observer;
+            self->needs_record = true;
+        }
+    }
+
+    if (self->needs_record) {
+        record_tasks(self);
+    }
+
     auto now = Clock::now();
     auto time = std::chrono::duration<float>(now - self->start_time).count();
     self->gpu_input.time = time;
@@ -905,6 +1008,7 @@ void renderer::draw(Renderer self, player::Player player, voxel_world::VoxelWorl
         ImGui::Render();
     }
     player::get_camera(player, &self->gpu_input.cam);
+    player::get_observer_camera(player, &self->gpu_input.observer_cam);
 
     {
         bool needs_update = false;
@@ -1066,4 +1170,9 @@ void renderer::draw(Renderer self, player::Player player, voxel_world::VoxelWorl
 
     self->loop_task_graph.execute({});
     self->device.collect_garbage();
+}
+
+void renderer::toggle_wireframe(Renderer self) {
+    self->show_wireframe = !self->show_wireframe;
+    self->needs_record = true;
 }

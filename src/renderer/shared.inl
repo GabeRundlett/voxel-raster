@@ -26,6 +26,7 @@ struct GpuInput {
     daxa_f32 time;
     Samplers samplers;
     Camera cam;
+    Camera observer_cam;
 };
 DAXA_DECL_BUFFER_PTR(GpuInput)
 

@@ -64,7 +64,7 @@ void main() {
     uint fi = gl_LocalInvocationID.z;
 
     uint bit_strip = load_strip(push.uses.gpu_input, chunk.bitmasks[brick_instance.brick_index], chunk.pos_scl[brick_instance.brick_index], xi, yi, fi);
-    uvec2 edges_exposed = load_brick_faces_exposed(push.uses.gpu_input, chunk.bitmasks[brick_instance.brick_index], fi);
+    uvec2 edges_exposed = load_brick_faces_exposed(push.uses.gpu_input, chunk.bitmasks[brick_instance.brick_index], xi, yi, fi);
 
     uint b_edge_mask = bit_strip & ~(bit_strip << 1);
     uint t_edge_mask = bit_strip & ~(bit_strip >> 1);

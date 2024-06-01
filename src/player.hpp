@@ -17,4 +17,6 @@ namespace player {
 
     void update(Player self, float dt);
     void get_camera(Player self, Camera *camera);
+    void get_observer_camera(Player self, Camera *camera);
+    auto should_draw_from_observer(Player self) -> bool;
 } // namespace player

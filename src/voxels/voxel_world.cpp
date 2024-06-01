@@ -49,25 +49,42 @@ struct DensityNrm {
     glm::vec3 nrm;
 };
 
-float hash(float n) { return glm::fract(sin(n) * 753.5453123f); }
+#include <random>
+
+const auto RANDOM_BUFFER_SIZE = size_t{256};
+const auto RANDOM_SEED = 0;
+const auto RANDOM_VALUES = []() {
+    auto result = std::vector<uint8_t>{};
+    result.resize(RANDOM_BUFFER_SIZE * RANDOM_BUFFER_SIZE * RANDOM_BUFFER_SIZE);
+    auto rng = std::mt19937_64(RANDOM_SEED);
+    auto dist = std::uniform_int_distribution<std::mt19937::result_type>(0, 255);
+    for (auto &val : result) {
+        val = dist(rng) & 0xff;
+    }
+    return result;
+}();
+
+float fast_random(glm::ivec3 p) {
+    p = ((p % ivec3(RANDOM_BUFFER_SIZE)) + ivec3(RANDOM_BUFFER_SIZE)) % ivec3(RANDOM_BUFFER_SIZE);
+    return float(RANDOM_VALUES[p.x + p.y * RANDOM_BUFFER_SIZE + p.z * RANDOM_BUFFER_SIZE * RANDOM_BUFFER_SIZE]) / 255.0f;
+}
+
 DensityNrm noise(glm::vec3 x, float scale, float amp) {
     x = x * scale;
 
-    glm::vec3 p = floor(x);
+    glm::ivec3 p = floor(x);
     glm::vec3 w = fract(x);
     glm::vec3 u = w * w * (3.0f - 2.0f * w);
     glm::vec3 du = 6.0f * w * (1.0f - w);
 
-    float n = p.x + p.y * 157.0 + 113.0 * p.z;
-
-    float a = hash(n + 0.0);
-    float b = hash(n + 1.0);
-    float c = hash(n + 157.0);
-    float d = hash(n + 158.0);
-    float e = hash(n + 113.0);
-    float f = hash(n + 114.0);
-    float g = hash(n + 270.0);
-    float h = hash(n + 271.0);
+    float a = fast_random(p + ivec3(0, 0, 0));
+    float b = fast_random(p + ivec3(1, 0, 0));
+    float c = fast_random(p + ivec3(0, 1, 0));
+    float d = fast_random(p + ivec3(1, 1, 0));
+    float e = fast_random(p + ivec3(0, 0, 1));
+    float f = fast_random(p + ivec3(1, 0, 1));
+    float g = fast_random(p + ivec3(0, 1, 1));
+    float h = fast_random(p + ivec3(1, 1, 1));
 
     float k0 = a;
     float k1 = b - a;
@@ -124,25 +141,31 @@ auto get_brick_metadata(std::unique_ptr<Chunk> &chunk, auto brick_index) -> Bric
 
 auto voxel_value(glm::vec3 pos) {
     auto result = 0.0f;
-    result += gradient_z(pos, -1, 8.0f).val;
+    // pos = fract(pos / 4.0f) * 4.0f - 2.0f;
+    // result += length(pos) - 1.9f;
+    result += gradient_z(pos, -1, 24.0f).val;
     {
         float noise_persistence = NOISE_PERSISTENCE;
         float noise_lacunarity = NOISE_LACUNARITY;
         float noise_scale = NOISE_SCALE;
         float noise_amplitude = NOISE_AMPLITUDE;
         for (uint32_t i = 0; i < 5; ++i) {
+            pos = m * pos;
             result += noise(pos, noise_scale, noise_amplitude).val;
             noise_scale *= noise_lacunarity;
             noise_amplitude *= noise_persistence;
-            // pos = m * pos;
         }
     }
     return result;
 }
 auto voxel_nrm(glm::vec3 pos) {
     auto result = DensityNrm(0, glm::vec3(0));
+    // pos = fract(pos / 4.0f) * 4.0f - 2.0f;
+    // result.val += length(pos) - 2.0f;
+    // result.nrm += normalize(pos);
+
     {
-        auto dn = gradient_z(pos, -1, 8.0f);
+        auto dn = gradient_z(pos, -1, 24.0f);
         result.val += dn.val;
         result.nrm += dn.nrm;
     }
@@ -153,13 +176,13 @@ auto voxel_nrm(glm::vec3 pos) {
         float noise_amplitude = NOISE_AMPLITUDE;
         auto inv = mat3(1, 0, 0, 0, 1, 0, 0, 0, 1);
         for (uint32_t i = 0; i < 5; ++i) {
+            pos = m * pos;
+            inv = mi * inv;
             auto dn = noise(pos, noise_scale, noise_amplitude);
             result.val += dn.val;
             result.nrm += inv * dn.nrm;
             noise_scale *= noise_lacunarity;
             noise_amplitude *= noise_persistence;
-            // pos = m * pos;
-            // inv = mi * inv;
         }
     }
     result.nrm = normalize(result.nrm);
@@ -167,18 +190,19 @@ auto voxel_nrm(glm::vec3 pos) {
 }
 auto voxel_minmax_value(glm::vec3 p0, glm::vec3 p1) {
     auto result = glm::vec2(0);
-    result += minmax_gradient_z(p0, p1, -1, 8.0f);
+    // result += glm::vec2(-1, 1);
+    result += minmax_gradient_z(p0, p1, -1, 24.0f);
     {
         float noise_persistence = NOISE_PERSISTENCE;
         float noise_lacunarity = NOISE_LACUNARITY;
         float noise_scale = NOISE_SCALE;
         float noise_amplitude = NOISE_AMPLITUDE;
         for (uint32_t i = 0; i < 5; ++i) {
+            p0 = m * p0;
+            p1 = m * p1;
             result += minmax_noise_in_region((p0 + p1) * 0.5f, abs(p1 - p0), noise_scale, noise_amplitude);
             noise_scale *= noise_lacunarity;
             noise_amplitude *= noise_persistence;
-            // p0 = m * p0;
-            // p1 = m * p1;
         }
     }
     return result;
@@ -188,7 +212,7 @@ void voxel_world::init(VoxelWorld &self) {
     self = new State{};
 
     auto generate_chunk = [self](int32_t chunk_xi, int32_t chunk_yi, int32_t chunk_zi, int32_t level) {
-        if (level > 0 && chunk_xi < 2 && chunk_yi < 2 && chunk_zi < 2) {
+        if (level > 0 && chunk_xi < CHUNK_NX / 2 && chunk_yi < CHUNK_NY / 2 && chunk_zi < CHUNK_NZ / 2) {
             return;
         }
 
