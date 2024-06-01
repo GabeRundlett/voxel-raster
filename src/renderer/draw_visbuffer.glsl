@@ -124,6 +124,18 @@ void emit_prim(vec3 in_p0, vec3 in_p1, vec3 in_p2, vec3 in_p3) {
     uint prim_i = face_id * 2;
     gl_MeshPrimitivesEXT[prim_i + 0].gl_CullPrimitiveEXT = cull_poly;
     gl_MeshPrimitivesEXT[prim_i + 1].gl_CullPrimitiveEXT = cull_poly;
+
+#if DRAW_FROM_OBSERVER
+    world_to_clip = deref(push.uses.gpu_input).observer_cam.view_to_clip * deref(push.uses.gpu_input).observer_cam.world_to_view;
+
+    p0_h = world_to_clip * vec4(in_p0, 1);
+    p1_h = world_to_clip * vec4(in_p1, 1);
+    p2_h = world_to_clip * vec4(in_p2, 1);
+#if !DISCARD_METHOD
+    p3_h = world_to_clip * vec4(in_p3, 1);
+#endif
+#endif
+
     if (!cull_poly) {
         gl_PrimitiveTriangleIndicesEXT[prim_i + 0] = uvec3(0, 1, 2) + vert_i;
         gl_PrimitiveTriangleIndicesEXT[prim_i + 1] = uvec3(1, 2, 3) + vert_i;
@@ -141,11 +153,7 @@ void emit_prim(vec3 in_p0, vec3 in_p1, vec3 in_p2, vec3 in_p3) {
 
 layout(local_size_x = 32) in;
 void main() {
-#if DRAW_FROM_OBSERVER
-    world_to_clip = deref(push.uses.gpu_input).observer_cam.view_to_clip * deref(push.uses.gpu_input).observer_cam.world_to_view;
-#else
     world_to_clip = deref(push.uses.gpu_input).cam.view_to_clip * deref(push.uses.gpu_input).cam.world_to_view;
-#endif
     TaskPayload payload = unpack(packed_payload);
 
     uint meshlet_index = gl_WorkGroupID.x;

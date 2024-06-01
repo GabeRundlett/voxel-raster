@@ -19,10 +19,26 @@ uint load_bit(daxa_BufferPtr(GpuInput) gpu_input, daxa_BufferPtr(VoxelBrickBitma
 
 uvec2 load_brick_faces_exposed(daxa_BufferPtr(GpuInput) gpu_input, daxa_BufferPtr(VoxelBrickBitmask) bitmask, uint xi, uint yi, uint axis) {
     // return uvec2(1);
-    uint brick_bitmask_metadata = deref(bitmask).metadata;
-    uint b_exposed = (brick_bitmask_metadata >> (axis + 0)) & 1;
-    uint t_exposed = (brick_bitmask_metadata >> (axis + 3)) & 1;
-    return uvec2(b_exposed, t_exposed);
+
+    // uint brick_bitmask_metadata = deref(bitmask).metadata;
+    // uint b_exposed = (brick_bitmask_metadata >> (axis + 0)) & 1;
+    // uint t_exposed = (brick_bitmask_metadata >> (axis + 3)) & 1;
+    // return uvec2(b_exposed, t_exposed);
+
+    uvec2 result = uvec2(0);
+    {
+        uint bit_index = xi + yi * VOXEL_BRICK_SIZE + (axis + 0) * VOXEL_BRICK_SIZE * VOXEL_BRICK_SIZE;
+        uint word_index = bit_index / 32;
+        uint in_word_index = bit_index % 32;
+        result.x = 1 - ((deref(bitmask).neighbor_bits[word_index] >> in_word_index) & 1);
+    }
+    {
+        uint bit_index = xi + yi * VOXEL_BRICK_SIZE + (axis + 3) * VOXEL_BRICK_SIZE * VOXEL_BRICK_SIZE;
+        uint word_index = bit_index / 32;
+        uint in_word_index = bit_index % 32;
+        result.y = 1 - ((deref(bitmask).neighbor_bits[word_index] >> in_word_index) & 1);
+    }
+    return result;
 }
 
 uvec3 unswizzle_from_strip_coord(uvec3 pos, uint axis) {
