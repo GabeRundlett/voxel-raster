@@ -27,8 +27,10 @@ void write_results() {
     if (gl_LocalInvocationIndex == 0) {
         result_mesh.meshlet_start = allocate_meshlets(push.uses.meshlet_allocator, meshlet_n);
 
-        deref(chunk.meshes[brick_instance.brick_index]).face_count = result_mesh.face_count;
-        deref(chunk.meshes[brick_instance.brick_index]).meshlet_start = result_mesh.meshlet_start;
+        if (result_mesh.meshlet_start != 0) {
+            deref(chunk.meshes[brick_instance.brick_index]).face_count = result_mesh.face_count;
+            deref(chunk.meshes[brick_instance.brick_index]).meshlet_start = result_mesh.meshlet_start;
+        }
     }
 
     barrier();
@@ -69,8 +71,8 @@ void main() {
     uint b_edge_mask = bit_strip & ~(bit_strip << 1);
     uint t_edge_mask = bit_strip & ~(bit_strip >> 1);
 
-    b_edge_mask &= ~(1 - edges_exposed[0]);
-    t_edge_mask &= ~((1 - edges_exposed[1]) << (VOXEL_BRICK_SIZE - 1));
+    b_edge_mask &= ~(edges_exposed[0]);
+    t_edge_mask &= ~((edges_exposed[1]) << (VOXEL_BRICK_SIZE - 1));
 
     uint strip_index = face_bitmask_strip_index(xi, yi, fi);
     uint bit_index = strip_index * VOXEL_BRICK_SIZE;

@@ -25,5 +25,5 @@ uint allocate_brick_instances(daxa_RWBufferPtr(BrickInstance) brick_instance_all
 }
 bool is_valid_index(daxa_BufferPtr(BrickInstance) brick_instance_allocator, uint brick_instance_i) {
     daxa_BufferPtr(BrickInstanceAllocatorState) allocator_state = daxa_BufferPtr(BrickInstanceAllocatorState)(brick_instance_allocator);
-    return brick_instance_i <= deref(allocator_state).instance_count && brick_instance_i > 0;
+    return brick_instance_i <= min(deref(allocator_state).instance_count, MAX_BRICK_INSTANCE_COUNT) && brick_instance_i > 0;
 }

@@ -1,6 +1,8 @@
 #include "player.hpp"
 #include "camera.inl"
 
+#include <renderer/renderer.hpp>
+
 #include <glm/glm.hpp>
 #include <GLFW/glfw3.h>
 
@@ -326,6 +328,48 @@ void player::update(Player self, float dt) {
     };
     update(&self->observer_cam, dt);
     update(&self->main_cam, dt);
+
+    if (self->viewing_observer) {
+        auto points = std::array<glm::vec3, 8>{
+            glm::vec3{0, 0, 1},
+            glm::vec3{1, 0, 1},
+            glm::vec3{0, 1, 1},
+            glm::vec3{1, 1, 1},
+            glm::vec3{0, 0, 0.001f},
+            glm::vec3{1, 0, 0.001f},
+            glm::vec3{0, 1, 0.001f},
+            glm::vec3{1, 1, 0.001f},
+        };
+        for (auto &point : points) {
+            point.x = point.x * 2.0f - 1.0f;
+            point.y = point.y * 2.0f - 1.0f;
+            auto ws_p = self->main_cam.view_to_world * self->main_cam.clip_to_view * glm::vec4(point, 1.0f);
+            point = glm::vec3(ws_p.x, ws_p.y, ws_p.z) / ws_p.w;
+        }
+
+        auto line_point_pairs = std::array{
+            std::pair{0, 1},
+            std::pair{1, 3},
+            std::pair{3, 2},
+            std::pair{2, 0},
+
+            std::pair{0 + 4, 1 + 4},
+            std::pair{1 + 4, 3 + 4},
+            std::pair{3 + 4, 2 + 4},
+            std::pair{2 + 4, 0 + 4},
+
+            std::pair{0, 0 + 4},
+            std::pair{1, 1 + 4},
+            std::pair{2, 2 + 4},
+            std::pair{3, 3 + 4},
+        };
+
+        for (auto const &[pi0, pi1] : line_point_pairs) {
+            using Line = std::array<glm::vec3, 2>;
+            auto line = Line{points[pi0], points[pi1]};
+            renderer::submit_debug_lines((float const *)&line, 1);
+        }
+    }
 }
 
 void player::get_camera(Player self, Camera *camera) {

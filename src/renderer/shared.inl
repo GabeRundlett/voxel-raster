@@ -147,3 +147,13 @@ struct GenHizPush {
     daxa_u32 mip_count;
     daxa_u32 total_workgroup_count;
 };
+
+DAXA_DECL_TASK_HEAD_BEGIN(DebugLinesH)
+DAXA_TH_BUFFER_PTR(VERTEX_SHADER_READ, daxa_BufferPtr(GpuInput), gpu_input)
+DAXA_TH_IMAGE(COLOR_ATTACHMENT, REGULAR_2D, render_target)
+DAXA_DECL_TASK_HEAD_END
+
+struct DebugLinesPush {
+    DAXA_TH_BLOB(DebugLinesH, uses)
+    daxa_BufferPtr(daxa_f32vec3) line_points;
+};

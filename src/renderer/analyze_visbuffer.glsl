@@ -42,19 +42,18 @@ void main() {
 
     [[unroll]] for (uint i = 0; i < 4; ++i) {
         uint visbuffer_id = visbuffer_ids[i];
-        VisbufferPayload payload = unpack(PackedVisbufferPayload(visbuffer_id));
-        VoxelMeshlet meshlet = deref(push.uses.meshlet_allocator[payload.meshlet_id]);
-        PackedVoxelBrickFace packed_face = meshlet.faces[payload.face_id];
-        VoxelBrickFace face = unpack(packed_face);
-        VoxelMeshletMetadata metadata = deref(push.uses.meshlet_metadata[payload.meshlet_id]);
-        brick_instance_indices[i] = metadata.brick_instance_index;
+        bool list_entry_valid = false;
 
-        // bool list_entry_valid = (visbuffer_id != INVALID_MESHLET_INDEX);
-        // list_mask |= (uint(list_entry_valid) << i);
+        if (visbuffer_id != INVALID_MESHLET_INDEX) {
+            VisbufferPayload payload = unpack(PackedVisbufferPayload(visbuffer_id));
+            VoxelMeshlet meshlet = deref(push.uses.meshlet_allocator[payload.meshlet_id]);
+            PackedVoxelBrickFace packed_face = meshlet.faces[payload.face_id];
+            VoxelBrickFace face = unpack(packed_face);
+            VoxelMeshletMetadata metadata = deref(push.uses.meshlet_metadata[payload.meshlet_id]);
+            list_entry_valid = is_valid_index(daxa_BufferPtr(BrickInstance)(push.uses.brick_instance_allocator), metadata.brick_instance_index);
+            brick_instance_indices[i] = metadata.brick_instance_index;
+        }
 
-        bool list_entry_valid = true;
-        list_entry_valid = list_entry_valid && (visbuffer_id != INVALID_MESHLET_INDEX);
-        // list_entry_valid = list_entry_valid && (meshlet_instance_indices[i] < MAX_MESHLET_INSTANCES);
         list_mask = list_mask | (list_entry_valid ? (1u << i) : 0u);
     }
 
