@@ -2,18 +2,30 @@
 
 #include <voxels/voxel_mesh.inl>
 
-uint allocate_meshlets(daxa_RWBufferPtr(VoxelMeshlet) meshlet_allocator, uint meshlet_n) {
+uint allocate_meshlets(daxa_RWBufferPtr(VoxelMeshlet) meshlet_allocator, uint meshlet_n, bool compute_raster) {
     daxa_RWBufferPtr(VoxelMeshletAllocatorState) allocator_state = daxa_RWBufferPtr(VoxelMeshletAllocatorState)(meshlet_allocator);
-    uint result = atomicAdd(deref(allocator_state).meshlet_count, meshlet_n);
-    if (result >= MAX_MESHLET_COUNT) {
+    if (compute_raster) {
+        uint result = atomicAdd(deref(allocator_state).sw_meshlet_count, meshlet_n);
+        if (result + meshlet_n <= MAX_SW_MESHLET_COUNT) {
+            return result + 1;
+        }
+    }
+    uint result = atomicAdd(deref(allocator_state).hw_meshlet_count, meshlet_n);
+    if (result > MAX_MESHLET_COUNT - MAX_SW_MESHLET_COUNT - meshlet_n) {
         return 0;
     }
-    return result + 1;
+    return result + MAX_SW_MESHLET_COUNT + 1;
 }
-// bool is_valid_index(daxa_BufferPtr(VoxelMeshlet) meshlet_allocator, uint meshlet_i) {
-//     daxa_BufferPtr(VoxelMeshletAllocatorState) allocator_state = daxa_BufferPtr(VoxelMeshletAllocatorState)(meshlet_allocator);
-//     return meshlet_i < deref(allocator_state).meshlet_count && meshlet_i > 0;
-// }
+bool is_valid_meshlet_index(daxa_BufferPtr(VoxelMeshlet) meshlet_allocator, uint meshlet_i) {
+    daxa_BufferPtr(VoxelMeshletAllocatorState) allocator_state = daxa_BufferPtr(VoxelMeshletAllocatorState)(meshlet_allocator);
+    if (meshlet_i == 0) {
+        return false;
+    }
+    if (meshlet_i <= MAX_SW_MESHLET_COUNT) {
+        return meshlet_i <= min(deref(allocator_state).sw_meshlet_count, MAX_SW_MESHLET_COUNT);
+    }
+    return meshlet_i <= min(deref(allocator_state).hw_meshlet_count + MAX_SW_MESHLET_COUNT, MAX_MESHLET_COUNT);
+}
 
 uint allocate_brick_instances(daxa_RWBufferPtr(BrickInstance) brick_instance_allocator, uint brick_instance_n) {
     daxa_RWBufferPtr(BrickInstanceAllocatorState) allocator_state = daxa_RWBufferPtr(BrickInstanceAllocatorState)(brick_instance_allocator);

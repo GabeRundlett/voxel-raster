@@ -43,12 +43,16 @@ struct renderer::State {
     std::shared_ptr<daxa::ComputePipeline> allocate_brick_instances_pipeline;
     std::shared_ptr<daxa::ComputePipeline> set_indirect_infos0;
     std::shared_ptr<daxa::ComputePipeline> set_indirect_infos1;
+    std::shared_ptr<daxa::ComputePipeline> set_indirect_infos2;
     std::shared_ptr<daxa::ComputePipeline> mesh_voxel_bricks_pipeline;
     std::shared_ptr<daxa::RasterPipeline> draw_visbuffer_pipeline;
     std::shared_ptr<daxa::RasterPipeline> draw_visbuffer_depth_cull_pipeline;
     std::shared_ptr<daxa::RasterPipeline> draw_visbuffer_wireframe_pipeline;
     std::shared_ptr<daxa::RasterPipeline> draw_visbuffer_observer_pipeline;
     std::shared_ptr<daxa::RasterPipeline> draw_visbuffer_observer_wireframe_pipeline;
+    std::shared_ptr<daxa::ComputePipeline> compute_rasterize_pipeline;
+    std::shared_ptr<daxa::ComputePipeline> compute_rasterize_depth_cull_pipeline;
+    std::shared_ptr<daxa::ComputePipeline> compute_rasterize_observer_pipeline;
     std::shared_ptr<daxa::RasterPipeline> shade_visbuffer_pipeline;
     std::shared_ptr<daxa::ComputePipeline> analyze_visbuffer_pipeline;
     std::shared_ptr<daxa::ComputePipeline> gen_hiz_pipeline;
@@ -239,6 +243,19 @@ struct DrawVisbufferTask : DrawVisbufferH::Task {
     }
 };
 
+struct ComputeRasterizeTask : ComputeRasterizeH::Task {
+    AttachmentViews views = {};
+    daxa::ComputePipeline *pipeline = {};
+    uint32_t indirect_offset;
+    void callback(daxa::TaskInterface ti) {
+        ti.recorder.set_pipeline(*pipeline);
+        ComputeRasterizePush push = {};
+        ti.assign_attachment_shader_blob(push.uses.value);
+        ti.recorder.push_constant(push);
+        ti.recorder.dispatch_indirect({.indirect_buffer = ti.get(AT.indirect_info).ids[0], .offset = indirect_offset});
+    }
+};
+
 struct ShadeVisbufferTask : ShadeVisbufferH::Task {
     AttachmentViews views = {};
     daxa::RasterPipeline *pipeline = {};
@@ -414,20 +431,27 @@ void record_tasks(renderer::Renderer self) {
 #endif
 
     auto task_indirect_infos = self->loop_task_graph.create_transient_buffer({
-        .size = sizeof(DispatchIndirectStruct) * 1,
+        .size = sizeof(DispatchIndirectStruct) * 3,
         .name = "indirect_infos",
     });
 
+    auto task_visbuffer64 = self->loop_task_graph.create_transient_image({
+        .format = daxa::Format::R64_UINT,
+        .size = {self->gpu_input.render_size.x, self->gpu_input.render_size.y, 1},
+        .name = "visbuffer64",
+    });
+    clear_task_images(self->loop_task_graph, std::array<daxa::TaskImageView, 1>{task_visbuffer64}, std::array<daxa::ClearValue, 1>{std::array<uint32_t, 4>{0, 0, 0, 0}});
+
     auto draw_brick_instances = [&, first_draw = true](daxa::TaskBufferView task_brick_instance_allocator, daxa::TaskImageView hiz) mutable {
         if (first_draw) {
-            task_fill_buffer(self->loop_task_graph, self->task_brick_meshlet_allocator, uint32_t{0});
-            task_fill_buffer(self->loop_task_graph, task_indirect_infos, DispatchIndirectStruct{});
+            task_fill_buffer(self->loop_task_graph, self->task_brick_meshlet_allocator, std::array<uint32_t, 4>{});
         }
 
         self->loop_task_graph.add_task(SetIndirectInfosTask{
             .views = std::array{
                 daxa::attachment_view(SetIndirectInfosH::AT.gpu_input, task_input_buffer),
                 daxa::attachment_view(SetIndirectInfosH::AT.brick_instance_allocator, task_brick_instance_allocator),
+                daxa::attachment_view(SetIndirectInfosH::AT.meshlet_allocator, self->task_brick_meshlet_allocator),
                 daxa::attachment_view(SetIndirectInfosH::AT.indirect_info, task_indirect_infos),
             },
             .pipeline = first_draw ? self->set_indirect_infos0.get() : self->set_indirect_infos1.get(),
@@ -467,6 +491,35 @@ void record_tasks(renderer::Renderer self) {
             .first = first_draw,
         });
 
+        self->loop_task_graph.add_task(SetIndirectInfosTask{
+            .views = std::array{
+                daxa::attachment_view(SetIndirectInfosH::AT.gpu_input, task_input_buffer),
+                daxa::attachment_view(SetIndirectInfosH::AT.brick_instance_allocator, daxa::NullTaskBuffer),
+                daxa::attachment_view(SetIndirectInfosH::AT.meshlet_allocator, self->task_brick_meshlet_allocator),
+                daxa::attachment_view(SetIndirectInfosH::AT.indirect_info, task_indirect_infos),
+            },
+            .pipeline = self->set_indirect_infos2.get(),
+        });
+
+        self->loop_task_graph.add_task(ComputeRasterizeTask{
+            .views = std::array{
+                daxa::attachment_view(ComputeRasterizeH::AT.visbuffer64, task_visbuffer64),
+                daxa::attachment_view(ComputeRasterizeH::AT.gpu_input, task_input_buffer),
+                daxa::attachment_view(ComputeRasterizeH::AT.chunks, self->task_chunks),
+                daxa::attachment_view(ComputeRasterizeH::AT.brick_data, self->task_brick_data),
+                daxa::attachment_view(ComputeRasterizeH::AT.brick_instance_allocator, task_brick_instance_allocator),
+                daxa::attachment_view(ComputeRasterizeH::AT.meshlet_allocator, self->task_brick_meshlet_allocator),
+                daxa::attachment_view(ComputeRasterizeH::AT.meshlet_metadata, self->task_brick_meshlet_metadata),
+                daxa::attachment_view(ComputeRasterizeH::AT.indirect_info, task_indirect_infos),
+#if ENABLE_DEBUG_VIS
+                daxa::attachment_view(ComputeRasterizeH::AT.debug_overdraw, task_debug_overdraw),
+#endif
+                daxa::attachment_view(ComputeRasterizeH::AT.hiz, hiz),
+            },
+            .pipeline = self->compute_rasterize_pipeline.get(), // hiz == daxa::NullTaskImage ? self->draw_visbuffer_pipeline.get() : self->draw_visbuffer_depth_cull_pipeline.get(),
+            .indirect_offset = sizeof(DispatchIndirectStruct) * 1,
+        });
+
         first_draw = false;
     };
 
@@ -496,6 +549,7 @@ void record_tasks(renderer::Renderer self) {
         .views = std::array{
             daxa::attachment_view(SetIndirectInfosH::AT.gpu_input, task_input_buffer),
             daxa::attachment_view(SetIndirectInfosH::AT.brick_instance_allocator, self->task_brick_instance_allocator),
+            daxa::attachment_view(SetIndirectInfosH::AT.meshlet_allocator, self->task_brick_meshlet_allocator),
             daxa::attachment_view(SetIndirectInfosH::AT.indirect_info, task_indirect_infos),
         },
         .pipeline = self->set_indirect_infos0.get(),
@@ -554,6 +608,7 @@ void record_tasks(renderer::Renderer self) {
             daxa::attachment_view(ShadeVisbufferH::AT.render_target, self->task_swapchain_image),
             daxa::attachment_view(ShadeVisbufferH::AT.gpu_input, task_input_buffer),
             daxa::attachment_view(ShadeVisbufferH::AT.visbuffer, task_visbuffer),
+            daxa::attachment_view(ShadeVisbufferH::AT.visbuffer64, task_visbuffer64),
 #if ENABLE_DEBUG_VIS
             daxa::attachment_view(ShadeVisbufferH::AT.debug_overdraw, task_debug_overdraw),
 #endif
@@ -632,6 +687,7 @@ void renderer::init(Renderer &self, void *glfw_window_ptr) {
     self->device = self->instance.create_device({
         .flags = daxa::DeviceFlags2{
             .mesh_shader_bit = true,
+            .image_atomic64 = true,
         },
         .max_allowed_buffers = 1 << 16,
         .name = "my device",
@@ -670,7 +726,7 @@ void renderer::init(Renderer &self, void *glfw_window_ptr) {
             },
             .write_out_shader_binary = ".out/spv",
             .language = daxa::ShaderLanguage::GLSL,
-            .enable_debug_info = true,
+            .enable_debug_info = false,
         },
         .name = "my pipeline manager",
     });
@@ -725,6 +781,19 @@ void renderer::init(Renderer &self, void *glfw_window_ptr) {
             std::terminate();
         }
         self->set_indirect_infos1 = result.value();
+    }
+
+    {
+        auto result = self->pipeline_manager.add_compute_pipeline({
+            .shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"set_indirect_infos.glsl"}, .compile_options = {.defines = {{"SET_TYPE", "2"}}}},
+            .push_constant_size = sizeof(SetIndirectInfosPush),
+            .name = "set_indirect_infos2",
+        });
+        if (result.is_err()) {
+            std::cerr << result.message() << std::endl;
+            std::terminate();
+        }
+        self->set_indirect_infos2 = result.value();
     }
 
     {
@@ -844,6 +913,43 @@ void renderer::init(Renderer &self, void *glfw_window_ptr) {
             std::terminate();
         }
         self->draw_visbuffer_observer_wireframe_pipeline = result.value();
+    }
+
+    {
+        auto result = self->pipeline_manager.add_compute_pipeline({
+            .shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"compute_rasterize.glsl"}},
+            .push_constant_size = sizeof(ComputeRasterizePush),
+            .name = "compute_rasterize",
+        });
+        if (result.is_err()) {
+            std::cerr << result.message() << std::endl;
+            std::terminate();
+        }
+        self->compute_rasterize_pipeline = result.value();
+    }
+    {
+        auto result = self->pipeline_manager.add_compute_pipeline({
+            .shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"compute_rasterize.glsl"}, .compile_options = {.defines = {{"DO_DEPTH_CULL", "1"}}}},
+            .push_constant_size = sizeof(ComputeRasterizePush),
+            .name = "compute_rasterize_depth_cull",
+        });
+        if (result.is_err()) {
+            std::cerr << result.message() << std::endl;
+            std::terminate();
+        }
+        self->compute_rasterize_depth_cull_pipeline = result.value();
+    }
+    {
+        auto result = self->pipeline_manager.add_compute_pipeline({
+            .shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"compute_rasterize.glsl"}, .compile_options = {.defines = {{"DRAW_FROM_OBSERVER", "1"}}}},
+            .push_constant_size = sizeof(ComputeRasterizePush),
+            .name = "compute_rasterize_observer",
+        });
+        if (result.is_err()) {
+            std::cerr << result.message() << std::endl;
+            std::terminate();
+        }
+        self->compute_rasterize_observer_pipeline = result.value();
     }
 
     {

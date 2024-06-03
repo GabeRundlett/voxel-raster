@@ -56,6 +56,7 @@ struct AllocateBrickInstancesPush {
 DAXA_DECL_TASK_HEAD_BEGIN(SetIndirectInfosH)
 DAXA_TH_BUFFER_PTR(COMPUTE_SHADER_READ, daxa_BufferPtr(GpuInput), gpu_input)
 DAXA_TH_BUFFER_PTR(COMPUTE_SHADER_READ, daxa_BufferPtr(BrickInstanceAllocatorState), brick_instance_allocator)
+DAXA_TH_BUFFER_PTR(COMPUTE_SHADER_READ, daxa_BufferPtr(VoxelMeshletAllocatorState), meshlet_allocator)
 DAXA_TH_BUFFER_PTR(COMPUTE_SHADER_READ_WRITE, daxa_RWBufferPtr(DispatchIndirectStruct), indirect_info)
 DAXA_DECL_TASK_HEAD_END
 
@@ -96,6 +97,25 @@ struct DrawVisbufferPush {
     DAXA_TH_BLOB(DrawVisbufferH, uses)
 };
 
+DAXA_DECL_TASK_HEAD_BEGIN(ComputeRasterizeH)
+DAXA_TH_IMAGE_ID(COMPUTE_SHADER_STORAGE_READ_WRITE, REGULAR_2D, visbuffer64)
+DAXA_TH_BUFFER_PTR(COMPUTE_SHADER_READ, daxa_BufferPtr(GpuInput), gpu_input)
+DAXA_TH_BUFFER_PTR(COMPUTE_SHADER_READ, daxa_BufferPtr(VoxelChunk), chunks)
+DAXA_TH_BUFFER(COMPUTE_SHADER_READ, brick_data)
+DAXA_TH_BUFFER_PTR(COMPUTE_SHADER_READ, daxa_BufferPtr(BrickInstance), brick_instance_allocator)
+DAXA_TH_BUFFER_PTR(COMPUTE_SHADER_READ, daxa_BufferPtr(VoxelMeshlet), meshlet_allocator)
+DAXA_TH_BUFFER_PTR(COMPUTE_SHADER_READ, daxa_BufferPtr(VoxelMeshletMetadata), meshlet_metadata)
+DAXA_TH_BUFFER_PTR(COMPUTE_SHADER_READ, daxa_BufferPtr(DispatchIndirectStruct), indirect_info)
+#if ENABLE_DEBUG_VIS
+DAXA_TH_IMAGE_INDEX(COMPUTE_SHADER_STORAGE_READ_WRITE, REGULAR_2D, debug_overdraw)
+#endif
+DAXA_TH_IMAGE_INDEX(COMPUTE_SHADER_SAMPLED, REGULAR_2D, hiz)
+DAXA_DECL_TASK_HEAD_END
+
+struct ComputeRasterizePush {
+    DAXA_TH_BLOB(ComputeRasterizeH, uses)
+};
+
 DAXA_DECL_TASK_HEAD_BEGIN(ShadeVisbufferH)
 DAXA_TH_IMAGE(COLOR_ATTACHMENT, REGULAR_2D, render_target)
 DAXA_TH_BUFFER_PTR(FRAGMENT_SHADER_READ, daxa_BufferPtr(GpuInput), gpu_input)
@@ -108,6 +128,7 @@ DAXA_TH_BUFFER_PTR(FRAGMENT_SHADER_READ, daxa_BufferPtr(VoxelMeshletMetadata), m
 DAXA_TH_IMAGE_INDEX(FRAGMENT_SHADER_SAMPLED, REGULAR_2D, debug_overdraw)
 #endif
 DAXA_TH_IMAGE_INDEX(FRAGMENT_SHADER_SAMPLED, REGULAR_2D, visbuffer)
+DAXA_TH_IMAGE_INDEX(FRAGMENT_SHADER_STORAGE_READ_ONLY, REGULAR_2D, visbuffer64)
 DAXA_DECL_TASK_HEAD_END
 
 struct ShadeVisbufferPush {

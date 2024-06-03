@@ -96,3 +96,46 @@ VoxelBrickFace unpack(PackedVoxelBrickFace packed_face) {
     result.axis = face_id / VOXEL_BRICK_SIZE / VOXEL_BRICK_SIZE / VOXEL_BRICK_SIZE;
     return result;
 }
+
+vec2 brick_extent_pixels(daxa_BufferPtr(GpuInput) gpu_input, daxa_BufferPtr(VoxelChunk) voxel_chunks, BrickInstance brick_instance) {
+    vec3 ndc_min;
+    vec3 ndc_max;
+
+    VoxelChunk voxel_chunk = deref(voxel_chunks[brick_instance.chunk_index]);
+    ivec4 pos_scl = deref(voxel_chunk.pos_scl[brick_instance.brick_index]);
+
+    vec3 p0 = ivec3(voxel_chunk.pos) * int(VOXEL_CHUNK_SIZE) + pos_scl.xyz * int(VOXEL_BRICK_SIZE) + ivec3(0);
+    vec3 p1 = ivec3(voxel_chunk.pos) * int(VOXEL_CHUNK_SIZE) + pos_scl.xyz * int(VOXEL_BRICK_SIZE) + ivec3(VOXEL_BRICK_SIZE);
+    int scl = pos_scl.w + 8;
+    const float SCL = (float(1 << scl) / float(1 << 8));
+    p0 *= SCL;
+    p1 *= SCL;
+
+    vec3 vertices[8] = vec3[8](
+        vec3(p0.x, p0.y, p0.z),
+        vec3(p1.x, p0.y, p0.z),
+        vec3(p0.x, p1.y, p0.z),
+        vec3(p1.x, p1.y, p0.z),
+        vec3(p0.x, p0.y, p1.z),
+        vec3(p1.x, p0.y, p1.z),
+        vec3(p0.x, p1.y, p1.z),
+        vec3(p1.x, p1.y, p1.z));
+
+    [[unroll]] for (uint vert_i = 0; vert_i < 8; ++vert_i) {
+        vec4 vs_h = deref(gpu_input).cam.world_to_view * vec4(vertices[vert_i], 1);
+        vec4 cs_h = deref(gpu_input).cam.view_to_clip * vs_h;
+        vec3 p = cs_h.xyz / cs_h.w;
+        if (vert_i == 0) {
+            ndc_min = p;
+            ndc_max = p;
+        } else {
+            ndc_min = min(ndc_min, p);
+            ndc_max = max(ndc_max, p);
+        }
+    }
+
+    vec2 ndc_extent = ndc_max.xy - ndc_min.xy;
+    vec2 pixel_extent = ndc_extent * 0.5 * deref(gpu_input).render_size;
+
+    return pixel_extent;
+}

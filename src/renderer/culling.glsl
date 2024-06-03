@@ -1,14 +1,11 @@
 #include <shared.inl>
 
-bool is_ndc_aabb_hiz_depth_occluded(
-    vec3 ndc_min, vec3 ndc_max,
+bool is_texel_aabb_hiz_depth_occluded(
+    vec2 min_texel_i, vec2 max_texel_i,
+    float nearest_depth,
     uvec2 hiz_res,
     daxa_ImageViewIndex hiz) {
     const vec2 f_hiz_resolution = hiz_res;
-    const vec2 min_uv = (ndc_min.xy + 1.0f) * 0.5f;
-    const vec2 max_uv = (ndc_max.xy + 1.0f) * 0.5f;
-    const vec2 min_texel_i = floor(clamp(f_hiz_resolution * min_uv, vec2(0.0f, 0.0f), f_hiz_resolution - 1.0f));
-    const vec2 max_texel_i = floor(clamp(f_hiz_resolution * max_uv, vec2(0.0f, 0.0f), f_hiz_resolution - 1.0f));
     const float pixel_range = max(max_texel_i.x - min_texel_i.x + 1.0f, max_texel_i.y - min_texel_i.y + 1.0f);
     const float mip = ceil(log2(max(2.0f, pixel_range))) - 1 /* we want one mip lower, as we sample a quad */;
 
@@ -31,20 +28,36 @@ bool is_ndc_aabb_hiz_depth_occluded(
         texelFetch(daxa_texture2D(hiz), clamp(quad_corner_texel + ivec2(1, 0), ivec2(0, 0), texel_bounds), imip).x,
         texelFetch(daxa_texture2D(hiz), clamp(quad_corner_texel + ivec2(1, 1), ivec2(0, 0), texel_bounds), imip).x);
     const float conservative_depth = min(min(fetch.x, fetch.y), min(fetch.z, fetch.w));
-    const bool depth_cull = ndc_max.z < conservative_depth;
+    const bool depth_cull = nearest_depth < conservative_depth;
     return depth_cull;
+}
+
+bool is_ndc_aabb_hiz_depth_occluded(
+    vec3 ndc_min, vec3 ndc_max,
+    uvec2 hiz_res,
+    daxa_ImageViewIndex hiz) {
+    const vec2 f_hiz_resolution = hiz_res;
+    const vec2 min_uv = (ndc_min.xy + 1.0f) * 0.5f;
+    const vec2 max_uv = (ndc_max.xy + 1.0f) * 0.5f;
+    const vec2 min_texel_i = floor(clamp(f_hiz_resolution * min_uv, vec2(0.0f, 0.0f), f_hiz_resolution - 1.0f));
+    const vec2 max_texel_i = floor(clamp(f_hiz_resolution * max_uv, vec2(0.0f, 0.0f), f_hiz_resolution - 1.0f));
+    return is_texel_aabb_hiz_depth_occluded(min_texel_i, max_texel_i, ndc_max.z, hiz_res, hiz);
 }
 
 bool is_outside_frustum(vec2 ndc_min, vec2 ndc_max) {
     return any(greaterThan(ndc_min, vec2(1))) || any(lessThan(ndc_max, vec2(-1)));
 }
 
-bool is_between_raster_grid_lines(vec2 ndc_min, vec2 ndc_max, vec2 resolution) {
+bool is_between_raster_grid_lines(vec2 pixel_min, vec2 pixel_max) {
     // Cope epsilon to be conservative
     const float EPS = 1.0 / 256.0f;
-    vec2 sample_grid_min = (ndc_min * 0.5f + 0.5f) * resolution - 0.5f - EPS;
-    vec2 sample_grid_max = (ndc_max * 0.5f + 0.5f) * resolution - 0.5f + EPS;
+    vec2 sample_grid_min = pixel_min - 0.5f - EPS;
+    vec2 sample_grid_max = pixel_max - 0.5f + EPS;
     // Checks if the min and the max positions are right next to the same sample grid line.
     // If we are next to the same sample grid line in one dimension we are not rasterized.
     return any(equal(floor(sample_grid_max), floor(sample_grid_min)));
+}
+
+bool is_between_raster_grid_lines(vec2 ndc_min, vec2 ndc_max, vec2 resolution) {
+    return is_between_raster_grid_lines((ndc_min * 0.5f + 0.5f) * resolution, (ndc_max * 0.5f + 0.5f) * resolution);
 }

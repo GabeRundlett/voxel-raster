@@ -25,6 +25,7 @@
 #define VOXEL_CHUNK_SIZE (1u << VOXEL_CHUNK_SIZE_LOG2)
 
 #define MAX_MESHLET_COUNT (1 << 20)
+#define MAX_SW_MESHLET_COUNT (MAX_MESHLET_COUNT * 7 / 8)
 #define MAX_CHUNK_COUNT (1 << 16)
 #define MAX_BRICK_INSTANCE_COUNT (1 << 20)
 
@@ -67,7 +68,7 @@ struct VoxelBrickFace {
 };
 
 struct VoxelMeshlet {
-    PackedVoxelBrickFace faces[32];
+    PackedVoxelBrickFace faces[MAX_FACES_PER_MESHLET];
 };
 DAXA_DECL_BUFFER_PTR(VoxelMeshlet)
 
@@ -77,8 +78,9 @@ struct VoxelMeshletMetadata {
 DAXA_DECL_BUFFER_PTR(VoxelMeshletMetadata)
 
 struct VoxelMeshletAllocatorState {
-    daxa_u32 meshlet_count;
-    daxa_u32 _pad[31];
+    daxa_u32 hw_meshlet_count;
+    daxa_u32 sw_meshlet_count;
+    daxa_u32 _pad[30];
 };
 DAXA_DECL_BUFFER_PTR(VoxelMeshletAllocatorState)
 

@@ -156,9 +156,9 @@ void main() {
     world_to_clip = deref(push.uses.gpu_input).cam.view_to_clip * deref(push.uses.gpu_input).cam.world_to_view;
     TaskPayload payload = unpack(packed_payload);
 
-    uint meshlet_index = gl_WorkGroupID.x;
+    uint in_mesh_meshlet_index = gl_WorkGroupID.x;
     uint in_meshlet_face_index = gl_LocalInvocationIndex;
-    uint meshlet_face_count = min(32, payload.face_count - meshlet_index * 32);
+    uint meshlet_face_count = min(32, payload.face_count - in_mesh_meshlet_index * 32);
 
 #if DISCARD_METHOD
     SetMeshOutputsEXT(meshlet_face_count * 3, meshlet_face_count * 1);
@@ -171,13 +171,13 @@ void main() {
     VoxelBrickMesh mesh = deref(voxel_chunk.meshes[brick_instance.brick_index]);
 
     if (in_meshlet_face_index < meshlet_face_count && mesh.meshlet_start != 0) {
-        PackedVoxelBrickFace packed_face = deref(push.uses.meshlet_allocator[meshlet_index + mesh.meshlet_start]).faces[gl_LocalInvocationIndex];
+        PackedVoxelBrickFace packed_face = deref(push.uses.meshlet_allocator[in_mesh_meshlet_index + mesh.meshlet_start]).faces[gl_LocalInvocationIndex];
 
         VoxelBrickFace face = unpack(packed_face);
 
         VisbufferPayload o_payload;
-        o_payload.face_id = gl_LocalInvocationIndex;
-        o_payload.meshlet_id = meshlet_index + mesh.meshlet_start;
+        o_payload.face_id = in_meshlet_face_index;
+        o_payload.meshlet_id = in_mesh_meshlet_index + mesh.meshlet_start;
         o_packed_payload = pack(o_payload);
 
         ivec4 pos_scl = deref(voxel_chunk.pos_scl[brick_instance.brick_index]);

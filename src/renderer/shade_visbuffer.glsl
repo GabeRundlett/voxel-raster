@@ -1,3 +1,5 @@
+#define DAXA_IMAGE_INT64 1
+
 #include <shared.inl>
 #include <renderer/visbuffer.glsl>
 #include <voxels/pack_unpack.inl>
@@ -216,11 +218,12 @@ void visualize_primitive_size() {
 }
 
 void shade() {
-    uint visbuffer_id = texelFetch(daxa_utexture2D(push.uses.visbuffer), ivec2(gl_FragCoord.xy), 0).x;
-    if (visbuffer_id == INVALID_MESHLET_INDEX) {
+    // uint visbuffer_id = texelFetch(daxa_utexture2D(push.uses.visbuffer), ivec2(gl_FragCoord.xy), 0).x;
+    uint visbuffer_id64 = uint(imageLoad(daxa_u64image2D(push.uses.visbuffer64), ivec2(gl_FragCoord.xy)).x);
+    if (visbuffer_id64 == INVALID_MESHLET_INDEX) {
         f_out = vec4(SKY_COL, 255);
     } else {
-        VisbufferPayload payload = unpack(PackedVisbufferPayload(visbuffer_id));
+        VisbufferPayload payload = unpack(PackedVisbufferPayload(visbuffer_id64));
 
         VoxelMeshlet meshlet = deref(push.uses.meshlet_allocator[payload.meshlet_id]);
         PackedVoxelBrickFace packed_face = meshlet.faces[payload.face_id];
@@ -259,7 +262,14 @@ void shade() {
         diffuse += max(0.0, dot(voxel.nrm, normalize(vec3(-1, 2, -3)))) * vec3(0.9, 0.7, 0.5) * 2;
         diffuse += max(0.0, dot(voxel.nrm, normalize(vec3(0, 0, -1))) * 0.4 + 0.6) * SKY_COL;
 
-        f_out = vec4(color_correct(albedo * diffuse), 1);
+        vec3 out_col = color_correct(albedo * diffuse);
+        // if (visbuffer_id64 == INVALID_MESHLET_INDEX) {
+        //     out_col = mix(out_col, vec3(1, 0, 1), 1.0);
+        // } else {
+        //     out_col = mix(out_col, SKY_COL, 0.9);
+        // }
+
+        f_out = vec4(out_col, 1);
     }
 }
 
