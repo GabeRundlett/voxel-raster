@@ -27,7 +27,7 @@ void write_results() {
     if (gl_LocalInvocationIndex == 0) {
         // compute size
         float size_x = brick_extent_pixels(push.uses.gpu_input, push.uses.chunks, brick_instance).x / VOXEL_BRICK_SIZE;
-        result_mesh.meshlet_start = allocate_meshlets(push.uses.meshlet_allocator, meshlet_n, size_x < 32);
+        result_mesh.meshlet_start = allocate_meshlets(push.uses.meshlet_allocator, meshlet_n, size_x < 8);
 
         if (result_mesh.meshlet_start != 0) {
             deref(chunk.meshes[brick_instance.brick_index]).face_count = result_mesh.face_count;

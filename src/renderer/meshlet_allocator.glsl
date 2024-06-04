@@ -6,7 +6,7 @@ uint allocate_meshlets(daxa_RWBufferPtr(VoxelMeshlet) meshlet_allocator, uint me
     daxa_RWBufferPtr(VoxelMeshletAllocatorState) allocator_state = daxa_RWBufferPtr(VoxelMeshletAllocatorState)(meshlet_allocator);
     if (compute_raster) {
         uint result = atomicAdd(deref(allocator_state).sw_meshlet_count, meshlet_n);
-        if (result + meshlet_n <= MAX_SW_MESHLET_COUNT) {
+        if (result <= MAX_SW_MESHLET_COUNT - meshlet_n) {
             return result + 1;
         }
     }
@@ -18,24 +18,21 @@ uint allocate_meshlets(daxa_RWBufferPtr(VoxelMeshlet) meshlet_allocator, uint me
 }
 bool is_valid_meshlet_index(daxa_BufferPtr(VoxelMeshlet) meshlet_allocator, uint meshlet_i) {
     daxa_BufferPtr(VoxelMeshletAllocatorState) allocator_state = daxa_BufferPtr(VoxelMeshletAllocatorState)(meshlet_allocator);
-    if (meshlet_i == 0) {
-        return false;
+    if (meshlet_i - 1 < MAX_SW_MESHLET_COUNT) {
+        return meshlet_i - 1 < deref(allocator_state).sw_meshlet_count;
     }
-    if (meshlet_i <= MAX_SW_MESHLET_COUNT) {
-        return meshlet_i <= min(deref(allocator_state).sw_meshlet_count, MAX_SW_MESHLET_COUNT);
-    }
-    return meshlet_i <= min(deref(allocator_state).hw_meshlet_count + MAX_SW_MESHLET_COUNT, MAX_MESHLET_COUNT);
+    return meshlet_i - 1 < min(deref(allocator_state).hw_meshlet_count + MAX_SW_MESHLET_COUNT, MAX_MESHLET_COUNT);
 }
 
 uint allocate_brick_instances(daxa_RWBufferPtr(BrickInstance) brick_instance_allocator, uint brick_instance_n) {
     daxa_RWBufferPtr(BrickInstanceAllocatorState) allocator_state = daxa_RWBufferPtr(BrickInstanceAllocatorState)(brick_instance_allocator);
     uint result = atomicAdd(deref(allocator_state).instance_count, brick_instance_n);
-    if (result >= MAX_BRICK_INSTANCE_COUNT) {
+    if (result > MAX_BRICK_INSTANCE_COUNT - 1) {
         return 0;
     }
     return result + 1;
 }
 bool is_valid_index(daxa_BufferPtr(BrickInstance) brick_instance_allocator, uint brick_instance_i) {
     daxa_BufferPtr(BrickInstanceAllocatorState) allocator_state = daxa_BufferPtr(BrickInstanceAllocatorState)(brick_instance_allocator);
-    return brick_instance_i <= min(deref(allocator_state).instance_count, MAX_BRICK_INSTANCE_COUNT) && brick_instance_i > 0;
+    return brick_instance_i - 1 < min(deref(allocator_state).instance_count, MAX_BRICK_INSTANCE_COUNT);
 }

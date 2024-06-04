@@ -32,10 +32,10 @@ void main() {
     ivec2 sample_index = ivec2(thread_index * 2);
 
     uvec4 visbuffer_ids;
-    visbuffer_ids[0] = texelFetch(daxa_utexture2D(push.uses.visbuffer), sample_index + ivec2(0, 0), 0).r;
-    visbuffer_ids[1] = texelFetch(daxa_utexture2D(push.uses.visbuffer), sample_index + ivec2(0, 1), 0).r;
-    visbuffer_ids[2] = texelFetch(daxa_utexture2D(push.uses.visbuffer), sample_index + ivec2(1, 0), 0).r;
-    visbuffer_ids[3] = texelFetch(daxa_utexture2D(push.uses.visbuffer), sample_index + ivec2(1, 1), 0).r;
+    visbuffer_ids[0] = uint(imageLoad(daxa_u64image2D(push.uses.visbuffer64), sample_index + ivec2(0, 0)).r);
+    visbuffer_ids[1] = uint(imageLoad(daxa_u64image2D(push.uses.visbuffer64), sample_index + ivec2(0, 1)).r);
+    visbuffer_ids[2] = uint(imageLoad(daxa_u64image2D(push.uses.visbuffer64), sample_index + ivec2(1, 0)).r);
+    visbuffer_ids[3] = uint(imageLoad(daxa_u64image2D(push.uses.visbuffer64), sample_index + ivec2(1, 1)).r);
 
     uvec4 brick_instance_indices = uvec4(0);
     uint list_mask = 0;

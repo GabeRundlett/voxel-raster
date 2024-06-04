@@ -7,60 +7,11 @@
 
 DAXA_DECL_PUSH_CONSTANT(DrawVisbufferPush, push)
 
-struct TaskPayload {
-    uint face_count;
-    uint brick_instance_index;
-};
-struct PackedTaskPayload {
-    uint data;
-};
-
-PackedTaskPayload pack(TaskPayload payload) {
-    PackedTaskPayload result;
-    result.data = payload.face_count & 0xfff;
-    result.data |= (payload.brick_instance_index & 0xfffff) << 12;
-    return result;
-}
-
-TaskPayload unpack(PackedTaskPayload packed_payload) {
-    TaskPayload result;
-    result.face_count = packed_payload.data & 0xfff;
-    result.brick_instance_index = (packed_payload.data >> 12) & 0xfffff;
-    return result;
-}
-
-#if DAXA_SHADER_STAGE == DAXA_SHADER_STAGE_TASK
-#extension GL_EXT_mesh_shader : enable
-
-taskPayloadSharedEXT PackedTaskPayload packed_payload;
-
-layout(local_size_x = 32) in;
-void main() {
-    uint brick_instance_index = gl_WorkGroupID.x + 1 + deref(push.uses.indirect_info).offset;
-
-    if (!is_valid_index(daxa_BufferPtr(BrickInstance)(push.uses.brick_instance_allocator), brick_instance_index)) {
-        return;
-    }
-
-    BrickInstance brick_instance = deref(push.uses.brick_instance_allocator[brick_instance_index]);
-    VoxelChunk voxel_chunk = deref(push.uses.chunks[brick_instance.chunk_index]);
-    VoxelBrickMesh mesh = deref(voxel_chunk.meshes[brick_instance.brick_index]);
-
-    if (gl_LocalInvocationIndex == 0) {
-        TaskPayload payload;
-        payload.face_count = mesh.face_count;
-        payload.brick_instance_index = brick_instance_index;
-        packed_payload = pack(payload);
-        EmitMeshTasksEXT((mesh.face_count + 31) / 32, 1, 1);
-    }
-}
-
-#elif DAXA_SHADER_STAGE == DAXA_SHADER_STAGE_MESH
+#if DAXA_SHADER_STAGE == DAXA_SHADER_STAGE_MESH
 #extension GL_EXT_mesh_shader : enable
 
 #include <renderer/culling.glsl>
 
-taskPayloadSharedEXT PackedTaskPayload packed_payload;
 layout(triangles) out;
 layout(max_vertices = MAX_VERTICES_PER_MESHLET, max_primitives = MAX_TRIANGLES_PER_MESHLET) out;
 
@@ -154,21 +105,32 @@ void emit_prim(vec3 in_p0, vec3 in_p1, vec3 in_p2, vec3 in_p3) {
 layout(local_size_x = 32) in;
 void main() {
     world_to_clip = deref(push.uses.gpu_input).cam.view_to_clip * deref(push.uses.gpu_input).cam.world_to_view;
-    TaskPayload payload = unpack(packed_payload);
+    BrickInstance brick_instance;
+    VoxelChunk voxel_chunk;
+    VoxelBrickMesh mesh;
 
-    uint in_mesh_meshlet_index = gl_WorkGroupID.x;
+    uint in_mesh_meshlet_index = 0;
     uint in_meshlet_face_index = gl_LocalInvocationIndex;
-    uint meshlet_face_count = min(32, payload.face_count - in_mesh_meshlet_index * 32);
+    uint meshlet_face_count = 0;
+
+    uint meshlet_index = gl_WorkGroupID.x + 1 + deref(push.uses.indirect_info[3]).offset + MAX_SW_MESHLET_COUNT;
+    if (is_valid_meshlet_index(daxa_BufferPtr(VoxelMeshlet)(push.uses.meshlet_allocator), meshlet_index)) {
+        VoxelMeshletMetadata metadata = deref(push.uses.meshlet_metadata[meshlet_index]);
+
+        if (is_valid_index(daxa_BufferPtr(BrickInstance)(push.uses.brick_instance_allocator), metadata.brick_instance_index)) {
+            brick_instance = deref(push.uses.brick_instance_allocator[metadata.brick_instance_index]);
+            voxel_chunk = deref(push.uses.chunks[brick_instance.chunk_index]);
+            mesh = deref(voxel_chunk.meshes[brick_instance.brick_index]);
+            in_mesh_meshlet_index = meshlet_index - mesh.meshlet_start;
+            meshlet_face_count = min(32, mesh.face_count - in_mesh_meshlet_index * 32);
+        }
+    }
 
 #if DISCARD_METHOD
     SetMeshOutputsEXT(meshlet_face_count * 3, meshlet_face_count * 1);
 #else
     SetMeshOutputsEXT(meshlet_face_count * 4, meshlet_face_count * 2);
 #endif
-
-    BrickInstance brick_instance = deref(push.uses.brick_instance_allocator[payload.brick_instance_index]);
-    VoxelChunk voxel_chunk = deref(push.uses.chunks[brick_instance.chunk_index]);
-    VoxelBrickMesh mesh = deref(voxel_chunk.meshes[brick_instance.brick_index]);
 
     if (in_meshlet_face_index < meshlet_face_count && mesh.meshlet_start != 0) {
         PackedVoxelBrickFace packed_face = deref(push.uses.meshlet_allocator[in_mesh_meshlet_index + mesh.meshlet_start]).faces[gl_LocalInvocationIndex];
@@ -177,7 +139,7 @@ void main() {
 
         VisbufferPayload o_payload;
         o_payload.face_id = in_meshlet_face_index;
-        o_payload.meshlet_id = in_mesh_meshlet_index + mesh.meshlet_start;
+        o_payload.meshlet_id = meshlet_index;
         o_packed_payload = pack(o_payload);
 
         ivec4 pos_scl = deref(voxel_chunk.pos_scl[brick_instance.brick_index]);
@@ -214,14 +176,22 @@ void main() {
 
 #elif DAXA_SHADER_STAGE == DAXA_SHADER_STAGE_FRAGMENT
 
+DAXA_DECL_IMAGE_ACCESSOR_WITH_FORMAT(u64image2D, r64ui, , r64uiImage)
 DAXA_STORAGE_IMAGE_LAYOUT_WITH_FORMAT(r32ui)
 uniform uimage2D atomic_u32_table[];
+
+void write_pixel(ivec2 p, uint64_t payload, float depth) {
+    imageAtomicMax(daxa_access(r64uiImage, push.uses.visbuffer64), p, payload | (uint64_t(floatBitsToUint(depth)) << 32));
+#if ENABLE_DEBUG_VIS
+    imageAtomicAdd(atomic_u32_table[daxa_image_view_id_to_index(push.uses.debug_overdraw)], p, 1);
+#endif
+}
 
 layout(location = 0) in flat PackedVisbufferPayload v_payload;
 #if DISCARD_METHOD
 layout(location = 1) in vec2 v_uv;
 #endif
-layout(location = 0) out uvec4 f_out;
+// layout(location = 0) out uvec4 f_out;
 void main() {
 #if DISCARD_METHOD
     if (any(greaterThan(v_uv, vec2(1.0)))) {
@@ -229,11 +199,13 @@ void main() {
     }
 #endif
 
-#if ENABLE_DEBUG_VIS
-    imageAtomicAdd(atomic_u32_table[daxa_image_view_id_to_index(push.uses.debug_overdraw)], ivec2(gl_FragCoord.xy), 1);
-#endif
+    write_pixel(ivec2(gl_FragCoord.xy), v_payload.data, gl_FragCoord.z);
 
-    f_out = uvec4(v_payload.data, 0, 0, 0);
+// #if ENABLE_DEBUG_VIS
+//     imageAtomicAdd(atomic_u32_table[daxa_image_view_id_to_index(push.uses.debug_overdraw)], ivec2(gl_FragCoord.xy), 1);
+// #endif
+
+//     f_out = uvec4(v_payload.data, 0, 0, 0);
 }
 
 #endif

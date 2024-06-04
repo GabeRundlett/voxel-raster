@@ -1,5 +1,3 @@
-#define DAXA_IMAGE_INT64 1
-
 #include <shared.inl>
 #include <renderer/visbuffer.glsl>
 #include <voxels/pack_unpack.inl>
@@ -105,7 +103,8 @@ void visualize_overdraw() {
 }
 
 void visualize_primitive_size() {
-    uint visbuffer_id = texelFetch(daxa_utexture2D(push.uses.visbuffer), ivec2(gl_FragCoord.xy), 0).x;
+    // uint visbuffer_id = texelFetch(daxa_utexture2D(push.uses.visbuffer), ivec2(gl_FragCoord.xy), 0).x;
+    uint visbuffer_id = uint(imageLoad(daxa_u64image2D(push.uses.visbuffer64), ivec2(gl_FragCoord.xy)).x);
     if (visbuffer_id == INVALID_MESHLET_INDEX) {
         f_out = vec4(SKY_COL, 255);
     } else {
@@ -133,75 +132,9 @@ void visualize_primitive_size() {
         vec3 ndc_min;
         vec3 ndc_max;
 
-        if (VISUALIZE_BRICK_SIZE != 0) {
-            vec3 p0 = ivec3(voxel_chunk.pos) * int(VOXEL_CHUNK_SIZE) + pos_scl.xyz * int(VOXEL_BRICK_SIZE) + ivec3(0);
-            vec3 p1 = ivec3(voxel_chunk.pos) * int(VOXEL_CHUNK_SIZE) + pos_scl.xyz * int(VOXEL_BRICK_SIZE) + ivec3(VOXEL_BRICK_SIZE);
-            p0 *= SCL;
-            p1 *= SCL;
+        float size_x = brick_extent_pixels(push.uses.gpu_input, push.uses.chunks, brick_instance).x / VOXEL_BRICK_SIZE;
 
-            vec3 vertices[8] = vec3[8](
-                vec3(p0.x, p0.y, p0.z),
-                vec3(p1.x, p0.y, p0.z),
-                vec3(p0.x, p1.y, p0.z),
-                vec3(p1.x, p1.y, p0.z),
-                vec3(p0.x, p0.y, p1.z),
-                vec3(p1.x, p0.y, p1.z),
-                vec3(p0.x, p1.y, p1.z),
-                vec3(p1.x, p1.y, p1.z));
-
-            [[unroll]] for (uint vert_i = 0; vert_i < 8; ++vert_i) {
-                vec4 vs_h = deref(push.uses.gpu_input).cam.world_to_view * vec4(vertices[vert_i], 1);
-                vec4 cs_h = deref(push.uses.gpu_input).cam.view_to_clip * vs_h;
-                vec3 p = cs_h.xyz / cs_h.w;
-                if (vert_i == 0) {
-                    ndc_min = p;
-                    ndc_max = p;
-                } else {
-                    ndc_min = min(ndc_min, p);
-                    ndc_max = max(ndc_max, p);
-                }
-            }
-            ndc_min /= VOXEL_BRICK_SIZE;
-            ndc_max /= VOXEL_BRICK_SIZE;
-        } else if (VISUALIZE_TRI_SIZE != 0) {
-            // guaranteed 0, 1, or 2.
-            uint axis = face.axis / 2;
-
-            ivec3 offset = ivec3(0);
-            offset[axis] = 1;
-            pos += offset * int(face.axis % 2);
-
-            int flip = int(face.axis % 2);
-            // For some reason we need to flip for the y-axis
-            flip = flip ^ int(axis == 1);
-
-            int winding_flip_a = flip;
-            int winding_flip_b = 1 - winding_flip_a;
-            ivec3 in_p0 = pos;
-            ivec3 in_p1 = pos + ivec3(int(axis != 0) * winding_flip_a, int(axis == 0) * winding_flip_a + int(axis == 2) * winding_flip_b, int(axis != 2) * winding_flip_b);
-            ivec3 in_p2 = pos + ivec3(int(axis != 0) * winding_flip_b, int(axis == 0) * winding_flip_b + int(axis == 2) * winding_flip_a, int(axis != 2) * winding_flip_a);
-            ivec3 in_p3 = pos + ivec3(int(axis != 0), int(axis != 1), int(axis != 2));
-
-            mat4 world_to_clip = deref(push.uses.gpu_input).cam.view_to_clip * deref(push.uses.gpu_input).cam.world_to_view;
-
-            vec4 p0_h = world_to_clip * vec4(in_p0 * SCL, 1);
-            vec4 p1_h = world_to_clip * vec4(in_p1 * SCL, 1);
-            vec4 p2_h = world_to_clip * vec4(in_p2 * SCL, 1);
-            vec4 p3_h = world_to_clip * vec4(in_p3 * SCL, 1);
-
-            vec3 p0 = p0_h.xyz / p0_h.w;
-            vec3 p1 = p1_h.xyz / p1_h.w;
-            vec3 p2 = p2_h.xyz / p2_h.w;
-            vec3 p3 = p3_h.xyz / p3_h.w;
-
-            ndc_min = min(min(p0, p1), min(p2, p3));
-            ndc_max = max(max(p0, p1), max(p2, p3));
-        }
-
-        vec2 ndc_extent = ndc_max.xy - ndc_min.xy;
-        vec2 pixel_extent = ndc_extent * 0.5 * deref(push.uses.gpu_input).render_size;
-
-        float size = max(pixel_extent.x, pixel_extent.y);
+        float size = size_x;
 
         const float threshold = 32;
 
@@ -219,11 +152,11 @@ void visualize_primitive_size() {
 
 void shade() {
     // uint visbuffer_id = texelFetch(daxa_utexture2D(push.uses.visbuffer), ivec2(gl_FragCoord.xy), 0).x;
-    uint visbuffer_id64 = uint(imageLoad(daxa_u64image2D(push.uses.visbuffer64), ivec2(gl_FragCoord.xy)).x);
-    if (visbuffer_id64 == INVALID_MESHLET_INDEX) {
+    uint visbuffer_id = uint(imageLoad(daxa_u64image2D(push.uses.visbuffer64), ivec2(gl_FragCoord.xy)).x);
+    if (visbuffer_id == INVALID_MESHLET_INDEX) {
         f_out = vec4(SKY_COL, 255);
     } else {
-        VisbufferPayload payload = unpack(PackedVisbufferPayload(visbuffer_id64));
+        VisbufferPayload payload = unpack(PackedVisbufferPayload(visbuffer_id));
 
         VoxelMeshlet meshlet = deref(push.uses.meshlet_allocator[payload.meshlet_id]);
         PackedVoxelBrickFace packed_face = meshlet.faces[payload.face_id];

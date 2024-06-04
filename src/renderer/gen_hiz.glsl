@@ -21,7 +21,20 @@ void downsample_64x64(
         ivec2 src_i = ivec2((grid_index * 16 + local_index) * 2 + sub_i) * 2;
         vec4 fetch;
         if (src_mip == -1) {
-            fetch = textureGather(daxa_sampler2D(push.uses.src, deref(push.uses.gpu_input).samplers.llc), make_gather_uv(invSize, src_i), 0);
+            src_i = ivec2(((vec2(src_i) + 1.0) * invSize) * deref(push.uses.gpu_input).render_size.xy);
+
+            uint64_t t0 = imageLoad(daxa_u64image2D(push.uses.src), src_i + ivec2(0, 0)).x;
+            uint64_t t1 = imageLoad(daxa_u64image2D(push.uses.src), src_i + ivec2(0, 1)).x;
+            uint64_t t2 = imageLoad(daxa_u64image2D(push.uses.src), src_i + ivec2(1, 0)).x;
+            uint64_t t3 = imageLoad(daxa_u64image2D(push.uses.src), src_i + ivec2(1, 1)).x;
+
+            fetch = vec4(
+                uintBitsToFloat(uint(t0 >> uint64_t(32))),
+                uintBitsToFloat(uint(t1 >> uint64_t(32))),
+                uintBitsToFloat(uint(t2 >> uint64_t(32))),
+                uintBitsToFloat(uint(t3 >> uint64_t(32))));
+
+            // fetch = textureGather(daxa_sampler2D(push.uses.src, deref(push.uses.gpu_input).samplers.llc), make_gather_uv(invSize, src_i), 0);
         } else {
             fetch.x = imageLoad(daxa_access(image2DCoherent, push.uses.mips[src_mip]), min(src_i + ivec2(0, 0), ivec2(min_mip_size) - 1)).x;
             fetch.y = imageLoad(daxa_access(image2DCoherent, push.uses.mips[src_mip]), min(src_i + ivec2(0, 1), ivec2(min_mip_size) - 1)).x;

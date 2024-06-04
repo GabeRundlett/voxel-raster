@@ -15,8 +15,15 @@ void main() {
 
 #elif DAXA_SHADER_STAGE == DAXA_SHADER_STAGE_FRAGMENT
 
+layout(location = 0) out uvec4 f_out;
+
 void main() {
-    uint visbuffer_id64 = uint(imageLoad(daxa_u64image2D(push.uses.visbuffer64), ivec2(gl_FragCoord.xy)).x);
+    uint64_t visbuffer_id64 = imageLoad(daxa_u64image2D(push.uses.visbuffer64), ivec2(gl_FragCoord.xy)).x;
+    float depth = uintBitsToFloat(uint(visbuffer_id64 >> uint64_t(32)));
+    uint visbuffer_id = uint(visbuffer_id64);
+
+    gl_FragDepth = depth;
+    f_out = uvec4(visbuffer_id, 0, 0, 0);
 }
 
 #endif

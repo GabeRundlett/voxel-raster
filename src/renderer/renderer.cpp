@@ -47,13 +47,14 @@ struct renderer::State {
     std::shared_ptr<daxa::ComputePipeline> mesh_voxel_bricks_pipeline;
     std::shared_ptr<daxa::RasterPipeline> draw_visbuffer_pipeline;
     std::shared_ptr<daxa::RasterPipeline> draw_visbuffer_depth_cull_pipeline;
-    std::shared_ptr<daxa::RasterPipeline> draw_visbuffer_wireframe_pipeline;
     std::shared_ptr<daxa::RasterPipeline> draw_visbuffer_observer_pipeline;
-    std::shared_ptr<daxa::RasterPipeline> draw_visbuffer_observer_wireframe_pipeline;
+    // std::shared_ptr<daxa::RasterPipeline> draw_visbuffer_wireframe_pipeline;
+    // std::shared_ptr<daxa::RasterPipeline> draw_visbuffer_observer_wireframe_pipeline;
     std::shared_ptr<daxa::ComputePipeline> compute_rasterize_pipeline;
     std::shared_ptr<daxa::ComputePipeline> compute_rasterize_depth_cull_pipeline;
     std::shared_ptr<daxa::ComputePipeline> compute_rasterize_observer_pipeline;
     std::shared_ptr<daxa::RasterPipeline> shade_visbuffer_pipeline;
+    std::shared_ptr<daxa::RasterPipeline> composite_compute_visbuffer_pipeline;
     std::shared_ptr<daxa::ComputePipeline> analyze_visbuffer_pipeline;
     std::shared_ptr<daxa::ComputePipeline> gen_hiz_pipeline;
     std::shared_ptr<daxa::RasterPipeline> debug_lines_pipeline;
@@ -217,21 +218,21 @@ struct DrawVisbufferTask : DrawVisbufferH::Task {
     uint32_t indirect_offset;
     bool first = false;
     void callback(daxa::TaskInterface ti) {
-        daxa::TaskImageAttachmentInfo const &image_attach_info = ti.get(AT.render_target);
+        daxa::TaskImageAttachmentInfo const &image_attach_info = ti.get(AT.visbuffer64);
         daxa::ImageInfo image_info = ti.device.info_image(image_attach_info.ids[0]).value();
         daxa::RenderCommandRecorder render_recorder = std::move(ti.recorder).begin_renderpass({
-            .color_attachments = std::array{
-                daxa::RenderAttachmentInfo{
-                    .image_view = image_attach_info.view_ids[0],
-                    .load_op = first ? daxa::AttachmentLoadOp::CLEAR : daxa::AttachmentLoadOp::LOAD,
-                    .clear_value = std::array<daxa::u32, 4>{0, 0, 0, 0},
-                },
-            },
-            .depth_attachment = daxa::RenderAttachmentInfo{
-                .image_view = ti.get(AT.depth_target).view_ids[0],
-                .load_op = first ? daxa::AttachmentLoadOp::CLEAR : daxa::AttachmentLoadOp::LOAD,
-                .clear_value = daxa::DepthValue{.depth = 0.0f},
-            },
+            // .color_attachments = std::array{
+            //     daxa::RenderAttachmentInfo{
+            //         .image_view = image_attach_info.view_ids[0],
+            //         .load_op = first ? daxa::AttachmentLoadOp::CLEAR : daxa::AttachmentLoadOp::LOAD,
+            //         .clear_value = std::array<daxa::u32, 4>{0, 0, 0, 0},
+            //     },
+            // },
+            // .depth_attachment = daxa::RenderAttachmentInfo{
+            //     .image_view = ti.get(AT.depth_target).view_ids[0],
+            //     .load_op = first ? daxa::AttachmentLoadOp::CLEAR : daxa::AttachmentLoadOp::LOAD,
+            //     .clear_value = daxa::DepthValue{.depth = 0.0f},
+            // },
             .render_area = {.width = image_info.size.x, .height = image_info.size.y},
         });
         render_recorder.set_pipeline(*pipeline);
@@ -281,11 +282,39 @@ struct ShadeVisbufferTask : ShadeVisbufferH::Task {
     }
 };
 
+struct CompositeComputeVisbufferTask : CompositeComputeVisbufferH::Task {
+    AttachmentViews views = {};
+    daxa::RasterPipeline *pipeline = {};
+    void callback(daxa::TaskInterface ti) {
+        daxa::TaskImageAttachmentInfo const &image_attach_info = ti.get(AT.visbuffer);
+        daxa::ImageInfo image_info = ti.device.info_image(image_attach_info.ids[0]).value();
+        daxa::RenderCommandRecorder render_recorder = std::move(ti.recorder).begin_renderpass({
+            .color_attachments = std::array{
+                daxa::RenderAttachmentInfo{
+                    .image_view = image_attach_info.view_ids[0],
+                    .load_op = daxa::AttachmentLoadOp::LOAD,
+                },
+            },
+            .depth_attachment = daxa::RenderAttachmentInfo{
+                .image_view = ti.get(AT.depth_target).view_ids[0],
+                .load_op = daxa::AttachmentLoadOp::LOAD,
+            },
+            .render_area = {.width = image_info.size.x, .height = image_info.size.y},
+        });
+        render_recorder.set_pipeline(*pipeline);
+        CompositeComputeVisbufferPush push = {};
+        ti.assign_attachment_shader_blob(push.uses.value);
+        render_recorder.push_constant(push);
+        render_recorder.draw({.vertex_count = 3});
+        ti.recorder = std::move(render_recorder).end_renderpass();
+    }
+};
+
 struct AnalyzeVisbufferTask : AnalyzeVisbufferH::Task {
     AttachmentViews views = {};
     daxa::ComputePipeline *pipeline = {};
     void callback(daxa::TaskInterface ti) {
-        auto const &image_attach_info = ti.get(AT.visbuffer);
+        auto const &image_attach_info = ti.get(AT.visbuffer64);
         auto image_info = ti.device.info_image(image_attach_info.ids[0]).value();
         ti.recorder.set_pipeline(*pipeline);
         AnalyzeVisbufferPush push = {};
@@ -360,7 +389,7 @@ struct DebugLinesTask : DebugLinesH::Task {
     }
 };
 
-auto task_gen_hiz_single_pass(renderer::Renderer self, daxa::TaskGraph &task_graph, daxa::TaskBufferView gpu_input, daxa::TaskImageView depth) -> daxa::TaskImageView {
+auto task_gen_hiz_single_pass(renderer::Renderer self, daxa::TaskGraph &task_graph, daxa::TaskBufferView gpu_input, daxa::TaskImageView task_visbuffer64) -> daxa::TaskImageView {
     auto const x_ = self->gpu_input.next_lower_po2_render_size.x;
     auto const y_ = self->gpu_input.next_lower_po2_render_size.y;
     auto mip_count = static_cast<uint32_t>(std::ceil(std::log2(std::max(x_, y_))));
@@ -376,7 +405,7 @@ auto task_gen_hiz_single_pass(renderer::Renderer self, daxa::TaskGraph &task_gra
     task_graph.add_task(GenHizTask{
         .views = std::array{
             daxa::attachment_view(GenHizH::AT.gpu_input, gpu_input),
-            daxa::attachment_view(GenHizH::AT.src, depth),
+            daxa::attachment_view(GenHizH::AT.src, task_visbuffer64),
             daxa::attachment_view(GenHizH::AT.mips, task_hiz),
         },
         .pipeline = self->gen_hiz_pipeline.get(),
@@ -411,16 +440,16 @@ void record_tasks(renderer::Renderer self) {
         },
         .name = "GpuInputUploadTransferTask",
     });
-    auto task_visbuffer = self->loop_task_graph.create_transient_image({
-        .format = daxa::Format::R32_UINT,
-        .size = {self->gpu_input.render_size.x, self->gpu_input.render_size.y, 1},
-        .name = "visbuffer",
-    });
-    auto task_depth = self->loop_task_graph.create_transient_image({
-        .format = daxa::Format::D32_SFLOAT,
-        .size = {self->gpu_input.render_size.x, self->gpu_input.render_size.y, 1},
-        .name = "depth",
-    });
+    // auto task_visbuffer = self->loop_task_graph.create_transient_image({
+    //     .format = daxa::Format::R32_UINT,
+    //     .size = {self->gpu_input.render_size.x, self->gpu_input.render_size.y, 1},
+    //     .name = "visbuffer",
+    // });
+    // auto task_depth = self->loop_task_graph.create_transient_image({
+    //     .format = daxa::Format::D32_SFLOAT,
+    //     .size = {self->gpu_input.render_size.x, self->gpu_input.render_size.y, 1},
+    //     .name = "depth",
+    // });
 #if ENABLE_DEBUG_VIS
     auto task_debug_overdraw = self->loop_task_graph.create_transient_image({
         .format = daxa::Format::R32_UINT,
@@ -431,7 +460,7 @@ void record_tasks(renderer::Renderer self) {
 #endif
 
     auto task_indirect_infos = self->loop_task_graph.create_transient_buffer({
-        .size = sizeof(DispatchIndirectStruct) * 3,
+        .size = sizeof(DispatchIndirectStruct) * 4,
         .name = "indirect_infos",
     });
 
@@ -444,7 +473,7 @@ void record_tasks(renderer::Renderer self) {
 
     auto draw_brick_instances = [&, first_draw = true](daxa::TaskBufferView task_brick_instance_allocator, daxa::TaskImageView hiz) mutable {
         if (first_draw) {
-            task_fill_buffer(self->loop_task_graph, self->task_brick_meshlet_allocator, std::array<uint32_t, 4>{});
+            task_fill_buffer(self->loop_task_graph, self->task_brick_meshlet_allocator, daxa_u32vec2{});
         }
 
         self->loop_task_graph.add_task(SetIndirectInfosTask{
@@ -471,15 +500,27 @@ void record_tasks(renderer::Renderer self) {
             .indirect_offset = sizeof(DispatchIndirectStruct) * 0,
         });
 
+        self->loop_task_graph.add_task(SetIndirectInfosTask{
+            .views = std::array{
+                daxa::attachment_view(SetIndirectInfosH::AT.gpu_input, task_input_buffer),
+                daxa::attachment_view(SetIndirectInfosH::AT.brick_instance_allocator, task_brick_instance_allocator),
+                daxa::attachment_view(SetIndirectInfosH::AT.meshlet_allocator, self->task_brick_meshlet_allocator),
+                daxa::attachment_view(SetIndirectInfosH::AT.indirect_info, task_indirect_infos),
+            },
+            .pipeline = self->set_indirect_infos2.get(),
+        });
+
         self->loop_task_graph.add_task(DrawVisbufferTask{
             .views = std::array{
-                daxa::attachment_view(DrawVisbufferH::AT.render_target, task_visbuffer),
-                daxa::attachment_view(DrawVisbufferH::AT.depth_target, task_depth),
+                // daxa::attachment_view(DrawVisbufferH::AT.render_target, task_visbuffer),
+                // daxa::attachment_view(DrawVisbufferH::AT.depth_target, task_depth),
+                daxa::attachment_view(DrawVisbufferH::AT.visbuffer64, task_visbuffer64),
                 daxa::attachment_view(DrawVisbufferH::AT.gpu_input, task_input_buffer),
                 daxa::attachment_view(DrawVisbufferH::AT.chunks, self->task_chunks),
                 daxa::attachment_view(DrawVisbufferH::AT.brick_data, self->task_brick_data),
                 daxa::attachment_view(DrawVisbufferH::AT.brick_instance_allocator, task_brick_instance_allocator),
                 daxa::attachment_view(DrawVisbufferH::AT.meshlet_allocator, self->task_brick_meshlet_allocator),
+                daxa::attachment_view(DrawVisbufferH::AT.meshlet_metadata, self->task_brick_meshlet_metadata),
 #if ENABLE_DEBUG_VIS
                 daxa::attachment_view(DrawVisbufferH::AT.debug_overdraw, task_debug_overdraw),
 #endif
@@ -487,18 +528,8 @@ void record_tasks(renderer::Renderer self) {
                 daxa::attachment_view(DrawVisbufferH::AT.hiz, hiz),
             },
             .pipeline = hiz == daxa::NullTaskImage ? self->draw_visbuffer_pipeline.get() : self->draw_visbuffer_depth_cull_pipeline.get(),
-            .indirect_offset = sizeof(DispatchIndirectStruct) * 0,
+            .indirect_offset = sizeof(DispatchIndirectStruct) * 3,
             .first = first_draw,
-        });
-
-        self->loop_task_graph.add_task(SetIndirectInfosTask{
-            .views = std::array{
-                daxa::attachment_view(SetIndirectInfosH::AT.gpu_input, task_input_buffer),
-                daxa::attachment_view(SetIndirectInfosH::AT.brick_instance_allocator, daxa::NullTaskBuffer),
-                daxa::attachment_view(SetIndirectInfosH::AT.meshlet_allocator, self->task_brick_meshlet_allocator),
-                daxa::attachment_view(SetIndirectInfosH::AT.indirect_info, task_indirect_infos),
-            },
-            .pipeline = self->set_indirect_infos2.get(),
         });
 
         self->loop_task_graph.add_task(ComputeRasterizeTask{
@@ -516,9 +547,18 @@ void record_tasks(renderer::Renderer self) {
 #endif
                 daxa::attachment_view(ComputeRasterizeH::AT.hiz, hiz),
             },
-            .pipeline = self->compute_rasterize_pipeline.get(), // hiz == daxa::NullTaskImage ? self->draw_visbuffer_pipeline.get() : self->draw_visbuffer_depth_cull_pipeline.get(),
+            .pipeline = hiz == daxa::NullTaskImage ? self->compute_rasterize_pipeline.get() : self->compute_rasterize_depth_cull_pipeline.get(),
             .indirect_offset = sizeof(DispatchIndirectStruct) * 1,
         });
+
+        // self->loop_task_graph.add_task(CompositeComputeVisbufferTask{
+        //     .views = std::array{
+        //         daxa::attachment_view(CompositeComputeVisbufferH::AT.visbuffer, task_visbuffer),
+        //         daxa::attachment_view(CompositeComputeVisbufferH::AT.depth_target, task_depth),
+        //         daxa::attachment_view(CompositeComputeVisbufferH::AT.visbuffer64, task_visbuffer64),
+        //     },
+        //     .pipeline = self->composite_compute_visbuffer_pipeline.get(),
+        // });
 
         first_draw = false;
     };
@@ -527,7 +567,7 @@ void record_tasks(renderer::Renderer self) {
     draw_brick_instances(self->task_brick_instance_allocator, daxa::NullTaskImage);
 
     // build hi-z
-    auto hiz = task_gen_hiz_single_pass(self, self->loop_task_graph, task_input_buffer, task_depth);
+    auto hiz = task_gen_hiz_single_pass(self, self->loop_task_graph, task_input_buffer, task_visbuffer64);
 
     // cull and draw the rest
     self->loop_task_graph.add_task(AllocateBrickInstancesTask{
@@ -576,38 +616,77 @@ void record_tasks(renderer::Renderer self) {
             daxa::attachment_view(AnalyzeVisbufferH::AT.meshlet_metadata, self->task_brick_meshlet_metadata),
             daxa::attachment_view(AnalyzeVisbufferH::AT.brick_visibility_bits, self->task_brick_visibility_bits),
             daxa::attachment_view(AnalyzeVisbufferH::AT.visible_brick_instance_allocator, self->task_visible_brick_instance_allocator),
-            daxa::attachment_view(AnalyzeVisbufferH::AT.visbuffer, task_visbuffer),
+            daxa::attachment_view(AnalyzeVisbufferH::AT.visbuffer64, task_visbuffer64),
         },
         .pipeline = self->analyze_visbuffer_pipeline.get(),
     });
 
     if (self->show_wireframe || self->draw_from_observer) {
+        self->loop_task_graph.add_task(SetIndirectInfosTask{
+            .views = std::array{
+                daxa::attachment_view(SetIndirectInfosH::AT.gpu_input, task_input_buffer),
+                daxa::attachment_view(SetIndirectInfosH::AT.brick_instance_allocator, self->task_brick_instance_allocator),
+                daxa::attachment_view(SetIndirectInfosH::AT.meshlet_allocator, self->task_brick_meshlet_allocator),
+                daxa::attachment_view(SetIndirectInfosH::AT.indirect_info, task_indirect_infos),
+            },
+            .pipeline = self->set_indirect_infos0.get(),
+        });
+
         self->loop_task_graph.add_task(DrawVisbufferTask{
             .views = std::array{
-                daxa::attachment_view(DrawVisbufferH::AT.render_target, task_visbuffer),
-                daxa::attachment_view(DrawVisbufferH::AT.depth_target, task_depth),
+                daxa::attachment_view(DrawVisbufferH::AT.visbuffer64, task_visbuffer64),
                 daxa::attachment_view(DrawVisbufferH::AT.gpu_input, task_input_buffer),
                 daxa::attachment_view(DrawVisbufferH::AT.chunks, self->task_chunks),
                 daxa::attachment_view(DrawVisbufferH::AT.brick_data, self->task_brick_data),
                 daxa::attachment_view(DrawVisbufferH::AT.brick_instance_allocator, self->task_brick_instance_allocator),
                 daxa::attachment_view(DrawVisbufferH::AT.meshlet_allocator, self->task_brick_meshlet_allocator),
+                daxa::attachment_view(DrawVisbufferH::AT.meshlet_metadata, self->task_brick_meshlet_metadata),
 #if ENABLE_DEBUG_VIS
                 daxa::attachment_view(DrawVisbufferH::AT.debug_overdraw, task_debug_overdraw),
 #endif
                 daxa::attachment_view(DrawVisbufferH::AT.indirect_info, task_indirect_infos),
-                daxa::attachment_view(DrawVisbufferH::AT.hiz, daxa::NullTaskImage),
+                daxa::attachment_view(DrawVisbufferH::AT.hiz, hiz),
             },
-            .pipeline = self->show_wireframe ? (self->draw_from_observer ? self->draw_visbuffer_observer_wireframe_pipeline.get() : self->draw_visbuffer_wireframe_pipeline.get()) : self->draw_visbuffer_observer_pipeline.get(),
-            .indirect_offset = sizeof(DispatchIndirectStruct) * 0,
+            .pipeline = self->draw_visbuffer_observer_pipeline.get(),
+            .indirect_offset = sizeof(DispatchIndirectStruct) * 3,
             .first = true,
         });
+
+        clear_task_images(self->loop_task_graph, std::array<daxa::TaskImageView, 1>{task_visbuffer64}, std::array<daxa::ClearValue, 1>{std::array<uint32_t, 4>{0, 0, 0, 0}});
+        self->loop_task_graph.add_task(ComputeRasterizeTask{
+            .views = std::array{
+                daxa::attachment_view(ComputeRasterizeH::AT.visbuffer64, task_visbuffer64),
+                daxa::attachment_view(ComputeRasterizeH::AT.gpu_input, task_input_buffer),
+                daxa::attachment_view(ComputeRasterizeH::AT.chunks, self->task_chunks),
+                daxa::attachment_view(ComputeRasterizeH::AT.brick_data, self->task_brick_data),
+                daxa::attachment_view(ComputeRasterizeH::AT.brick_instance_allocator, self->task_brick_instance_allocator),
+                daxa::attachment_view(ComputeRasterizeH::AT.meshlet_allocator, self->task_brick_meshlet_allocator),
+                daxa::attachment_view(ComputeRasterizeH::AT.meshlet_metadata, self->task_brick_meshlet_metadata),
+                daxa::attachment_view(ComputeRasterizeH::AT.indirect_info, task_indirect_infos),
+#if ENABLE_DEBUG_VIS
+                daxa::attachment_view(ComputeRasterizeH::AT.debug_overdraw, task_debug_overdraw),
+#endif
+                daxa::attachment_view(ComputeRasterizeH::AT.hiz, hiz),
+            },
+            .pipeline = self->compute_rasterize_observer_pipeline.get(),
+            .indirect_offset = sizeof(DispatchIndirectStruct) * 1,
+        });
+
+        // self->loop_task_graph.add_task(CompositeComputeVisbufferTask{
+        //     .views = std::array{
+        //         daxa::attachment_view(CompositeComputeVisbufferH::AT.visbuffer, task_visbuffer),
+        //         daxa::attachment_view(CompositeComputeVisbufferH::AT.depth_target, task_depth),
+        //         daxa::attachment_view(CompositeComputeVisbufferH::AT.visbuffer64, task_visbuffer64),
+        //     },
+        //     .pipeline = self->composite_compute_visbuffer_pipeline.get(),
+        // });
     }
 
     self->loop_task_graph.add_task(ShadeVisbufferTask{
         .views = std::array{
             daxa::attachment_view(ShadeVisbufferH::AT.render_target, self->task_swapchain_image),
             daxa::attachment_view(ShadeVisbufferH::AT.gpu_input, task_input_buffer),
-            daxa::attachment_view(ShadeVisbufferH::AT.visbuffer, task_visbuffer),
+            // daxa::attachment_view(ShadeVisbufferH::AT.visbuffer, task_visbuffer),
             daxa::attachment_view(ShadeVisbufferH::AT.visbuffer64, task_visbuffer64),
 #if ENABLE_DEBUG_VIS
             daxa::attachment_view(ShadeVisbufferH::AT.debug_overdraw, task_debug_overdraw),
@@ -813,13 +892,12 @@ void renderer::init(Renderer &self, void *glfw_window_ptr) {
         auto result = self->pipeline_manager.add_raster_pipeline({
             .mesh_shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"draw_visbuffer.glsl"}, .compile_options = {.required_subgroup_size = 32}},
             .fragment_shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"draw_visbuffer.glsl"}},
-            .task_shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"draw_visbuffer.glsl"}, .compile_options = {.required_subgroup_size = 32}},
-            .color_attachments = {{.format = daxa::Format::R32_UINT}},
-            .depth_test = daxa::DepthTestInfo{
-                .depth_attachment_format = daxa::Format::D32_SFLOAT,
-                .enable_depth_write = true,
-                .depth_test_compare_op = daxa::CompareOp::GREATER,
-            },
+            // .color_attachments = {{.format = daxa::Format::R32_UINT}},
+            // .depth_test = daxa::DepthTestInfo{
+            //     .depth_attachment_format = daxa::Format::D32_SFLOAT,
+            //     .enable_depth_write = true,
+            //     .depth_test_compare_op = daxa::CompareOp::GREATER,
+            // },
             .raster = {.polygon_mode = daxa::PolygonMode::FILL},
             .push_constant_size = sizeof(DrawVisbufferPush),
             .name = "draw_visbuffer",
@@ -834,13 +912,12 @@ void renderer::init(Renderer &self, void *glfw_window_ptr) {
         auto result = self->pipeline_manager.add_raster_pipeline({
             .mesh_shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"draw_visbuffer.glsl"}, .compile_options = {.defines = {{"DO_DEPTH_CULL", "1"}}, .required_subgroup_size = 32}},
             .fragment_shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"draw_visbuffer.glsl"}},
-            .task_shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"draw_visbuffer.glsl"}, .compile_options = {.defines = {{"DO_DEPTH_CULL", "1"}}, .required_subgroup_size = 32}},
-            .color_attachments = {{.format = daxa::Format::R32_UINT}},
-            .depth_test = daxa::DepthTestInfo{
-                .depth_attachment_format = daxa::Format::D32_SFLOAT,
-                .enable_depth_write = true,
-                .depth_test_compare_op = daxa::CompareOp::GREATER,
-            },
+            // .color_attachments = {{.format = daxa::Format::R32_UINT}},
+            // .depth_test = daxa::DepthTestInfo{
+            //     .depth_attachment_format = daxa::Format::D32_SFLOAT,
+            //     .enable_depth_write = true,
+            //     .depth_test_compare_op = daxa::CompareOp::GREATER,
+            // },
             .raster = {.polygon_mode = daxa::PolygonMode::FILL},
             .push_constant_size = sizeof(DrawVisbufferPush),
             .name = "draw_visbuffer_depth_cull",
@@ -853,36 +930,14 @@ void renderer::init(Renderer &self, void *glfw_window_ptr) {
     }
     {
         auto result = self->pipeline_manager.add_raster_pipeline({
-            .mesh_shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"draw_visbuffer.glsl"}, .compile_options = {.required_subgroup_size = 32}},
-            .fragment_shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"draw_visbuffer.glsl"}},
-            .task_shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"draw_visbuffer.glsl"}, .compile_options = {.required_subgroup_size = 32}},
-            .color_attachments = {{.format = daxa::Format::R32_UINT}},
-            .depth_test = daxa::DepthTestInfo{
-                .depth_attachment_format = daxa::Format::D32_SFLOAT,
-                .enable_depth_write = true,
-                .depth_test_compare_op = daxa::CompareOp::GREATER,
-            },
-            .raster = {.polygon_mode = daxa::PolygonMode::LINE},
-            .push_constant_size = sizeof(DrawVisbufferPush),
-            .name = "draw_visbuffer_wireframe",
-        });
-        if (result.is_err()) {
-            std::cerr << result.message() << std::endl;
-            std::terminate();
-        }
-        self->draw_visbuffer_wireframe_pipeline = result.value();
-    }
-    {
-        auto result = self->pipeline_manager.add_raster_pipeline({
             .mesh_shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"draw_visbuffer.glsl"}, .compile_options = {.defines = {{"DRAW_FROM_OBSERVER", "1"}}, .required_subgroup_size = 32}},
             .fragment_shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"draw_visbuffer.glsl"}},
-            .task_shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"draw_visbuffer.glsl"}, .compile_options = {.defines = {{"DRAW_FROM_OBSERVER", "1"}}, .required_subgroup_size = 32}},
-            .color_attachments = {{.format = daxa::Format::R32_UINT}},
-            .depth_test = daxa::DepthTestInfo{
-                .depth_attachment_format = daxa::Format::D32_SFLOAT,
-                .enable_depth_write = true,
-                .depth_test_compare_op = daxa::CompareOp::GREATER,
-            },
+            // .color_attachments = {{.format = daxa::Format::R32_UINT}},
+            // .depth_test = daxa::DepthTestInfo{
+            //     .depth_attachment_format = daxa::Format::D32_SFLOAT,
+            //     .enable_depth_write = true,
+            //     .depth_test_compare_op = daxa::CompareOp::GREATER,
+            // },
             .raster = {.polygon_mode = daxa::PolygonMode::FILL},
             .push_constant_size = sizeof(DrawVisbufferPush),
             .name = "draw_visbuffer_observer",
@@ -892,27 +947,6 @@ void renderer::init(Renderer &self, void *glfw_window_ptr) {
             std::terminate();
         }
         self->draw_visbuffer_observer_pipeline = result.value();
-    }
-    {
-        auto result = self->pipeline_manager.add_raster_pipeline({
-            .mesh_shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"draw_visbuffer.glsl"}, .compile_options = {.defines = {{"DRAW_FROM_OBSERVER", "1"}}, .required_subgroup_size = 32}},
-            .fragment_shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"draw_visbuffer.glsl"}},
-            .task_shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"draw_visbuffer.glsl"}, .compile_options = {.defines = {{"DRAW_FROM_OBSERVER", "1"}}, .required_subgroup_size = 32}},
-            .color_attachments = {{.format = daxa::Format::R32_UINT}},
-            .depth_test = daxa::DepthTestInfo{
-                .depth_attachment_format = daxa::Format::D32_SFLOAT,
-                .enable_depth_write = true,
-                .depth_test_compare_op = daxa::CompareOp::GREATER,
-            },
-            .raster = {.polygon_mode = daxa::PolygonMode::LINE},
-            .push_constant_size = sizeof(DrawVisbufferPush),
-            .name = "draw_visbuffer_observer_wireframe",
-        });
-        if (result.is_err()) {
-            std::cerr << result.message() << std::endl;
-            std::terminate();
-        }
-        self->draw_visbuffer_observer_wireframe_pipeline = result.value();
     }
 
     {
@@ -966,6 +1000,26 @@ void renderer::init(Renderer &self, void *glfw_window_ptr) {
             std::terminate();
         }
         self->shade_visbuffer_pipeline = result.value();
+    }
+
+    {
+        auto result = self->pipeline_manager.add_raster_pipeline({
+            .vertex_shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"composite_compute_visbuffer.glsl"}},
+            .fragment_shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"composite_compute_visbuffer.glsl"}},
+            .color_attachments = {{.format = daxa::Format::R32_UINT}},
+            .depth_test = daxa::DepthTestInfo{
+                .depth_attachment_format = daxa::Format::D32_SFLOAT,
+                .enable_depth_write = true,
+                .depth_test_compare_op = daxa::CompareOp::GREATER,
+            },
+            .push_constant_size = sizeof(CompositeComputeVisbufferPush),
+            .name = "composite_compute_visbuffer",
+        });
+        if (result.is_err()) {
+            std::cerr << result.message() << std::endl;
+            std::terminate();
+        }
+        self->composite_compute_visbuffer_pipeline = result.value();
     }
 
     {
@@ -1346,8 +1400,8 @@ void renderer::draw(Renderer self, player::Player player, voxel_world::VoxelWorl
 }
 
 void renderer::toggle_wireframe(Renderer self) {
-    self->show_wireframe = !self->show_wireframe;
-    self->needs_record = true;
+    // self->show_wireframe = !self->show_wireframe;
+    // self->needs_record = true;
 }
 
 void renderer::submit_debug_lines(float const *lines, int line_n) {

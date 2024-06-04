@@ -1,5 +1,3 @@
-#define DAXA_IMAGE_INT64 1
-
 #include <shared.inl>
 #include <renderer/visbuffer.glsl>
 #include <voxels/voxel_mesh.glsl>
@@ -17,6 +15,16 @@ float saturate(float x) {
 #define u_visbuffer daxa_access(r64uiImage, push.uses.visbuffer64)
 #define SUBPIXEL_BITS 8
 #define SUBPIXEL_SAMPLES (1 << SUBPIXEL_BITS)
+
+DAXA_STORAGE_IMAGE_LAYOUT_WITH_FORMAT(r32ui)
+uniform uimage2D atomic_u32_table[];
+
+void write_pixel(ivec2 p, uint64_t payload, float depth) {
+    imageAtomicMax(daxa_access(r64uiImage, push.uses.visbuffer64), p, payload | (uint64_t(floatBitsToUint(depth)) << 32));
+#if ENABLE_DEBUG_VIS
+    imageAtomicAdd(atomic_u32_table[daxa_image_view_id_to_index(push.uses.debug_overdraw)], p, 1);
+#endif
+}
 
 void rasterize_triangle(in vec3[3] triangle, ivec2 viewport_size, PackedVisbufferPayload visbuffer_payload) {
     uint64_t payload = uint64_t(visbuffer_payload.data);
@@ -100,7 +108,7 @@ void rasterize_triangle(in vec3[3] triangle, ivec2 viewport_size, PackedVisbuffe
             x_0 += min_pixel.x;
             x_1 += min_pixel.x;
             for (float x = x_0; x <= x_1; ++x) {
-                imageAtomicMax(u_visbuffer, ivec2(x, y), payload | (uint64_t(floatBitsToUint(z_x)) << 32));
+                write_pixel(ivec2(x, y), payload, z_x);
                 z_x += grad_z.x;
             }
 
@@ -118,7 +126,7 @@ void rasterize_triangle(in vec3[3] triangle, ivec2 viewport_size, PackedVisbuffe
         while (true) {
             int x = min_pixel.x;
             if (min(min(hec_y_0, hec_y_1), hec_y_2) >= 0.0) {
-                imageAtomicMax(u_visbuffer, ivec2(x, y), payload | (uint64_t(floatBitsToUint(z_y)) << 32));
+                write_pixel(ivec2(x, y), payload, z_y);
             }
 
             if (x < max_pixel.x) {
@@ -130,7 +138,7 @@ void rasterize_triangle(in vec3[3] triangle, ivec2 viewport_size, PackedVisbuffe
 
                 while (true) {
                     if (min(min(hec_x_0, hec_x_1), hec_x_2) >= 0.0) {
-                        imageAtomicMax(u_visbuffer, ivec2(x, y), payload | (uint64_t(floatBitsToUint(z_x)) << 32));
+                        write_pixel(ivec2(x, y), payload, z_x);
                     }
 
                     if (x >= max_pixel.x) {
@@ -158,14 +166,13 @@ void rasterize_triangle(in vec3[3] triangle, ivec2 viewport_size, PackedVisbuffe
     }
 }
 
-#define WORKGROUP_SIZE 64
+#define WORKGROUP_SIZE 128
 #define MESHLETS_PER_WORKGROUP (WORKGROUP_SIZE / MAX_FACES_PER_MESHLET)
 
 struct MeshletInfo {
     uint face_count;
 };
 
-shared bool is_valid_brick_instance;
 shared BrickInstance meshlet_brick_instances[MESHLETS_PER_WORKGROUP];
 shared VoxelChunk voxel_chunks[MESHLETS_PER_WORKGROUP];
 shared MeshletInfo meshlet_infos[MESHLETS_PER_WORKGROUP];
@@ -182,7 +189,7 @@ void main() {
     if (is_valid_meshlet_id) {
         if (in_meshlet_face_index == 0) {
             VoxelMeshletMetadata metadata = deref(push.uses.meshlet_metadata[meshlet_index]);
-            is_valid_brick_instance = is_valid_index(daxa_BufferPtr(BrickInstance)(push.uses.brick_instance_allocator), metadata.brick_instance_index);
+            bool is_valid_brick_instance = is_valid_index(daxa_BufferPtr(BrickInstance)(push.uses.brick_instance_allocator), metadata.brick_instance_index);
             if (is_valid_brick_instance) {
                 BrickInstance brick_instance = deref(push.uses.brick_instance_allocator[metadata.brick_instance_index]);
                 VoxelChunk voxel_chunk = deref(push.uses.chunks[brick_instance.chunk_index]);
@@ -201,13 +208,12 @@ void main() {
             meshlet_brick_instances[in_workgroup_meshlet_index] = BrickInstance(0, 0);
             // voxel_chunks[in_workgroup_meshlet_index] = VoxelChunk(0);
             meshlet_infos[in_workgroup_meshlet_index].face_count = 0;
-            is_valid_brick_instance = false;
         }
     }
 
     barrier();
 
-    if (is_valid_brick_instance && in_meshlet_face_index < meshlet_infos[in_workgroup_meshlet_index].face_count) {
+    if (in_meshlet_face_index < meshlet_infos[in_workgroup_meshlet_index].face_count) {
         BrickInstance brick_instance = meshlet_brick_instances[in_workgroup_meshlet_index];
         VoxelChunk voxel_chunk = voxel_chunks[in_workgroup_meshlet_index];
 
@@ -244,37 +250,47 @@ void main() {
         ivec3 ip2 = pos + ivec3(int(axis != 0) * winding_flip_b, int(axis == 0) * winding_flip_b + int(axis == 2) * winding_flip_a, int(axis != 2) * winding_flip_a);
         ivec3 ip3 = pos + ivec3(int(axis != 0), int(axis != 1), int(axis != 2));
 
-        mat4 pvm = deref(push.uses.gpu_input).cam.view_to_clip * deref(push.uses.gpu_input).cam.world_to_view;
+        mat4 world_to_clip = deref(push.uses.gpu_input).cam.view_to_clip * deref(push.uses.gpu_input).cam.world_to_view;
 
         ivec2 viewport_size = ivec2(deref(push.uses.gpu_input).render_size);
 
         const vec2 scale = vec2(0.5, 0.5) * vec2(viewport_size) * float(SUBPIXEL_SAMPLES);
         const vec2 bias = (0.5 * vec2(viewport_size)) * float(SUBPIXEL_SAMPLES) + 0.5;
 
-        pvm[0][0] = pvm[0][0] * scale.x + pvm[0][3] * bias.x;
-        pvm[1][0] = pvm[1][0] * scale.x + pvm[1][3] * bias.x;
-        pvm[2][0] = pvm[2][0] * scale.x + pvm[2][3] * bias.x;
-        pvm[3][0] = pvm[3][0] * scale.x + pvm[3][3] * bias.x;
-
-        pvm[0][1] = pvm[0][1] * scale.y + pvm[0][3] * bias.y;
-        pvm[1][1] = pvm[1][1] * scale.y + pvm[1][3] * bias.y;
-        pvm[2][1] = pvm[2][1] * scale.y + pvm[2][3] * bias.y;
-        pvm[3][1] = pvm[3][1] * scale.y + pvm[3][3] * bias.y;
-
-        vec4 p0_h = pvm * vec4(ip0 * SCL, 1);
-        vec4 p1_h = pvm * vec4(ip1 * SCL, 1);
-        vec4 p2_h = pvm * vec4(ip2 * SCL, 1);
-        vec4 p3_h = pvm * vec4(ip3 * SCL, 1);
+        vec4 p0_h = world_to_clip * vec4(ip0 * SCL, 1);
+        vec4 p1_h = world_to_clip * vec4(ip1 * SCL, 1);
+        vec4 p2_h = world_to_clip * vec4(ip2 * SCL, 1);
+        vec4 p3_h = world_to_clip * vec4(ip3 * SCL, 1);
 
         vec3 p0 = p0_h.xyz / p0_h.w;
         vec3 p1 = p1_h.xyz / p1_h.w;
         vec3 p2 = p2_h.xyz / p2_h.w;
         vec3 p3 = p3_h.xyz / p3_h.w;
+        vec3 ndc_min = min(min(p0, p1), min(p2, p3));
+        vec3 ndc_max = max(max(p0, p1), max(p2, p3));
 
-        p0.xy = floor(p0.xy);
-        p1.xy = floor(p1.xy);
-        p2.xy = floor(p2.xy);
-        p3.xy = floor(p3.xy);
+#if DO_DEPTH_CULL
+        if (is_ndc_aabb_hiz_depth_occluded(ndc_min, ndc_max, deref(push.uses.gpu_input).next_lower_po2_render_size, push.uses.hiz)) {
+            return;
+        }
+#endif
+
+#if DRAW_FROM_OBSERVER
+        world_to_clip = deref(push.uses.gpu_input).observer_cam.view_to_clip * deref(push.uses.gpu_input).observer_cam.world_to_view;
+        p0_h = world_to_clip * vec4(ip0 * SCL, 1);
+        p1_h = world_to_clip * vec4(ip1 * SCL, 1);
+        p2_h = world_to_clip * vec4(ip2 * SCL, 1);
+        p3_h = world_to_clip * vec4(ip3 * SCL, 1);
+        p0 = p0_h.xyz / p0_h.w;
+        p1 = p1_h.xyz / p1_h.w;
+        p2 = p2_h.xyz / p2_h.w;
+        p3 = p3_h.xyz / p3_h.w;
+#endif
+
+        p0.xy = floor(p0.xy * scale + bias);
+        p1.xy = floor(p1.xy * scale + bias);
+        p2.xy = floor(p2.xy * scale + bias);
+        p3.xy = floor(p3.xy * scale + bias);
 
         rasterize_triangle(vec3[](p0, p2, p1), viewport_size, o_packed_payload);
         rasterize_triangle(vec3[](p1, p2, p3), viewport_size, o_packed_payload);
