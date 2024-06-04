@@ -25,6 +25,7 @@ struct AppState {
 
     GLFWwindow *glfw_window_ptr;
     Clock::time_point prev_time;
+    Clock::time_point start_time;
 };
 
 void on_resize(AppState &self) {
@@ -95,13 +96,14 @@ void init(AppState &self) {
 
     init(self.renderer, self.glfw_window_ptr);
     self.prev_time = Clock::now();
+    self.start_time = Clock::now();
     on_resize(self);
 }
 
 void deinit(AppState &self) {
     deinit(self.player);
-    deinit(self.renderer);
     deinit(self.voxel_world);
+    deinit(self.renderer);
 }
 
 auto update(AppState &self) -> bool {
@@ -111,10 +113,11 @@ auto update(AppState &self) -> bool {
     }
     auto now = Clock::now();
     auto dt = std::chrono::duration<float>(now - self.prev_time).count();
+    auto time = std::chrono::duration<float>(now - self.start_time).count();
     self.prev_time = now;
     update(self.player, dt);
-    draw(self.renderer, self.player, self.voxel_world);
     update(self.voxel_world);
+    draw(self.renderer, self.player, self.voxel_world);
     return true;
 }
 

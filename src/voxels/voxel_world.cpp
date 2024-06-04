@@ -9,6 +9,8 @@
 #include <gvox/streams/input/byte_buffer.h>
 #include <gvox/containers/raw.h>
 
+#include <renderer/renderer.hpp>
+
 #include <fstream>
 #include <array>
 #include <vector>
@@ -36,12 +38,26 @@ struct Chunk {
     std::vector<VoxelBrickBitmask> surface_brick_bitmasks;
     std::vector<glm::ivec4> surface_brick_positions;
     std::vector<VoxelAttribBrick> surface_attrib_bricks;
+    renderer::Chunk render_chunk = nullptr;
     glm::vec3 pos;
     bool bricks_changed;
+
+    Chunk() {
+        renderer::init(render_chunk);
+    }
+    ~Chunk() {
+        if (render_chunk != nullptr) {
+            renderer::deinit(render_chunk);
+        }
+    }
 };
 
 struct voxel_world::State {
     std::array<std::unique_ptr<Chunk>, MAX_CHUNK_COUNT> chunks;
+    float prev_time;
+
+    std::thread test_chunk_thread;
+    bool launch_update;
 };
 
 struct DensityNrm {
@@ -208,352 +224,356 @@ auto voxel_minmax_value(glm::vec3 p0, glm::vec3 p1) {
     return result;
 }
 
-void voxel_world::init(VoxelWorld &self) {
-    self = new State{};
+auto generate_chunk(voxel_world::VoxelWorld self, int32_t chunk_xi, int32_t chunk_yi, int32_t chunk_zi, int32_t level) {
+    if (level > 0 && chunk_xi < CHUNK_NX / 2 && chunk_yi < CHUNK_NY / 2 && chunk_zi < CHUNK_NZ / 2) {
+        return;
+    }
 
-    auto generate_chunk = [self](int32_t chunk_xi, int32_t chunk_yi, int32_t chunk_zi, int32_t level) {
-        if (level > 0 && chunk_xi < CHUNK_NX / 2 && chunk_yi < CHUNK_NY / 2 && chunk_zi < CHUNK_NZ / 2) {
-            return;
+    {
+        auto p0 = glm::vec3{
+            (float((chunk_xi * VOXEL_CHUNK_SIZE) << level) + 0.5f) / 16.0f,
+            (float((chunk_yi * VOXEL_CHUNK_SIZE) << level) + 0.5f) / 16.0f,
+            (float((chunk_zi * VOXEL_CHUNK_SIZE) << level) + 0.5f) / 16.0f,
+        };
+        auto p1 = p0 + BRICK_CHUNK_SIZE * VOXEL_BRICK_SIZE / 16.0f;
+        auto minmax = voxel_minmax_value(p0, p1);
+        if (minmax[0] >= 0.0f || minmax[1] < 0.0f) {
+            // uniform
+            if (minmax[0] < 0.0f) {
+                // inside
+            } else {
+                // outside
+                return;
+            }
         }
+    }
 
-        {
-            auto p0 = glm::vec3{
-                (float((chunk_xi * VOXEL_CHUNK_SIZE) << level) + 0.5f) / 16.0f,
-                (float((chunk_yi * VOXEL_CHUNK_SIZE) << level) + 0.5f) / 16.0f,
-                (float((chunk_zi * VOXEL_CHUNK_SIZE) << level) + 0.5f) / 16.0f,
-            };
-            auto p1 = p0 + BRICK_CHUNK_SIZE * VOXEL_BRICK_SIZE / 16.0f;
-            auto minmax = voxel_minmax_value(p0, p1);
-            if (minmax[0] >= 0.0f || minmax[1] < 0.0f) {
-                // uniform
-                if (minmax[0] < 0.0f) {
-                    // inside
-                } else {
-                    // outside
-                    return;
+    int32_t chunk_index = chunk_xi + chunk_yi * CHUNK_NX + chunk_zi * CHUNK_NX * CHUNK_NY + level * CHUNK_NX * CHUNK_NY * CHUNK_NZ;
+    auto &chunk = self->chunks[chunk_index];
+    chunk = std::make_unique<Chunk>();
+    chunk->pos = {chunk_xi, chunk_yi, chunk_zi};
+
+    for (int32_t brick_zi = 0; brick_zi < BRICK_CHUNK_SIZE; ++brick_zi) {
+        for (int32_t brick_yi = 0; brick_yi < BRICK_CHUNK_SIZE; ++brick_yi) {
+            for (int32_t brick_xi = 0; brick_xi < BRICK_CHUNK_SIZE; ++brick_xi) {
+                auto brick_index = brick_xi + brick_yi * BRICK_CHUNK_SIZE + brick_zi * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
+                auto &brick_metadata = get_brick_metadata(chunk, brick_index);
+                auto &bitmask = chunk->voxel_brick_bitmasks[brick_index];
+
+                brick_metadata = {};
+                bitmask = {};
+
+                // determine if brick is uniform
+
+                {
+                    auto p0 = glm::vec3{
+                        (float((brick_xi * VOXEL_BRICK_SIZE + chunk_xi * VOXEL_CHUNK_SIZE) << level) + 0.5f) / 16.0f,
+                        (float((brick_yi * VOXEL_BRICK_SIZE + chunk_yi * VOXEL_CHUNK_SIZE) << level) + 0.5f) / 16.0f,
+                        (float((brick_zi * VOXEL_BRICK_SIZE + chunk_zi * VOXEL_CHUNK_SIZE) << level) + 0.5f) / 16.0f,
+                    };
+                    auto p1 = p0 + VOXEL_BRICK_SIZE / 16.0f;
+                    auto minmax = voxel_minmax_value(p0, p1);
+                    if (minmax[0] >= 0.0f || minmax[1] < 0.0f) {
+                        // uniform
+                        if (minmax[0] < 0.0f) {
+                            // inside
+                            brick_metadata.has_voxel = true;
+                            for (auto &word : bitmask.bits) {
+                                word = 0xffffffff;
+                            }
+                        } else {
+                            // outside
+                            brick_metadata.has_air_px = true;
+                            brick_metadata.has_air_nx = true;
+                            brick_metadata.has_air_py = true;
+                            brick_metadata.has_air_ny = true;
+                            brick_metadata.has_air_pz = true;
+                            brick_metadata.has_air_nz = true;
+                        }
+                        continue;
+                    }
+                }
+
+                for (uint32_t zi = 0; zi < VOXEL_BRICK_SIZE; ++zi) {
+                    for (uint32_t yi = 0; yi < VOXEL_BRICK_SIZE; ++yi) {
+                        for (uint32_t xi = 0; xi < VOXEL_BRICK_SIZE; ++xi) {
+                            float x = (float((xi + brick_xi * VOXEL_BRICK_SIZE + chunk_xi * VOXEL_CHUNK_SIZE) << level) + 0.5f) / 16.0f;
+                            float y = (float((yi + brick_yi * VOXEL_BRICK_SIZE + chunk_yi * VOXEL_CHUNK_SIZE) << level) + 0.5f) / 16.0f;
+                            float z = (float((zi + brick_zi * VOXEL_BRICK_SIZE + chunk_zi * VOXEL_CHUNK_SIZE) << level) + 0.5f) / 16.0f;
+
+                            uint32_t value = voxel_value(glm::vec3(x, y, z)) < 0.0f ? 1 : 0;
+
+                            if (value != 0) {
+                                brick_metadata.has_voxel = true;
+                            }
+                            if (xi == 0 && value == 0) {
+                                brick_metadata.has_air_nx = true;
+                            } else if (xi == (VOXEL_BRICK_SIZE - 1) && value == 0) {
+                                brick_metadata.has_air_px = true;
+                            }
+                            if (yi == 0 && value == 0) {
+                                brick_metadata.has_air_ny = true;
+                            } else if (yi == (VOXEL_BRICK_SIZE - 1) && value == 0) {
+                                brick_metadata.has_air_py = true;
+                            }
+                            if (zi == 0 && value == 0) {
+                                brick_metadata.has_air_nz = true;
+                            } else if (zi == (VOXEL_BRICK_SIZE - 1) && value == 0) {
+                                brick_metadata.has_air_pz = true;
+                            }
+
+                            uint32_t voxel_index = xi + yi * VOXEL_BRICK_SIZE + zi * VOXEL_BRICK_SIZE * VOXEL_BRICK_SIZE;
+                            uint32_t voxel_word_index = voxel_index / 32;
+                            uint32_t voxel_in_word_index = voxel_index % 32;
+                            bitmask.bits[voxel_word_index] |= uint32_t(value) << voxel_in_word_index;
+                        }
+                    }
                 }
             }
         }
+    }
+}
 
-        int32_t chunk_index = chunk_xi + chunk_yi * CHUNK_NX + chunk_zi * CHUNK_NX * CHUNK_NY + level * CHUNK_NX * CHUNK_NY * CHUNK_NZ;
-        auto &chunk = self->chunks[chunk_index];
-        chunk = std::make_unique<Chunk>();
-        chunk->pos = {chunk_xi, chunk_yi, chunk_zi};
+auto generate_chunk2(voxel_world::VoxelWorld self, int32_t chunk_xi, int32_t chunk_yi, int32_t chunk_zi, int32_t level, bool update = true) {
+    int32_t chunk_index = chunk_xi + chunk_yi * CHUNK_NX + chunk_zi * CHUNK_NX * CHUNK_NY + level * CHUNK_NX * CHUNK_NY * CHUNK_NZ;
+    auto &chunk = self->chunks[chunk_index];
+    if (!chunk) {
+        return;
+    }
 
-        for (int32_t brick_zi = 0; brick_zi < BRICK_CHUNK_SIZE; ++brick_zi) {
-            for (int32_t brick_yi = 0; brick_yi < BRICK_CHUNK_SIZE; ++brick_yi) {
-                for (int32_t brick_xi = 0; brick_xi < BRICK_CHUNK_SIZE; ++brick_xi) {
-                    auto brick_index = brick_xi + brick_yi * BRICK_CHUNK_SIZE + brick_zi * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
-                    auto &brick_metadata = get_brick_metadata(chunk, brick_index);
-                    auto &bitmask = chunk->voxel_brick_bitmasks[brick_index];
+    for (int32_t brick_zi = 0; brick_zi < BRICK_CHUNK_SIZE; ++brick_zi) {
+        for (int32_t brick_yi = 0; brick_yi < BRICK_CHUNK_SIZE; ++brick_yi) {
+            for (int32_t brick_xi = 0; brick_xi < BRICK_CHUNK_SIZE; ++brick_xi) {
+                auto brick_index = brick_xi + brick_yi * BRICK_CHUNK_SIZE + brick_zi * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
+                auto &brick_metadata = get_brick_metadata(chunk, brick_index);
+                auto &bitmask = chunk->voxel_brick_bitmasks[brick_index];
 
-                    brick_metadata = {};
-                    bitmask = {};
+                brick_metadata.exposed_nx = false;
+                brick_metadata.exposed_px = false;
+                brick_metadata.exposed_ny = false;
+                brick_metadata.exposed_py = false;
+                brick_metadata.exposed_nz = false;
+                brick_metadata.exposed_pz = false;
 
-                    // determine if brick is uniform
+                auto const *neighbor_bitmask_nx = (VoxelBrickBitmask const *)nullptr;
+                auto const *neighbor_bitmask_px = (VoxelBrickBitmask const *)nullptr;
+                auto const *neighbor_bitmask_ny = (VoxelBrickBitmask const *)nullptr;
+                auto const *neighbor_bitmask_py = (VoxelBrickBitmask const *)nullptr;
+                auto const *neighbor_bitmask_nz = (VoxelBrickBitmask const *)nullptr;
+                auto const *neighbor_bitmask_pz = (VoxelBrickBitmask const *)nullptr;
 
-                    {
-                        auto p0 = glm::vec3{
-                            (float((brick_xi * VOXEL_BRICK_SIZE + chunk_xi * VOXEL_CHUNK_SIZE) << level) + 0.5f) / 16.0f,
-                            (float((brick_yi * VOXEL_BRICK_SIZE + chunk_yi * VOXEL_CHUNK_SIZE) << level) + 0.5f) / 16.0f,
-                            (float((brick_zi * VOXEL_BRICK_SIZE + chunk_zi * VOXEL_CHUNK_SIZE) << level) + 0.5f) / 16.0f,
-                        };
-                        auto p1 = p0 + VOXEL_BRICK_SIZE / 16.0f;
-                        auto minmax = voxel_minmax_value(p0, p1);
-                        if (minmax[0] >= 0.0f || minmax[1] < 0.0f) {
-                            // uniform
-                            if (minmax[0] < 0.0f) {
-                                // inside
-                                brick_metadata.has_voxel = true;
-                                for (auto &word : bitmask.bits) {
-                                    word = 0xffffffff;
-                                }
-                            } else {
-                                // outside
-                                brick_metadata.has_air_px = true;
-                                brick_metadata.has_air_nx = true;
-                                brick_metadata.has_air_py = true;
-                                brick_metadata.has_air_ny = true;
-                                brick_metadata.has_air_pz = true;
-                                brick_metadata.has_air_nz = true;
-                            }
-                            continue;
-                        }
+                if (brick_xi != 0) {
+                    auto neighbor_brick_index = (brick_xi - 1) + brick_yi * BRICK_CHUNK_SIZE + brick_zi * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
+                    auto &neighbor_brick_metadata = get_brick_metadata(chunk, neighbor_brick_index);
+                    brick_metadata.exposed_nx = neighbor_brick_metadata.has_air_px;
+                    neighbor_bitmask_nx = &chunk->voxel_brick_bitmasks[neighbor_brick_index];
+                } else if (chunk_xi != 0) {
+                    int32_t neighbor_chunk_index = (chunk_xi - 1) + chunk_yi * CHUNK_NX + chunk_zi * CHUNK_NX * CHUNK_NY + level * CHUNK_NX * CHUNK_NY * CHUNK_NZ;
+                    auto &neighbor_chunk = self->chunks[neighbor_chunk_index];
+                    if (neighbor_chunk) {
+                        auto neighbor_brick_index = (BRICK_CHUNK_SIZE - 1) + brick_yi * BRICK_CHUNK_SIZE + brick_zi * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
+                        auto &neighbor_brick_metadata = get_brick_metadata(neighbor_chunk, neighbor_brick_index);
+                        brick_metadata.exposed_nx = neighbor_brick_metadata.has_air_px;
+                        neighbor_bitmask_nx = &neighbor_chunk->voxel_brick_bitmasks[neighbor_brick_index];
+                    } else {
+                        brick_metadata.exposed_nx = true;
                     }
+                }
+                if (brick_yi != 0) {
+                    auto neighbor_brick_index = brick_xi + (brick_yi - 1) * BRICK_CHUNK_SIZE + brick_zi * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
+                    auto &neighbor_brick_metadata = get_brick_metadata(chunk, neighbor_brick_index);
+                    brick_metadata.exposed_ny = neighbor_brick_metadata.has_air_py;
+                    neighbor_bitmask_ny = &chunk->voxel_brick_bitmasks[neighbor_brick_index];
+                } else if (chunk_yi != 0) {
+                    int32_t neighbor_chunk_index = chunk_xi + (chunk_yi - 1) * CHUNK_NX + chunk_zi * CHUNK_NX * CHUNK_NY + level * CHUNK_NX * CHUNK_NY * CHUNK_NZ;
+                    auto &neighbor_chunk = self->chunks[neighbor_chunk_index];
+                    if (neighbor_chunk) {
+                        auto neighbor_brick_index = brick_xi + (BRICK_CHUNK_SIZE - 1) * BRICK_CHUNK_SIZE + brick_zi * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
+                        auto &neighbor_brick_metadata = get_brick_metadata(neighbor_chunk, neighbor_brick_index);
+                        brick_metadata.exposed_ny = neighbor_brick_metadata.has_air_py;
+                        neighbor_bitmask_ny = &neighbor_chunk->voxel_brick_bitmasks[neighbor_brick_index];
+                    } else {
+                        brick_metadata.exposed_ny = true;
+                    }
+                }
+                if (brick_zi != 0) {
+                    auto neighbor_brick_index = brick_xi + brick_yi * BRICK_CHUNK_SIZE + (brick_zi - 1) * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
+                    auto &neighbor_brick_metadata = get_brick_metadata(chunk, neighbor_brick_index);
+                    brick_metadata.exposed_nz = neighbor_brick_metadata.has_air_pz;
+                    neighbor_bitmask_nz = &chunk->voxel_brick_bitmasks[neighbor_brick_index];
+                } else if (chunk_zi != 0) {
+                    int32_t neighbor_chunk_index = chunk_xi + chunk_yi * CHUNK_NX + (chunk_zi - 1) * CHUNK_NX * CHUNK_NY + level * CHUNK_NX * CHUNK_NY * CHUNK_NZ;
+                    auto &neighbor_chunk = self->chunks[neighbor_chunk_index];
+                    if (neighbor_chunk) {
+                        auto neighbor_brick_index = brick_xi + brick_yi * BRICK_CHUNK_SIZE + (BRICK_CHUNK_SIZE - 1) * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
+                        auto &neighbor_brick_metadata = get_brick_metadata(neighbor_chunk, neighbor_brick_index);
+                        brick_metadata.exposed_nz = neighbor_brick_metadata.has_air_pz;
+                        neighbor_bitmask_nz = &neighbor_chunk->voxel_brick_bitmasks[neighbor_brick_index];
+                    } else {
+                        brick_metadata.exposed_nz = true;
+                    }
+                }
+                if (brick_xi != BRICK_CHUNK_SIZE - 1) {
+                    auto neighbor_brick_index = (brick_xi + 1) + brick_yi * BRICK_CHUNK_SIZE + brick_zi * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
+                    auto &neighbor_brick_metadata = get_brick_metadata(chunk, neighbor_brick_index);
+                    brick_metadata.exposed_px = neighbor_brick_metadata.has_air_nx;
+                    neighbor_bitmask_px = &chunk->voxel_brick_bitmasks[neighbor_brick_index];
+                } else if (chunk_xi != CHUNK_NX - 1) {
+                    int32_t neighbor_chunk_index = (chunk_xi + 1) + chunk_yi * CHUNK_NX + chunk_zi * CHUNK_NX * CHUNK_NY + level * CHUNK_NX * CHUNK_NY * CHUNK_NZ;
+                    auto &neighbor_chunk = self->chunks[neighbor_chunk_index];
+                    if (neighbor_chunk) {
+                        auto neighbor_brick_index = 0 + brick_yi * BRICK_CHUNK_SIZE + brick_zi * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
+                        auto &neighbor_brick_metadata = get_brick_metadata(neighbor_chunk, neighbor_brick_index);
+                        brick_metadata.exposed_px = neighbor_brick_metadata.has_air_nx;
+                        neighbor_bitmask_px = &neighbor_chunk->voxel_brick_bitmasks[neighbor_brick_index];
+                    } else {
+                        brick_metadata.exposed_px = true;
+                    }
+                }
+                if (brick_yi != BRICK_CHUNK_SIZE - 1) {
+                    auto neighbor_brick_index = brick_xi + (brick_yi + 1) * BRICK_CHUNK_SIZE + brick_zi * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
+                    auto &neighbor_brick_metadata = get_brick_metadata(chunk, neighbor_brick_index);
+                    brick_metadata.exposed_py = neighbor_brick_metadata.has_air_ny;
+                    neighbor_bitmask_py = &chunk->voxel_brick_bitmasks[neighbor_brick_index];
+                } else if (chunk_yi != CHUNK_NY - 1) {
+                    int32_t neighbor_chunk_index = chunk_xi + (chunk_yi + 1) * CHUNK_NX + chunk_zi * CHUNK_NX * CHUNK_NY + level * CHUNK_NX * CHUNK_NY * CHUNK_NZ;
+                    auto &neighbor_chunk = self->chunks[neighbor_chunk_index];
+                    if (neighbor_chunk) {
+                        auto neighbor_brick_index = brick_xi + 0 * BRICK_CHUNK_SIZE + brick_zi * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
+                        auto &neighbor_brick_metadata = get_brick_metadata(neighbor_chunk, neighbor_brick_index);
+                        brick_metadata.exposed_py = neighbor_brick_metadata.has_air_ny;
+                        neighbor_bitmask_py = &neighbor_chunk->voxel_brick_bitmasks[neighbor_brick_index];
+                    } else {
+                        brick_metadata.exposed_py = true;
+                    }
+                }
+                if (brick_zi != BRICK_CHUNK_SIZE - 1) {
+                    auto neighbor_brick_index = brick_xi + brick_yi * BRICK_CHUNK_SIZE + (brick_zi + 1) * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
+                    auto &neighbor_brick_metadata = get_brick_metadata(chunk, neighbor_brick_index);
+                    brick_metadata.exposed_pz = neighbor_brick_metadata.has_air_nz;
+                    neighbor_bitmask_pz = &chunk->voxel_brick_bitmasks[neighbor_brick_index];
+                } else if (chunk_zi != CHUNK_NZ - 1) {
+                    int32_t neighbor_chunk_index = chunk_xi + chunk_yi * CHUNK_NX + (chunk_zi + 1) * CHUNK_NX * CHUNK_NY + level * CHUNK_NX * CHUNK_NY * CHUNK_NZ;
+                    auto &neighbor_chunk = self->chunks[neighbor_chunk_index];
+                    if (neighbor_chunk) {
+                        auto neighbor_brick_index = brick_xi + brick_yi * BRICK_CHUNK_SIZE + 0 * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
+                        auto &neighbor_brick_metadata = get_brick_metadata(neighbor_chunk, neighbor_brick_index);
+                        brick_metadata.exposed_pz = neighbor_brick_metadata.has_air_nz;
+                        neighbor_bitmask_pz = &neighbor_chunk->voxel_brick_bitmasks[neighbor_brick_index];
+                    } else {
+                        brick_metadata.exposed_pz = true;
+                    }
+                }
+
+                bool exposed = brick_metadata.exposed_nx || brick_metadata.exposed_px || brick_metadata.exposed_ny || brick_metadata.exposed_py || brick_metadata.exposed_nz || brick_metadata.exposed_pz;
+
+                auto position = glm::ivec4{brick_xi, brick_yi, brick_zi, -4 + level};
+                if (brick_metadata.has_voxel && exposed) {
+                    // generate surface brick data
+                    auto &attrib_brick = chunk->voxel_brick_attribs[brick_index];
+                    attrib_brick = std::make_unique<VoxelAttribBrick>();
 
                     for (uint32_t zi = 0; zi < VOXEL_BRICK_SIZE; ++zi) {
                         for (uint32_t yi = 0; yi < VOXEL_BRICK_SIZE; ++yi) {
                             for (uint32_t xi = 0; xi < VOXEL_BRICK_SIZE; ++xi) {
+                                uint32_t voxel_index = xi + yi * VOXEL_BRICK_SIZE + zi * VOXEL_BRICK_SIZE * VOXEL_BRICK_SIZE;
                                 float x = (float((xi + brick_xi * VOXEL_BRICK_SIZE + chunk_xi * VOXEL_CHUNK_SIZE) << level) + 0.5f) / 16.0f;
                                 float y = (float((yi + brick_yi * VOXEL_BRICK_SIZE + chunk_yi * VOXEL_CHUNK_SIZE) << level) + 0.5f) / 16.0f;
                                 float z = (float((zi + brick_zi * VOXEL_BRICK_SIZE + chunk_zi * VOXEL_CHUNK_SIZE) << level) + 0.5f) / 16.0f;
-
-                                uint32_t value = voxel_value(glm::vec3(x, y, z)) < 0.0f ? 1 : 0;
-
-                                if (value != 0) {
-                                    brick_metadata.has_voxel = true;
+                                auto dn = voxel_nrm(glm::vec3(x, y, z));
+                                auto col = glm::vec3(0.0f);
+                                if (dot(dn.nrm, vec3(0, 0, -1)) > 0.5f && dn.val > -0.5f) {
+                                    col = glm::vec3(12, 163, 7) / 255.0f;
+                                } else {
+                                    col = glm::vec3(112, 62, 30) / 255.0f;
                                 }
-                                if (xi == 0 && value == 0) {
-                                    brick_metadata.has_air_nx = true;
-                                } else if (xi == (VOXEL_BRICK_SIZE - 1) && value == 0) {
-                                    brick_metadata.has_air_px = true;
-                                }
-                                if (yi == 0 && value == 0) {
-                                    brick_metadata.has_air_ny = true;
-                                } else if (yi == (VOXEL_BRICK_SIZE - 1) && value == 0) {
-                                    brick_metadata.has_air_py = true;
-                                }
-                                if (zi == 0 && value == 0) {
-                                    brick_metadata.has_air_nz = true;
-                                } else if (zi == (VOXEL_BRICK_SIZE - 1) && value == 0) {
-                                    brick_metadata.has_air_pz = true;
-                                }
-
-                                uint32_t voxel_index = xi + yi * VOXEL_BRICK_SIZE + zi * VOXEL_BRICK_SIZE * VOXEL_BRICK_SIZE;
-                                uint32_t voxel_word_index = voxel_index / 32;
-                                uint32_t voxel_in_word_index = voxel_index % 32;
-                                bitmask.bits[voxel_word_index] |= uint32_t(value) << voxel_in_word_index;
+                                attrib_brick->packed_voxels[voxel_index] = pack_voxel(Voxel(std::bit_cast<daxa_f32vec3>(col), std::bit_cast<daxa_f32vec3>(dn.nrm)));
                             }
                         }
                     }
+
+                    auto get_brick_bit = [](VoxelBrickBitmask const &bitmask, uint32_t xi, uint32_t yi, uint32_t zi) {
+                        uint32_t voxel_index = xi + yi * VOXEL_BRICK_SIZE + zi * VOXEL_BRICK_SIZE * VOXEL_BRICK_SIZE;
+                        uint32_t voxel_word_index = voxel_index / 32;
+                        uint32_t voxel_in_word_index = voxel_index % 32;
+                        return (bitmask.bits[voxel_word_index] >> voxel_in_word_index) & 1;
+                    };
+                    auto set_brick_neighbor_bit = [](VoxelBrickBitmask &bitmask, uint32_t xi, uint32_t yi, uint32_t fi, uint32_t value) {
+                        uint32_t voxel_index = xi + yi * VOXEL_BRICK_SIZE + fi * VOXEL_BRICK_SIZE * VOXEL_BRICK_SIZE;
+                        uint32_t voxel_word_index = voxel_index / 32;
+                        uint32_t voxel_in_word_index = voxel_index % 32;
+                        if (value != 0) {
+                            bitmask.neighbor_bits[voxel_word_index] |= (1 << voxel_in_word_index);
+                        } else {
+                            // bitmask.neighbor_bits[voxel_word_index] &= ~(1 << voxel_in_word_index);
+                        }
+                    };
+
+                    for (auto &word : bitmask.neighbor_bits) {
+                        word = {};
+                    }
+
+                    if (neighbor_bitmask_nx != nullptr) {
+                        for (uint32_t bi = 0; bi < VOXEL_BRICK_SIZE; ++bi) {
+                            for (uint32_t ai = 0; ai < VOXEL_BRICK_SIZE; ++ai) {
+                                set_brick_neighbor_bit(bitmask, ai, bi, 0, get_brick_bit(*neighbor_bitmask_nx, VOXEL_BRICK_SIZE - 1, ai, bi));
+                            }
+                        }
+                    }
+                    if (neighbor_bitmask_px != nullptr) {
+                        for (uint32_t bi = 0; bi < VOXEL_BRICK_SIZE; ++bi) {
+                            for (uint32_t ai = 0; ai < VOXEL_BRICK_SIZE; ++ai) {
+                                set_brick_neighbor_bit(bitmask, ai, bi, 3, get_brick_bit(*neighbor_bitmask_px, 0, ai, bi));
+                            }
+                        }
+                    }
+
+                    if (neighbor_bitmask_ny != nullptr) {
+                        for (uint32_t bi = 0; bi < VOXEL_BRICK_SIZE; ++bi) {
+                            for (uint32_t ai = 0; ai < VOXEL_BRICK_SIZE; ++ai) {
+                                set_brick_neighbor_bit(bitmask, ai, bi, 1, get_brick_bit(*neighbor_bitmask_ny, ai, VOXEL_BRICK_SIZE - 1, bi));
+                            }
+                        }
+                    }
+                    if (neighbor_bitmask_py != nullptr) {
+                        for (uint32_t bi = 0; bi < VOXEL_BRICK_SIZE; ++bi) {
+                            for (uint32_t ai = 0; ai < VOXEL_BRICK_SIZE; ++ai) {
+                                set_brick_neighbor_bit(bitmask, ai, bi, 4, get_brick_bit(*neighbor_bitmask_py, ai, 0, bi));
+                            }
+                        }
+                    }
+
+                    if (neighbor_bitmask_nz != nullptr) {
+                        for (uint32_t bi = 0; bi < VOXEL_BRICK_SIZE; ++bi) {
+                            for (uint32_t ai = 0; ai < VOXEL_BRICK_SIZE; ++ai) {
+                                set_brick_neighbor_bit(bitmask, ai, bi, 2, get_brick_bit(*neighbor_bitmask_nz, ai, bi, VOXEL_BRICK_SIZE - 1));
+                            }
+                        }
+                    }
+                    if (neighbor_bitmask_pz != nullptr) {
+                        for (uint32_t bi = 0; bi < VOXEL_BRICK_SIZE; ++bi) {
+                            for (uint32_t ai = 0; ai < VOXEL_BRICK_SIZE; ++ai) {
+                                set_brick_neighbor_bit(bitmask, ai, bi, 5, get_brick_bit(*neighbor_bitmask_pz, ai, bi, 0));
+                            }
+                        }
+                    }
+
+                    chunk->surface_brick_bitmasks.push_back(bitmask);
+                    chunk->surface_brick_positions.push_back(position);
+                    chunk->surface_attrib_bricks.push_back(*attrib_brick);
                 }
             }
         }
-    };
+    }
 
-    auto generate_chunk2 = [self](int32_t chunk_xi, int32_t chunk_yi, int32_t chunk_zi, int32_t level) {
-        int32_t chunk_index = chunk_xi + chunk_yi * CHUNK_NX + chunk_zi * CHUNK_NX * CHUNK_NY + level * CHUNK_NX * CHUNK_NY * CHUNK_NZ;
-        auto &chunk = self->chunks[chunk_index];
-        if (!chunk) {
-            return;
-        }
-
-        for (int32_t brick_zi = 0; brick_zi < BRICK_CHUNK_SIZE; ++brick_zi) {
-            for (int32_t brick_yi = 0; brick_yi < BRICK_CHUNK_SIZE; ++brick_yi) {
-                for (int32_t brick_xi = 0; brick_xi < BRICK_CHUNK_SIZE; ++brick_xi) {
-                    auto brick_index = brick_xi + brick_yi * BRICK_CHUNK_SIZE + brick_zi * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
-                    auto &brick_metadata = get_brick_metadata(chunk, brick_index);
-                    auto &bitmask = chunk->voxel_brick_bitmasks[brick_index];
-
-                    brick_metadata.exposed_nx = false;
-                    brick_metadata.exposed_px = false;
-                    brick_metadata.exposed_ny = false;
-                    brick_metadata.exposed_py = false;
-                    brick_metadata.exposed_nz = false;
-                    brick_metadata.exposed_pz = false;
-
-                    auto const *neighbor_bitmask_nx = (VoxelBrickBitmask const *)nullptr;
-                    auto const *neighbor_bitmask_px = (VoxelBrickBitmask const *)nullptr;
-                    auto const *neighbor_bitmask_ny = (VoxelBrickBitmask const *)nullptr;
-                    auto const *neighbor_bitmask_py = (VoxelBrickBitmask const *)nullptr;
-                    auto const *neighbor_bitmask_nz = (VoxelBrickBitmask const *)nullptr;
-                    auto const *neighbor_bitmask_pz = (VoxelBrickBitmask const *)nullptr;
-
-                    if (brick_xi != 0) {
-                        auto neighbor_brick_index = (brick_xi - 1) + brick_yi * BRICK_CHUNK_SIZE + brick_zi * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
-                        auto &neighbor_brick_metadata = get_brick_metadata(chunk, neighbor_brick_index);
-                        brick_metadata.exposed_nx = neighbor_brick_metadata.has_air_px;
-                        neighbor_bitmask_nx = &chunk->voxel_brick_bitmasks[neighbor_brick_index];
-                    } else if (chunk_xi != 0) {
-                        int32_t neighbor_chunk_index = (chunk_xi - 1) + chunk_yi * CHUNK_NX + chunk_zi * CHUNK_NX * CHUNK_NY + level * CHUNK_NX * CHUNK_NY * CHUNK_NZ;
-                        auto &neighbor_chunk = self->chunks[neighbor_chunk_index];
-                        if (neighbor_chunk) {
-                            auto neighbor_brick_index = (BRICK_CHUNK_SIZE - 1) + brick_yi * BRICK_CHUNK_SIZE + brick_zi * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
-                            auto &neighbor_brick_metadata = get_brick_metadata(neighbor_chunk, neighbor_brick_index);
-                            brick_metadata.exposed_nx = neighbor_brick_metadata.has_air_px;
-                            neighbor_bitmask_nx = &neighbor_chunk->voxel_brick_bitmasks[neighbor_brick_index];
-                        } else {
-                            brick_metadata.exposed_nx = true;
-                        }
-                    }
-                    if (brick_yi != 0) {
-                        auto neighbor_brick_index = brick_xi + (brick_yi - 1) * BRICK_CHUNK_SIZE + brick_zi * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
-                        auto &neighbor_brick_metadata = get_brick_metadata(chunk, neighbor_brick_index);
-                        brick_metadata.exposed_ny = neighbor_brick_metadata.has_air_py;
-                        neighbor_bitmask_ny = &chunk->voxel_brick_bitmasks[neighbor_brick_index];
-                    } else if (chunk_yi != 0) {
-                        int32_t neighbor_chunk_index = chunk_xi + (chunk_yi - 1) * CHUNK_NX + chunk_zi * CHUNK_NX * CHUNK_NY + level * CHUNK_NX * CHUNK_NY * CHUNK_NZ;
-                        auto &neighbor_chunk = self->chunks[neighbor_chunk_index];
-                        if (neighbor_chunk) {
-                            auto neighbor_brick_index = brick_xi + (BRICK_CHUNK_SIZE - 1) * BRICK_CHUNK_SIZE + brick_zi * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
-                            auto &neighbor_brick_metadata = get_brick_metadata(neighbor_chunk, neighbor_brick_index);
-                            brick_metadata.exposed_ny = neighbor_brick_metadata.has_air_py;
-                            neighbor_bitmask_ny = &neighbor_chunk->voxel_brick_bitmasks[neighbor_brick_index];
-                        } else {
-                            brick_metadata.exposed_ny = true;
-                        }
-                    }
-                    if (brick_zi != 0) {
-                        auto neighbor_brick_index = brick_xi + brick_yi * BRICK_CHUNK_SIZE + (brick_zi - 1) * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
-                        auto &neighbor_brick_metadata = get_brick_metadata(chunk, neighbor_brick_index);
-                        brick_metadata.exposed_nz = neighbor_brick_metadata.has_air_pz;
-                        neighbor_bitmask_nz = &chunk->voxel_brick_bitmasks[neighbor_brick_index];
-                    } else if (chunk_zi != 0) {
-                        int32_t neighbor_chunk_index = chunk_xi + chunk_yi * CHUNK_NX + (chunk_zi - 1) * CHUNK_NX * CHUNK_NY + level * CHUNK_NX * CHUNK_NY * CHUNK_NZ;
-                        auto &neighbor_chunk = self->chunks[neighbor_chunk_index];
-                        if (neighbor_chunk) {
-                            auto neighbor_brick_index = brick_xi + brick_yi * BRICK_CHUNK_SIZE + (BRICK_CHUNK_SIZE - 1) * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
-                            auto &neighbor_brick_metadata = get_brick_metadata(neighbor_chunk, neighbor_brick_index);
-                            brick_metadata.exposed_nz = neighbor_brick_metadata.has_air_pz;
-                            neighbor_bitmask_nz = &neighbor_chunk->voxel_brick_bitmasks[neighbor_brick_index];
-                        } else {
-                            brick_metadata.exposed_nz = true;
-                        }
-                    }
-                    if (brick_xi != BRICK_CHUNK_SIZE - 1) {
-                        auto neighbor_brick_index = (brick_xi + 1) + brick_yi * BRICK_CHUNK_SIZE + brick_zi * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
-                        auto &neighbor_brick_metadata = get_brick_metadata(chunk, neighbor_brick_index);
-                        brick_metadata.exposed_px = neighbor_brick_metadata.has_air_nx;
-                        neighbor_bitmask_px = &chunk->voxel_brick_bitmasks[neighbor_brick_index];
-                    } else if (chunk_xi != CHUNK_NX - 1) {
-                        int32_t neighbor_chunk_index = (chunk_xi + 1) + chunk_yi * CHUNK_NX + chunk_zi * CHUNK_NX * CHUNK_NY + level * CHUNK_NX * CHUNK_NY * CHUNK_NZ;
-                        auto &neighbor_chunk = self->chunks[neighbor_chunk_index];
-                        if (neighbor_chunk) {
-                            auto neighbor_brick_index = 0 + brick_yi * BRICK_CHUNK_SIZE + brick_zi * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
-                            auto &neighbor_brick_metadata = get_brick_metadata(neighbor_chunk, neighbor_brick_index);
-                            brick_metadata.exposed_px = neighbor_brick_metadata.has_air_nx;
-                            neighbor_bitmask_px = &neighbor_chunk->voxel_brick_bitmasks[neighbor_brick_index];
-                        } else {
-                            brick_metadata.exposed_px = true;
-                        }
-                    }
-                    if (brick_yi != BRICK_CHUNK_SIZE - 1) {
-                        auto neighbor_brick_index = brick_xi + (brick_yi + 1) * BRICK_CHUNK_SIZE + brick_zi * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
-                        auto &neighbor_brick_metadata = get_brick_metadata(chunk, neighbor_brick_index);
-                        brick_metadata.exposed_py = neighbor_brick_metadata.has_air_ny;
-                        neighbor_bitmask_py = &chunk->voxel_brick_bitmasks[neighbor_brick_index];
-                    } else if (chunk_yi != CHUNK_NY - 1) {
-                        int32_t neighbor_chunk_index = chunk_xi + (chunk_yi + 1) * CHUNK_NX + chunk_zi * CHUNK_NX * CHUNK_NY + level * CHUNK_NX * CHUNK_NY * CHUNK_NZ;
-                        auto &neighbor_chunk = self->chunks[neighbor_chunk_index];
-                        if (neighbor_chunk) {
-                            auto neighbor_brick_index = brick_xi + 0 * BRICK_CHUNK_SIZE + brick_zi * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
-                            auto &neighbor_brick_metadata = get_brick_metadata(neighbor_chunk, neighbor_brick_index);
-                            brick_metadata.exposed_py = neighbor_brick_metadata.has_air_ny;
-                            neighbor_bitmask_py = &neighbor_chunk->voxel_brick_bitmasks[neighbor_brick_index];
-                        } else {
-                            brick_metadata.exposed_py = true;
-                        }
-                    }
-                    if (brick_zi != BRICK_CHUNK_SIZE - 1) {
-                        auto neighbor_brick_index = brick_xi + brick_yi * BRICK_CHUNK_SIZE + (brick_zi + 1) * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
-                        auto &neighbor_brick_metadata = get_brick_metadata(chunk, neighbor_brick_index);
-                        brick_metadata.exposed_pz = neighbor_brick_metadata.has_air_nz;
-                        neighbor_bitmask_pz = &chunk->voxel_brick_bitmasks[neighbor_brick_index];
-                    } else if (chunk_zi != CHUNK_NZ - 1) {
-                        int32_t neighbor_chunk_index = chunk_xi + chunk_yi * CHUNK_NX + (chunk_zi + 1) * CHUNK_NX * CHUNK_NY + level * CHUNK_NX * CHUNK_NY * CHUNK_NZ;
-                        auto &neighbor_chunk = self->chunks[neighbor_chunk_index];
-                        if (neighbor_chunk) {
-                            auto neighbor_brick_index = brick_xi + brick_yi * BRICK_CHUNK_SIZE + 0 * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
-                            auto &neighbor_brick_metadata = get_brick_metadata(neighbor_chunk, neighbor_brick_index);
-                            brick_metadata.exposed_pz = neighbor_brick_metadata.has_air_nz;
-                            neighbor_bitmask_pz = &neighbor_chunk->voxel_brick_bitmasks[neighbor_brick_index];
-                        } else {
-                            brick_metadata.exposed_pz = true;
-                        }
-                    }
-
-                    bool exposed = brick_metadata.exposed_nx || brick_metadata.exposed_px || brick_metadata.exposed_ny || brick_metadata.exposed_py || brick_metadata.exposed_nz || brick_metadata.exposed_pz;
-
-                    auto position = glm::ivec4{brick_xi, brick_yi, brick_zi, -4 + level};
-                    if (brick_metadata.has_voxel && exposed) {
-                        // generate surface brick data
-                        auto &attrib_brick = chunk->voxel_brick_attribs[brick_index];
-                        attrib_brick = std::make_unique<VoxelAttribBrick>();
-
-                        for (uint32_t zi = 0; zi < VOXEL_BRICK_SIZE; ++zi) {
-                            for (uint32_t yi = 0; yi < VOXEL_BRICK_SIZE; ++yi) {
-                                for (uint32_t xi = 0; xi < VOXEL_BRICK_SIZE; ++xi) {
-                                    uint32_t voxel_index = xi + yi * VOXEL_BRICK_SIZE + zi * VOXEL_BRICK_SIZE * VOXEL_BRICK_SIZE;
-                                    float x = (float((xi + brick_xi * VOXEL_BRICK_SIZE + chunk_xi * VOXEL_CHUNK_SIZE) << level) + 0.5f) / 16.0f;
-                                    float y = (float((yi + brick_yi * VOXEL_BRICK_SIZE + chunk_yi * VOXEL_CHUNK_SIZE) << level) + 0.5f) / 16.0f;
-                                    float z = (float((zi + brick_zi * VOXEL_BRICK_SIZE + chunk_zi * VOXEL_CHUNK_SIZE) << level) + 0.5f) / 16.0f;
-                                    auto dn = voxel_nrm(glm::vec3(x, y, z));
-                                    auto col = glm::vec3(0.0f);
-                                    if (dot(dn.nrm, vec3(0, 0, -1)) > 0.5f && dn.val > -0.5f) {
-                                        col = glm::vec3(12, 163, 7) / 255.0f;
-                                    } else {
-                                        col = glm::vec3(112, 62, 30) / 255.0f;
-                                    }
-                                    attrib_brick->packed_voxels[voxel_index] = pack_voxel(Voxel(std::bit_cast<daxa_f32vec3>(col), std::bit_cast<daxa_f32vec3>(dn.nrm)));
-                                }
-                            }
-                        }
-
-                        auto get_brick_bit = [](VoxelBrickBitmask const &bitmask, uint32_t xi, uint32_t yi, uint32_t zi) {
-                            uint32_t voxel_index = xi + yi * VOXEL_BRICK_SIZE + zi * VOXEL_BRICK_SIZE * VOXEL_BRICK_SIZE;
-                            uint32_t voxel_word_index = voxel_index / 32;
-                            uint32_t voxel_in_word_index = voxel_index % 32;
-                            return (bitmask.bits[voxel_word_index] >> voxel_in_word_index) & 1;
-                        };
-                        auto set_brick_neighbor_bit = [](VoxelBrickBitmask &bitmask, uint32_t xi, uint32_t yi, uint32_t fi, uint32_t value) {
-                            uint32_t voxel_index = xi + yi * VOXEL_BRICK_SIZE + fi * VOXEL_BRICK_SIZE * VOXEL_BRICK_SIZE;
-                            uint32_t voxel_word_index = voxel_index / 32;
-                            uint32_t voxel_in_word_index = voxel_index % 32;
-                            if (value != 0) {
-                                bitmask.neighbor_bits[voxel_word_index] |= (1 << voxel_in_word_index);
-                            } else {
-                                // bitmask.neighbor_bits[voxel_word_index] &= ~(1 << voxel_in_word_index);
-                            }
-                        };
-
-                        for (auto &word : bitmask.neighbor_bits) {
-                            word = {};
-                        }
-
-                        if (neighbor_bitmask_nx != nullptr) {
-                            for (uint32_t bi = 0; bi < VOXEL_BRICK_SIZE; ++bi) {
-                                for (uint32_t ai = 0; ai < VOXEL_BRICK_SIZE; ++ai) {
-                                    set_brick_neighbor_bit(bitmask, ai, bi, 0, get_brick_bit(*neighbor_bitmask_nx, VOXEL_BRICK_SIZE - 1, ai, bi));
-                                }
-                            }
-                        }
-                        if (neighbor_bitmask_px != nullptr) {
-                            for (uint32_t bi = 0; bi < VOXEL_BRICK_SIZE; ++bi) {
-                                for (uint32_t ai = 0; ai < VOXEL_BRICK_SIZE; ++ai) {
-                                    set_brick_neighbor_bit(bitmask, ai, bi, 3, get_brick_bit(*neighbor_bitmask_px, 0, ai, bi));
-                                }
-                            }
-                        }
-
-                        if (neighbor_bitmask_ny != nullptr) {
-                            for (uint32_t bi = 0; bi < VOXEL_BRICK_SIZE; ++bi) {
-                                for (uint32_t ai = 0; ai < VOXEL_BRICK_SIZE; ++ai) {
-                                    set_brick_neighbor_bit(bitmask, ai, bi, 1, get_brick_bit(*neighbor_bitmask_ny, ai, VOXEL_BRICK_SIZE - 1, bi));
-                                }
-                            }
-                        }
-                        if (neighbor_bitmask_py != nullptr) {
-                            for (uint32_t bi = 0; bi < VOXEL_BRICK_SIZE; ++bi) {
-                                for (uint32_t ai = 0; ai < VOXEL_BRICK_SIZE; ++ai) {
-                                    set_brick_neighbor_bit(bitmask, ai, bi, 4, get_brick_bit(*neighbor_bitmask_py, ai, 0, bi));
-                                }
-                            }
-                        }
-
-                        if (neighbor_bitmask_nz != nullptr) {
-                            for (uint32_t bi = 0; bi < VOXEL_BRICK_SIZE; ++bi) {
-                                for (uint32_t ai = 0; ai < VOXEL_BRICK_SIZE; ++ai) {
-                                    set_brick_neighbor_bit(bitmask, ai, bi, 2, get_brick_bit(*neighbor_bitmask_nz, ai, bi, VOXEL_BRICK_SIZE - 1));
-                                }
-                            }
-                        }
-                        if (neighbor_bitmask_pz != nullptr) {
-                            for (uint32_t bi = 0; bi < VOXEL_BRICK_SIZE; ++bi) {
-                                for (uint32_t ai = 0; ai < VOXEL_BRICK_SIZE; ++ai) {
-                                    set_brick_neighbor_bit(bitmask, ai, bi, 5, get_brick_bit(*neighbor_bitmask_pz, ai, bi, 0));
-                                }
-                            }
-                        }
-
-                        chunk->surface_brick_bitmasks.push_back(bitmask);
-                        chunk->surface_brick_positions.push_back(position);
-                        chunk->surface_attrib_bricks.push_back(*attrib_brick);
-                    }
-                }
-            }
-        }
+    if (update) {
         chunk->bricks_changed = true;
-    };
+    }
+}
+
+void voxel_world::init(VoxelWorld &self) {
+    self = new State{};
+    self->prev_time = 0.0f;
 
     std::vector<std::thread> threads;
     threads.reserve(CHUNK_NX * CHUNK_NY * CHUNK_NZ * CHUNK_LEVELS);
@@ -562,7 +582,7 @@ void voxel_world::init(VoxelWorld &self) {
         for (int32_t chunk_zi = 0; chunk_zi < CHUNK_NZ; ++chunk_zi) {
             for (int32_t chunk_yi = 0; chunk_yi < CHUNK_NY; ++chunk_yi) {
                 for (int32_t chunk_xi = 0; chunk_xi < CHUNK_NX; ++chunk_xi) {
-                    threads.emplace_back([=]() { generate_chunk(chunk_xi, chunk_yi, chunk_zi, level_i); });
+                    threads.emplace_back([=]() { generate_chunk(self, chunk_xi, chunk_yi, chunk_zi, level_i); });
                 }
             }
         }
@@ -577,7 +597,7 @@ void voxel_world::init(VoxelWorld &self) {
         for (int32_t chunk_zi = 0; chunk_zi < CHUNK_NZ; ++chunk_zi) {
             for (int32_t chunk_yi = 0; chunk_yi < CHUNK_NY; ++chunk_yi) {
                 for (int32_t chunk_xi = 0; chunk_xi < CHUNK_NX; ++chunk_xi) {
-                    threads.emplace_back([=]() { generate_chunk2(chunk_xi, chunk_yi, chunk_zi, level_i); });
+                    threads.emplace_back([=]() { generate_chunk2(self, chunk_xi, chunk_yi, chunk_zi, level_i); });
                 }
             }
         }
@@ -590,55 +610,26 @@ void voxel_world::deinit(VoxelWorld self) {
     delete self;
 }
 
-unsigned int voxel_world::get_chunk_count(VoxelWorld self) {
-    return CHUNK_NX * CHUNK_NY * CHUNK_NZ * CHUNK_LEVELS;
-}
-
-VoxelBrickBitmask *voxel_world::get_voxel_brick_bitmasks(VoxelWorld self, unsigned int chunk_index) {
-    auto &chunk = self->chunks[chunk_index];
-    if (!chunk) {
-        return nullptr;
-    }
-    return chunk->surface_brick_bitmasks.data();
-}
-int *voxel_world::get_voxel_brick_positions(VoxelWorld self, unsigned int chunk_index) {
-    return reinterpret_cast<int *>(self->chunks[chunk_index]->surface_brick_positions.data());
-}
-VoxelAttribBrick *voxel_world::get_chunk_brick_attribs(VoxelWorld self, unsigned int chunk_index) {
-    return self->chunks[chunk_index]->surface_attrib_bricks.data();
-}
-
-uint32_t voxel_world::get_voxel_brick_count(VoxelWorld self, unsigned int chunk_index) {
-    auto &chunk = self->chunks[chunk_index];
-    if (!chunk) {
-        return 0;
-    }
-    return chunk->surface_brick_bitmasks.size();
-}
-void voxel_world::get_chunk_pos(VoxelWorld self, unsigned int chunk_index, float *o_pos) {
-    auto &chunk = self->chunks[chunk_index];
-    if (!chunk) {
-        return;
-    }
-    auto pos = chunk->pos;
-    o_pos[0] = pos.x;
-    o_pos[1] = pos.y;
-    o_pos[2] = pos.z;
-}
-bool voxel_world::chunk_bricks_changed(VoxelWorld self, unsigned int chunk_index) {
-    auto &chunk = self->chunks[chunk_index];
-    if (!chunk) {
-        return false;
-    }
-    return chunk->bricks_changed;
-}
 void voxel_world::update(VoxelWorld self) {
     for (uint32_t chunk_index = 0; chunk_index < MAX_CHUNK_COUNT; ++chunk_index) {
         auto &chunk = self->chunks[chunk_index];
         if (!chunk) {
             continue;
         }
-        chunk->bricks_changed = false;
+
+        auto brick_count = chunk->surface_brick_bitmasks.size();
+
+        if (chunk->bricks_changed) {
+            if (chunk->render_chunk == nullptr) {
+                renderer::init(chunk->render_chunk);
+            }
+            renderer::update(chunk->render_chunk, brick_count, chunk->surface_brick_bitmasks.data(), chunk->surface_attrib_bricks.data(), (int const *)chunk->surface_brick_positions.data());
+            chunk->bricks_changed = false;
+        }
+
+        if (brick_count > 0) {
+            renderer::render_chunk(chunk->render_chunk, (float const *)&chunk->pos);
+        }
     }
 }
 
