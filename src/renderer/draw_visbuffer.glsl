@@ -77,7 +77,7 @@ void emit_prim(vec3 in_p0, vec3 in_p1, vec3 in_p2, vec3 in_p3) {
     gl_MeshPrimitivesEXT[prim_i + 1].gl_CullPrimitiveEXT = cull_poly;
 
 #if DRAW_FROM_OBSERVER
-    world_to_clip = deref(push.uses.gpu_input).observer_cam.view_to_clip * deref(push.uses.gpu_input).observer_cam.world_to_view;
+    world_to_clip = deref(push.uses.gpu_input).observer_cam.view_to_sample * deref(push.uses.gpu_input).observer_cam.world_to_view;
 
     p0_h = world_to_clip * vec4(in_p0, 1);
     p1_h = world_to_clip * vec4(in_p1, 1);
@@ -104,7 +104,7 @@ void emit_prim(vec3 in_p0, vec3 in_p1, vec3 in_p2, vec3 in_p3) {
 
 layout(local_size_x = 32) in;
 void main() {
-    world_to_clip = deref(push.uses.gpu_input).cam.view_to_clip * deref(push.uses.gpu_input).cam.world_to_view;
+    world_to_clip = deref(push.uses.gpu_input).cam.view_to_sample * deref(push.uses.gpu_input).cam.world_to_view;
     BrickInstance brick_instance;
     VoxelChunk voxel_chunk;
     VoxelBrickMesh mesh;

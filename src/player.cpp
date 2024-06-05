@@ -2,6 +2,7 @@
 #include "camera.inl"
 
 #include <renderer/renderer.hpp>
+#include <renderer/shared.inl>
 
 #include <glm/glm.hpp>
 #include <GLFW/glfw3.h>
@@ -56,7 +57,9 @@ void clear_move_state(CameraState *self) {
 
 struct player::State {
     CameraState main_cam;
+    CameraState prev_main_cam;
     CameraState observer_cam;
+    CameraState prev_observer_cam;
 
     bool controlling_observer : 1;
     bool viewing_observer : 1;
@@ -279,7 +282,8 @@ void update_camera(CameraState *self) {
 }
 
 void player::update(Player self, float dt) {
-    auto update = [](CameraState *self, float dt) {
+    auto update = [](CameraState *self, CameraState *prev_self, float dt) {
+        *prev_self = *self;
         float const speed = (self->move_sprint ? 10.0f : 1.0f) * self->speed;
         if (self->move_flat) {
             if (self->move_f) {
@@ -326,8 +330,8 @@ void player::update(Player self, float dt) {
         }
         update_camera(self);
     };
-    update(&self->observer_cam, dt);
-    update(&self->main_cam, dt);
+    update(&self->observer_cam, &self->prev_observer_cam, dt);
+    update(&self->main_cam, &self->prev_main_cam, dt);
 
     if (self->viewing_observer) {
         auto points = std::array<glm::vec3, 8>{
@@ -372,20 +376,51 @@ void player::update(Player self, float dt) {
     }
 }
 
-void player::get_camera(Player self, Camera *camera) {
-    update_camera(&self->main_cam);
-    camera->world_to_view = std::bit_cast<daxa_f32mat4x4>(self->main_cam.world_to_view);
-    camera->view_to_world = std::bit_cast<daxa_f32mat4x4>(self->main_cam.view_to_world);
-    camera->view_to_clip = std::bit_cast<daxa_f32mat4x4>(self->main_cam.view_to_clip);
-    camera->clip_to_view = std::bit_cast<daxa_f32mat4x4>(self->main_cam.clip_to_view);
+void get_camera(CameraState const &cam, CameraState const &prev_cam, Camera *camera, GpuInput const *gpu_input) {
+    camera->world_to_view = std::bit_cast<daxa_f32mat4x4>(cam.world_to_view);
+    camera->view_to_world = std::bit_cast<daxa_f32mat4x4>(cam.view_to_world);
+    camera->view_to_clip = std::bit_cast<daxa_f32mat4x4>(cam.view_to_clip);
+    camera->clip_to_view = std::bit_cast<daxa_f32mat4x4>(cam.clip_to_view);
+
+    camera->prev_world_to_prev_view = std::bit_cast<daxa_f32mat4x4>(prev_cam.world_to_view);
+    camera->prev_view_to_prev_world = std::bit_cast<daxa_f32mat4x4>(prev_cam.view_to_world);
+    camera->prev_view_to_prev_clip = std::bit_cast<daxa_f32mat4x4>(prev_cam.view_to_clip);
+    camera->prev_clip_to_prev_view = std::bit_cast<daxa_f32mat4x4>(prev_cam.clip_to_view);
+
+    daxa_f32vec2 sample_offset = daxa_f32vec2(
+        gpu_input->jitter.x / float(gpu_input->render_size.x),
+        gpu_input->jitter.y / float(gpu_input->render_size.y));
+
+    glm::mat4 clip_to_sample = glm::mat4(
+        1, 0, 0, 0,
+        0, 1, 0, 0,
+        0, 0, 1, 0,
+        sample_offset.x * -2.0f, sample_offset.y * -2.0f, 0, 1);
+
+    glm::mat4 sample_to_clip = glm::mat4(
+        1, 0, 0, 0,
+        0, 1, 0, 0,
+        0, 0, 1, 0,
+        sample_offset.x * +2.0f, sample_offset.y * +2.0f, 0, 1);
+
+    camera->view_to_sample = std::bit_cast<daxa_f32mat4x4>(clip_to_sample * cam.view_to_clip);
+    camera->sample_to_view = std::bit_cast<daxa_f32mat4x4>(cam.clip_to_view * sample_to_clip);
+
+    camera->clip_to_prev_clip = std::bit_cast<daxa_f32mat4x4>(
+        prev_cam.view_to_clip *
+        prev_cam.world_to_view *
+        cam.view_to_world *
+        cam.clip_to_view);
 }
 
-void player::get_observer_camera(Player self, Camera *camera) {
+void player::get_camera(Player self, Camera *camera, GpuInput const *gpu_input) {
+    update_camera(&self->main_cam);
+    get_camera(self->main_cam, self->prev_main_cam, camera, gpu_input);
+}
+
+void player::get_observer_camera(Player self, Camera *camera, GpuInput const *gpu_input) {
     update_camera(&self->observer_cam);
-    camera->world_to_view = std::bit_cast<daxa_f32mat4x4>(self->observer_cam.world_to_view);
-    camera->view_to_world = std::bit_cast<daxa_f32mat4x4>(self->observer_cam.view_to_world);
-    camera->view_to_clip = std::bit_cast<daxa_f32mat4x4>(self->observer_cam.view_to_clip);
-    camera->clip_to_view = std::bit_cast<daxa_f32mat4x4>(self->observer_cam.clip_to_view);
+    get_camera(self->observer_cam, self->prev_observer_cam, camera, gpu_input);
 }
 
 auto player::should_draw_from_observer(Player self) -> bool {

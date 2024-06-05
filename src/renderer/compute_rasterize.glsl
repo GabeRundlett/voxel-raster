@@ -112,7 +112,7 @@ void main() {
         ivec3 ip2 = pos + ivec3(int(axis != 0) * winding_flip_b, int(axis == 0) * winding_flip_b + int(axis == 2) * winding_flip_a, int(axis != 2) * winding_flip_a);
         ivec3 ip3 = pos + ivec3(int(axis != 0), int(axis != 1), int(axis != 2));
 
-        mat4 world_to_clip = deref(push.uses.gpu_input).cam.view_to_clip * deref(push.uses.gpu_input).cam.world_to_view;
+        mat4 world_to_clip = deref(push.uses.gpu_input).cam.view_to_sample * deref(push.uses.gpu_input).cam.world_to_view;
 
         ivec2 viewport_size = ivec2(deref(push.uses.gpu_input).render_size);
 
@@ -138,7 +138,7 @@ void main() {
 #endif
 
 #if DRAW_FROM_OBSERVER
-        world_to_clip = deref(push.uses.gpu_input).observer_cam.view_to_clip * deref(push.uses.gpu_input).observer_cam.world_to_view;
+        world_to_clip = deref(push.uses.gpu_input).observer_cam.view_to_sample * deref(push.uses.gpu_input).observer_cam.world_to_view;
         p0_h = world_to_clip * vec4(ip0 * SCL, 1);
         p1_h = world_to_clip * vec4(ip1 * SCL, 1);
         p2_h = world_to_clip * vec4(ip2 * SCL, 1);

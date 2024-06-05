@@ -89,7 +89,7 @@ void init(AppState &self) {
             if (!self.paused) {
                 player::on_key(self.player, key, action);
                 if (key == GLFW_KEY_L && action == GLFW_PRESS) {
-                    renderer::toggle_wireframe(self.renderer);
+                    renderer::toggle_fsr2(self.renderer);
                 }
             }
         });

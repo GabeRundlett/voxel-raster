@@ -39,7 +39,7 @@ bool is_brick_instance_visible(BrickInstance brick_instance) {
 
     [[unroll]] for (uint vert_i = 0; vert_i < 8; ++vert_i) {
         vec4 vs_h = deref(push.uses.gpu_input).cam.world_to_view * vec4(vertices[vert_i], 1);
-        vec4 cs_h = deref(push.uses.gpu_input).cam.view_to_clip * vs_h;
+        vec4 cs_h = deref(push.uses.gpu_input).cam.view_to_sample * vs_h;
         vec3 p = cs_h.xyz / cs_h.w;
         if (vert_i == 0) {
             ndc_min = p;

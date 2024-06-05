@@ -25,7 +25,7 @@ namespace renderer {
 
     void on_resize(Renderer self, int size_x, int size_y);
     void draw(Renderer self, player::Player player, voxel_world::VoxelWorld voxel_world);
-    void toggle_wireframe(Renderer self);
+    void toggle_fsr2(Renderer self);
     void submit_debug_lines(float const *lines, int line_n);
 
     void init(Chunk &self);

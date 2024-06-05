@@ -25,7 +25,10 @@ struct GpuInput {
     daxa_u32vec2 render_size;
     daxa_u32vec2 next_lower_po2_render_size;
     daxa_u32 chunk_n;
+    daxa_u32 frame_index;
     daxa_f32 time;
+    daxa_f32 delta_time;
+    daxa_f32vec2 jitter;
     Samplers samplers;
     Camera cam;
     Camera observer_cam;
@@ -121,32 +124,32 @@ struct ComputeRasterizePush {
 };
 
 DAXA_DECL_TASK_HEAD_BEGIN(ShadeVisbufferH)
-DAXA_TH_IMAGE(COLOR_ATTACHMENT, REGULAR_2D, render_target)
-DAXA_TH_BUFFER_PTR(FRAGMENT_SHADER_READ, daxa_BufferPtr(GpuInput), gpu_input)
+DAXA_TH_BUFFER_PTR(COMPUTE_SHADER_READ, daxa_BufferPtr(GpuInput), gpu_input)
 DAXA_TH_BUFFER_PTR(COMPUTE_SHADER_READ, daxa_BufferPtr(VoxelChunk), chunks)
-DAXA_TH_BUFFER(FRAGMENT_SHADER_READ, brick_data)
-DAXA_TH_BUFFER_PTR(FRAGMENT_SHADER_READ, daxa_BufferPtr(BrickInstance), brick_instance_allocator)
-DAXA_TH_BUFFER_PTR(FRAGMENT_SHADER_READ, daxa_BufferPtr(VoxelMeshlet), meshlet_allocator)
-DAXA_TH_BUFFER_PTR(FRAGMENT_SHADER_READ, daxa_BufferPtr(VoxelMeshletMetadata), meshlet_metadata)
+DAXA_TH_BUFFER(COMPUTE_SHADER_READ, brick_data)
+DAXA_TH_BUFFER_PTR(COMPUTE_SHADER_READ, daxa_BufferPtr(BrickInstance), brick_instance_allocator)
+DAXA_TH_BUFFER_PTR(COMPUTE_SHADER_READ, daxa_BufferPtr(VoxelMeshlet), meshlet_allocator)
+DAXA_TH_BUFFER_PTR(COMPUTE_SHADER_READ, daxa_BufferPtr(VoxelMeshletMetadata), meshlet_metadata)
+DAXA_TH_IMAGE_INDEX(COMPUTE_SHADER_STORAGE_READ_ONLY, REGULAR_2D, visbuffer64)
 #if ENABLE_DEBUG_VIS
-DAXA_TH_IMAGE_INDEX(FRAGMENT_SHADER_SAMPLED, REGULAR_2D, debug_overdraw)
+DAXA_TH_IMAGE_INDEX(COMPUTE_SHADER_SAMPLED, REGULAR_2D, debug_overdraw)
 #endif
-// DAXA_TH_IMAGE_INDEX(FRAGMENT_SHADER_SAMPLED, REGULAR_2D, visbuffer)
-DAXA_TH_IMAGE_INDEX(FRAGMENT_SHADER_STORAGE_READ_ONLY, REGULAR_2D, visbuffer64)
+DAXA_TH_IMAGE_INDEX(COMPUTE_SHADER_STORAGE_WRITE_ONLY, REGULAR_2D, color)
+DAXA_TH_IMAGE_INDEX(COMPUTE_SHADER_STORAGE_WRITE_ONLY, REGULAR_2D, depth)
+DAXA_TH_IMAGE_INDEX(COMPUTE_SHADER_STORAGE_WRITE_ONLY, REGULAR_2D, motion_vectors)
 DAXA_DECL_TASK_HEAD_END
 
 struct ShadeVisbufferPush {
     DAXA_TH_BLOB(ShadeVisbufferH, uses)
 };
 
-DAXA_DECL_TASK_HEAD_BEGIN(CompositeComputeVisbufferH)
-DAXA_TH_IMAGE(COLOR_ATTACHMENT, REGULAR_2D, visbuffer)
-DAXA_TH_IMAGE(DEPTH_ATTACHMENT, REGULAR_2D, depth_target)
-DAXA_TH_IMAGE_INDEX(FRAGMENT_SHADER_STORAGE_READ_ONLY, REGULAR_2D, visbuffer64)
+DAXA_DECL_TASK_HEAD_BEGIN(PostProcessingH)
+DAXA_TH_IMAGE(COLOR_ATTACHMENT, REGULAR_2D, render_target)
+DAXA_TH_IMAGE_INDEX(FRAGMENT_SHADER_SAMPLED, REGULAR_2D, color)
 DAXA_DECL_TASK_HEAD_END
 
-struct CompositeComputeVisbufferPush {
-    DAXA_TH_BLOB(CompositeComputeVisbufferH, uses)
+struct PostProcessingPush {
+    DAXA_TH_BLOB(PostProcessingH, uses)
 };
 
 DAXA_DECL_TASK_HEAD_BEGIN(AnalyzeVisbufferH)

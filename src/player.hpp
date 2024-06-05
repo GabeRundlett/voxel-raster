@@ -1,6 +1,7 @@
 #pragma once
 
 struct Camera;
+struct GpuInput;
 
 namespace player {
     struct State;
@@ -16,7 +17,7 @@ namespace player {
     void on_resize(Player self, int size_x, int size_y);
 
     void update(Player self, float dt);
-    void get_camera(Player self, Camera *camera);
-    void get_observer_camera(Player self, Camera *camera);
+    void get_camera(Player self, Camera *camera, GpuInput const *gpu_input);
+    void get_observer_camera(Player self, Camera *camera, GpuInput const *gpu_input);
     auto should_draw_from_observer(Player self) -> bool;
 } // namespace player

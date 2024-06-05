@@ -10,7 +10,8 @@
         "utils-imgui",
         "utils-mem",
         "utils-pipeline-manager-glslang",
-        "utils-task-graph"
+        "utils-task-graph",
+        "utils-fsr2"
       ]
     },
     "gvox",
@@ -26,8 +27,9 @@
   ],
   "vcpkg-configuration": {
     "overlay-ports": [
+      "deps/gvox",
       "deps/Daxa",
-      "deps/gvox"
+      "deps/Daxa/cmake/vcpkg-overlay-ports/fsr2"
     ]
   }
 }
