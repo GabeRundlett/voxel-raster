@@ -12,17 +12,14 @@
 
 #include <renderer/renderer.hpp>
 #include <utilities/thread_pool.hpp>
+#include <utilities/ispc_instrument.hpp>
 
 #include <fstream>
 #include <array>
 #include <vector>
 #include <thread>
 
-#define USE_ISPC 1
-
-#if USE_ISPC
-#include <generation_ispc.h>
-#endif
+#include "generation/generation.hpp"
 
 struct BrickMetadata {
     uint32_t exposed_nx : 1 {};
@@ -93,65 +90,8 @@ const auto RANDOM_VALUES = []() {
     return result;
 }();
 
-float fast_random(glm::ivec3 p) {
-    p = ((p % ivec3(RANDOM_BUFFER_SIZE)) + ivec3(RANDOM_BUFFER_SIZE)) % ivec3(RANDOM_BUFFER_SIZE);
-    return float(RANDOM_VALUES[p.x + p.y * RANDOM_BUFFER_SIZE + p.z * RANDOM_BUFFER_SIZE * RANDOM_BUFFER_SIZE]) / 255.0f;
-}
-
-DensityNrm noise(glm::vec3 x, float scale, float amp) {
-    x = x * scale;
-
-    glm::ivec3 p = floor(x);
-    glm::vec3 w = fract(x);
-    glm::vec3 u = w * w * (3.0f - 2.0f * w);
-    glm::vec3 du = 6.0f * w * (1.0f - w);
-
-    float a = fast_random(p + ivec3(0, 0, 0));
-    float b = fast_random(p + ivec3(1, 0, 0));
-    float c = fast_random(p + ivec3(0, 1, 0));
-    float d = fast_random(p + ivec3(1, 1, 0));
-    float e = fast_random(p + ivec3(0, 0, 1));
-    float f = fast_random(p + ivec3(1, 0, 1));
-    float g = fast_random(p + ivec3(0, 1, 1));
-    float h = fast_random(p + ivec3(1, 1, 1));
-
-    float k0 = a;
-    float k1 = b - a;
-    float k2 = c - a;
-    float k3 = e - a;
-    float k4 = a - b - c + d;
-    float k5 = a - c - e + g;
-    float k6 = a - b - e + f;
-    float k7 = -a + b + c - d + e - f - g + h;
-
-    float result = k0 + k1 * u.x + k2 * u.y + k3 * u.z + k4 * u.x * u.y + k5 * u.y * u.z + k6 * u.z * u.x + k7 * u.x * u.y * u.z;
-    auto result_nrm = du * (glm::vec3(k1, k2, k3) + glm::vec3(u.y, u.z, u.x) * glm::vec3(k4, k5, k6) + glm::vec3(u.z, u.x, u.y) * glm::vec3(k6, k4, k5) + k7 * glm::vec3(u.y, u.z, u.x) * glm::vec3(u.z, u.x, u.y));
-    return DensityNrm((result * 2.0f - 1.0f) * amp, result_nrm * amp * scale * 2.0f);
-}
-
-glm::vec2 minmax_noise_in_region(glm::vec3 region_center, glm::vec3 region_size, float scale, float amp) {
-    // Use the lipschitz constant to compute min/max est. For the cubic interpolation
-    // function of this noise function, said constant is 2.0 * 1.5 * scale * amp.
-    //  - 2.0 * amp comes from the re-scaling of the range between -amp and amp (line 112-113)
-    //  - scale comes from the re-scaling of the domain on the same line (p * scale)
-    //  - 1.5 comes from the maximum abs value of the first derivative of the noise
-    //    interpolation function (between 0 and 1): d/dx of 3x^2-2x^3 = 6x-6x^2.
-    float lipschitz = 2.0f * 1.5f * scale * amp;
-    float noise_val = noise(region_center, scale, amp).val;
-    float max_dist = length(region_size);
-    return glm::vec2(std::max(noise_val - max_dist * lipschitz, -amp), std::min(noise_val + max_dist * lipschitz, amp));
-}
-
-DensityNrm gradient_z(glm::vec3 p, float slope, float offset) {
-    return DensityNrm((p.z - offset) * slope, glm::vec3(0, 0, slope));
-}
-glm::vec2 minmax_gradient_z(glm::vec3 p0, glm::vec3 p1, float slope, float offset) {
-    auto result = glm::vec2((p0.z - offset) * slope, (p1.z - offset) * slope);
-    return glm::vec2(std::min(result[0], result[1]), std::max(result[0], result[1]));
-}
-
-constexpr int32_t CHUNK_NX = 16;
-constexpr int32_t CHUNK_NY = 16;
+constexpr int32_t CHUNK_NX = 8;
+constexpr int32_t CHUNK_NY = 8;
 constexpr int32_t CHUNK_NZ = 4;
 constexpr int32_t CHUNK_LEVELS = 1;
 constexpr mat3 m = mat3(0.00, 0.80, 0.60,
@@ -159,83 +99,8 @@ constexpr mat3 m = mat3(0.00, 0.80, 0.60,
                         -0.60, -0.48, 0.64);
 const mat3 mi = inverse(m);
 
-const float NOISE_PERSISTENCE = 0.20f;
-const float NOISE_LACUNARITY = 4.0f;
-const float NOISE_SCALE = 0.05f;
-const float NOISE_AMPLITUDE = 20.0f;
-const uint32_t NOISE_OCTAVES = 5;
-
 auto get_brick_metadata(std::unique_ptr<Chunk> &chunk, auto brick_index) -> BrickMetadata & {
     return *reinterpret_cast<BrickMetadata *>(&chunk->voxel_brick_bitmasks[brick_index].metadata);
-}
-
-auto voxel_value(glm::vec3 pos) {
-    auto result = 0.0f;
-    // pos = fract(pos / 4.0f) * 4.0f - 2.0f;
-    // result += length(pos) - 1.9f;
-    result += gradient_z(pos, -1, 24.0f).val;
-    {
-        float noise_persistence = NOISE_PERSISTENCE;
-        float noise_lacunarity = NOISE_LACUNARITY;
-        float noise_scale = NOISE_SCALE;
-        float noise_amplitude = NOISE_AMPLITUDE;
-        for (uint32_t i = 0; i < NOISE_OCTAVES; ++i) {
-            // pos = m * pos;
-            result += noise(pos, noise_scale, noise_amplitude).val;
-            noise_scale *= noise_lacunarity;
-            noise_amplitude *= noise_persistence;
-        }
-    }
-    return result;
-}
-auto voxel_nrm(glm::vec3 pos) {
-    auto result = DensityNrm(0, glm::vec3(0));
-    // pos = fract(pos / 4.0f) * 4.0f - 2.0f;
-    // result.val += length(pos) - 2.0f;
-    // result.nrm += normalize(pos);
-
-    {
-        auto dn = gradient_z(pos, -1, 24.0f);
-        result.val += dn.val;
-        result.nrm += dn.nrm;
-    }
-    {
-        float noise_persistence = NOISE_PERSISTENCE;
-        float noise_lacunarity = NOISE_LACUNARITY;
-        float noise_scale = NOISE_SCALE;
-        float noise_amplitude = NOISE_AMPLITUDE;
-        auto inv = mat3(1, 0, 0, 0, 1, 0, 0, 0, 1);
-        for (uint32_t i = 0; i < NOISE_OCTAVES; ++i) {
-            // pos = m * pos;
-            // inv = mi * inv;
-            auto dn = noise(pos, noise_scale, noise_amplitude);
-            result.val += dn.val;
-            result.nrm += inv * dn.nrm;
-            noise_scale *= noise_lacunarity;
-            noise_amplitude *= noise_persistence;
-        }
-    }
-    result.nrm = normalize(result.nrm);
-    return result;
-}
-auto voxel_minmax_value(glm::vec3 p0, glm::vec3 p1) {
-    auto result = glm::vec2(0);
-    // result += glm::vec2(-1, 1);
-    result += minmax_gradient_z(p0, p1, -1, 24.0f);
-    {
-        float noise_persistence = NOISE_PERSISTENCE;
-        float noise_lacunarity = NOISE_LACUNARITY;
-        float noise_scale = NOISE_SCALE;
-        float noise_amplitude = NOISE_AMPLITUDE;
-        for (uint32_t i = 0; i < NOISE_OCTAVES; ++i) {
-            // p0 = m * p0;
-            // p1 = m * p1;
-            result += minmax_noise_in_region((p0 + p1) * 0.5f, abs(p1 - p0), noise_scale, noise_amplitude);
-            noise_scale *= noise_lacunarity;
-            noise_amplitude *= noise_persistence;
-        }
-    }
-    return result;
 }
 
 using Clock = std::chrono::steady_clock;
@@ -252,10 +117,10 @@ auto generate_chunk(voxel_world::VoxelWorld self, int32_t chunk_xi, int32_t chun
             (float((chunk_zi * VOXEL_CHUNK_SIZE) << level) + 0.5f) / 16.0f,
         };
         auto p1 = p0 + BRICK_CHUNK_SIZE * VOXEL_BRICK_SIZE / 16.0f;
-        auto minmax = voxel_minmax_value(p0, p1);
-        if (minmax[0] >= 0.0f || minmax[1] < 0.0f) {
+        auto minmax = voxel_minmax_value_cpp(RANDOM_VALUES.data(), p0.x, p0.y, p0.z, p1.x, p1.y, p1.z);
+        if (minmax.min >= 0.0f || minmax.max < 0.0f) {
             // uniform
-            if (minmax[0] < 0.0f) {
+            if (minmax.min < 0.0f) {
                 // inside
             } else {
                 // outside
@@ -290,10 +155,10 @@ auto generate_chunk(voxel_world::VoxelWorld self, int32_t chunk_xi, int32_t chun
                         (float((brick_zi * VOXEL_BRICK_SIZE + chunk_zi * VOXEL_CHUNK_SIZE) << level) + 0.5f) / 16.0f,
                     };
                     auto p1 = p0 + VOXEL_BRICK_SIZE / 16.0f;
-                    auto minmax = voxel_minmax_value(p0, p1);
-                    if (minmax[0] >= 0.0f || minmax[1] < 0.0f) {
+                    auto minmax = voxel_minmax_value_cpp(RANDOM_VALUES.data(), p0.x, p0.y, p0.z, p1.x, p1.y, p1.z);
+                    if (minmax.min >= 0.0f || minmax.max < 0.0f) {
                         // uniform
-                        if (minmax[0] < 0.0f) {
+                        if (minmax.min < 0.0f) {
                             // inside
                             brick_metadata.has_voxel = true;
                             for (auto &word : bitmask.bits) {
@@ -313,45 +178,7 @@ auto generate_chunk(voxel_world::VoxelWorld self, int32_t chunk_xi, int32_t chun
                 }
 
                 self->generate_chunk1s_total_n += 1;
-#if USE_ISPC
-                ispc::generate_bitmask(brick_xi, brick_yi, brick_zi, chunk_xi, chunk_yi, chunk_zi, level, bitmask.bits, &bitmask.metadata, RANDOM_VALUES.data());
-#else
-                for (uint32_t zi = 0; zi < VOXEL_BRICK_SIZE; ++zi) {
-                    for (uint32_t yi = 0; yi < VOXEL_BRICK_SIZE; ++yi) {
-                        for (uint32_t xi = 0; xi < VOXEL_BRICK_SIZE; ++xi) {
-                            float x = (float((xi + brick_xi * VOXEL_BRICK_SIZE + chunk_xi * VOXEL_CHUNK_SIZE) << level) + 0.5f) / 16.0f;
-                            float y = (float((yi + brick_yi * VOXEL_BRICK_SIZE + chunk_yi * VOXEL_CHUNK_SIZE) << level) + 0.5f) / 16.0f;
-                            float z = (float((zi + brick_zi * VOXEL_BRICK_SIZE + chunk_zi * VOXEL_CHUNK_SIZE) << level) + 0.5f) / 16.0f;
-
-                            uint32_t value = voxel_value(glm::vec3(x, y, z)) < 0.0f ? 1 : 0;
-
-                            if (value != 0) {
-                                brick_metadata.has_voxel = true;
-                            }
-                            if (xi == 0 && value == 0) {
-                                brick_metadata.has_air_nx = true;
-                            } else if (xi == (VOXEL_BRICK_SIZE - 1) && value == 0) {
-                                brick_metadata.has_air_px = true;
-                            }
-                            if (yi == 0 && value == 0) {
-                                brick_metadata.has_air_ny = true;
-                            } else if (yi == (VOXEL_BRICK_SIZE - 1) && value == 0) {
-                                brick_metadata.has_air_py = true;
-                            }
-                            if (zi == 0 && value == 0) {
-                                brick_metadata.has_air_nz = true;
-                            } else if (zi == (VOXEL_BRICK_SIZE - 1) && value == 0) {
-                                brick_metadata.has_air_pz = true;
-                            }
-
-                            uint32_t voxel_index = xi + yi * VOXEL_BRICK_SIZE + zi * VOXEL_BRICK_SIZE * VOXEL_BRICK_SIZE;
-                            uint32_t voxel_word_index = voxel_index / 32;
-                            uint32_t voxel_in_word_index = voxel_index % 32;
-                            bitmask.bits[voxel_word_index] |= uint32_t(value) << voxel_in_word_index;
-                        }
-                    }
-                }
-#endif
+                generate_bitmask(brick_xi, brick_yi, brick_zi, chunk_xi, chunk_yi, chunk_zi, level, bitmask.bits, &bitmask.metadata, RANDOM_VALUES.data());
             }
         }
     }
@@ -503,28 +330,8 @@ auto generate_chunk2(voxel_world::VoxelWorld self, int32_t chunk_xi, int32_t chu
                     attrib_brick = std::make_unique<VoxelAttribBrick>();
                     self->generate_chunk2s_total_n += 1;
 
-#if USE_ISPC
-                    ispc::generate_attributes(brick_xi, brick_yi, brick_zi, chunk_xi, chunk_yi, chunk_zi, level, (uint32_t *)attrib_brick->packed_voxels, RANDOM_VALUES.data());
-#else
-                    for (uint32_t zi = 0; zi < VOXEL_BRICK_SIZE; ++zi) {
-                        for (uint32_t yi = 0; yi < VOXEL_BRICK_SIZE; ++yi) {
-                            for (uint32_t xi = 0; xi < VOXEL_BRICK_SIZE; ++xi) {
-                                uint32_t voxel_index = xi + yi * VOXEL_BRICK_SIZE + zi * VOXEL_BRICK_SIZE * VOXEL_BRICK_SIZE;
-                                float x = (float((xi + brick_xi * VOXEL_BRICK_SIZE + chunk_xi * VOXEL_CHUNK_SIZE) << level) + 0.5f) / 16.0f;
-                                float y = (float((yi + brick_yi * VOXEL_BRICK_SIZE + chunk_yi * VOXEL_CHUNK_SIZE) << level) + 0.5f) / 16.0f;
-                                float z = (float((zi + brick_zi * VOXEL_BRICK_SIZE + chunk_zi * VOXEL_CHUNK_SIZE) << level) + 0.5f) / 16.0f;
-                                auto dn = voxel_nrm(glm::vec3(x, y, z));
-                                auto col = glm::vec3(0.0f);
-                                if (dot(dn.nrm, vec3(0, 0, -1)) > 0.5f && dn.val > -0.5f) {
-                                    col = glm::vec3(12, 163, 7) / 255.0f;
-                                } else {
-                                    col = glm::vec3(112, 62, 30) / 255.0f;
-                                }
-                                attrib_brick->packed_voxels[voxel_index] = pack_voxel(Voxel(std::bit_cast<daxa_f32vec3>(col), std::bit_cast<daxa_f32vec3>(dn.nrm)));
-                            }
-                        }
-                    }
-#endif
+                    generate_attributes(brick_xi, brick_yi, brick_zi, chunk_xi, chunk_yi, chunk_zi, level, (uint32_t *)attrib_brick->packed_voxels, RANDOM_VALUES.data());
+
                     auto get_brick_bit = [](VoxelBrickBitmask const &bitmask, uint32_t xi, uint32_t yi, uint32_t zi) {
                         uint32_t voxel_index = xi + yi * VOXEL_BRICK_SIZE + zi * VOXEL_BRICK_SIZE * VOXEL_BRICK_SIZE;
                         uint32_t voxel_word_index = voxel_index / 32;
@@ -688,6 +495,8 @@ void voxel_world::init(VoxelWorld &self) {
 
     std::cout << "1: " << generate_chunk1s_main_total / 1'000'000 << " s | " << generate_chunk1s_main_total / self->generate_chunk1s_total_n << " us/brick (" << self->generate_chunk1s_total_n << " total bricks) " << generate_chunk1s_total / self->generate_chunk1s_total_n << " us/brick per thread" << std::endl;
     std::cout << "2: " << generate_chunk2s_main_total / 1'000'000 << " s | " << generate_chunk2s_main_total / self->generate_chunk2s_total_n << " us/brick (" << self->generate_chunk2s_total_n << " total bricks) " << generate_chunk2s_total / self->generate_chunk2s_total_n << " us/brick per thread" << std::endl;
+
+    ISPCPrintInstrument();
 }
 void voxel_world::deinit(VoxelWorld self) {
     delete self;

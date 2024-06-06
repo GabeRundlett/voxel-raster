@@ -1,10 +1,114 @@
-#include "defs.inl"
+#pragma once
 
+#include "../defs.inl"
+
+#if defined(__cplusplus)
+#define uniform
+#include <glm/glm.hpp>
+using namespace glm;
+#else
 typedef float<2> vec2;
 typedef float<3> vec3;
 typedef int<3> ivec3;
 typedef uint<3> uvec3;
 typedef uint<2> uvec2;
+
+struct mat3 {
+    float data[3 * 3];
+};
+
+static inline uniform float get(uniform mat3 &m, uniform int i, uniform int j) {
+    return m.data[i * 3 + j];
+}
+
+static inline void set(uniform mat3 &m, uniform int i, uniform int j, uniform float x) {
+    m.data[i * 3 + j] = x;
+}
+
+static inline uniform mat3 operator*(uniform mat3 m1, uniform mat3 m2) {
+    uniform mat3 result;
+    const uniform float SrcA00 = get(m1, 0, 0);
+    const uniform float SrcA01 = get(m1, 0, 1);
+    const uniform float SrcA02 = get(m1, 0, 2);
+    const uniform float SrcA10 = get(m1, 1, 0);
+    const uniform float SrcA11 = get(m1, 1, 1);
+    const uniform float SrcA12 = get(m1, 1, 2);
+    const uniform float SrcA20 = get(m1, 2, 0);
+    const uniform float SrcA21 = get(m1, 2, 1);
+    const uniform float SrcA22 = get(m1, 2, 2);
+
+    const uniform float SrcB00 = get(m2, 0, 0);
+    const uniform float SrcB01 = get(m2, 0, 1);
+    const uniform float SrcB02 = get(m2, 0, 2);
+    const uniform float SrcB10 = get(m2, 1, 0);
+    const uniform float SrcB11 = get(m2, 1, 1);
+    const uniform float SrcB12 = get(m2, 1, 2);
+    const uniform float SrcB20 = get(m2, 2, 0);
+    const uniform float SrcB21 = get(m2, 2, 1);
+    const uniform float SrcB22 = get(m2, 2, 2);
+
+    set(result, 0, 0, SrcA00 * SrcB00 + SrcA10 * SrcB01 + SrcA20 * SrcB02);
+    set(result, 0, 1, SrcA01 * SrcB00 + SrcA11 * SrcB01 + SrcA21 * SrcB02);
+    set(result, 0, 2, SrcA02 * SrcB00 + SrcA12 * SrcB01 + SrcA22 * SrcB02);
+    set(result, 1, 0, SrcA00 * SrcB10 + SrcA10 * SrcB11 + SrcA20 * SrcB12);
+    set(result, 1, 1, SrcA01 * SrcB10 + SrcA11 * SrcB11 + SrcA21 * SrcB12);
+    set(result, 1, 2, SrcA02 * SrcB10 + SrcA12 * SrcB11 + SrcA22 * SrcB12);
+    set(result, 2, 0, SrcA00 * SrcB20 + SrcA10 * SrcB21 + SrcA20 * SrcB22);
+    set(result, 2, 1, SrcA01 * SrcB20 + SrcA11 * SrcB21 + SrcA21 * SrcB22);
+    set(result, 2, 2, SrcA02 * SrcB20 + SrcA12 * SrcB21 + SrcA22 * SrcB22);
+
+    return result;
+}
+
+static inline vec3 operator*(uniform mat3 m, vec3 v) {
+    vec3 result;
+    result.x = get(m, 0, 0) * v.x + get(m, 1, 0) * v.y + get(m, 2, 0) * v.z;
+    result.y = get(m, 0, 1) * v.x + get(m, 1, 1) * v.y + get(m, 2, 1) * v.z;
+    result.z = get(m, 0, 2) * v.x + get(m, 1, 2) * v.y + get(m, 2, 2) * v.z;
+    return result;
+}
+static inline vec3 floor(vec3 v) {
+    vec3 result;
+    result.x = floor(v.x);
+    result.y = floor(v.y);
+    result.z = floor(v.z);
+    return result;
+}
+
+static inline vec2 round(vec2 v) {
+    vec2 result;
+    result.x = round(v.x);
+    result.y = round(v.y);
+    return result;
+}
+
+static inline vec3 fract(vec3 v) {
+    vec3 result;
+    result.x = v.x - floor(v.x);
+    result.y = v.y - floor(v.y);
+    result.z = v.z - floor(v.z);
+    return result;
+}
+
+static inline vec3 abs(vec3 v) {
+    vec3 result;
+    result.x = abs(v.x);
+    result.y = abs(v.y);
+    result.z = abs(v.z);
+    return result;
+}
+
+static inline float length(vec3 v) {
+    return sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+}
+static inline vec3 normalize(vec3 v) {
+    return v / length(v);
+}
+static inline float dot(vec3 a, vec3 b) {
+    return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+#endif
+
 #define RandomCtx const uint8 *uniform
 
 struct MinMax {
@@ -63,52 +167,11 @@ static inline float fast_random(RandomCtx random_ctx, ivec3 p) {
     // return result - floor(result);
 }
 
-static inline vec3 floor(vec3 v) {
-    vec3 result;
-    result.x = floor(v.x);
-    result.y = floor(v.y);
-    result.z = floor(v.z);
-    return result;
-}
-
-static inline vec2 round(vec2 v) {
-    vec2 result;
-    result.x = round(v.x);
-    result.y = round(v.y);
-    return result;
-}
-
-static inline vec3 fract(vec3 v) {
-    vec3 result;
-    result.x = v.x - floor(v.x);
-    result.y = v.y - floor(v.y);
-    result.z = v.z - floor(v.z);
-    return result;
-}
-
-static inline vec3 abs(vec3 v) {
-    vec3 result;
-    result.x = abs(v.x);
-    result.y = abs(v.y);
-    result.z = abs(v.z);
-    return result;
-}
-
-static inline float length(vec3 v) {
-    return sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
-}
-static inline vec3 normalize(vec3 v) {
-    return v / length(v);
-}
-static inline float dot(vec3 a, vec3 b) {
-    return a.x * b.x + a.y * b.y + a.z * b.z;
-}
-
-float msign(float v) {
+static float msign(float v) {
     return (v >= 0.0f) ? 1.0f : -1.0f;
 }
 
-vec2 map_octahedral(vec3 nor) {
+static vec2 map_octahedral(vec3 nor) {
     const float fac = 1.0f / (abs(nor.x) + abs(nor.y) + abs(nor.z));
     nor.x *= fac;
     nor.y *= fac;
@@ -120,7 +183,7 @@ vec2 map_octahedral(vec3 nor) {
     vec2 result = {nor.x, nor.y};
     return result;
 }
-vec3 unmap_octahedral(vec2 v) {
+static vec3 unmap_octahedral(vec2 v) {
     vec3 nor = {v.x, v.y, 1.0f - abs(v.x) - abs(v.y)}; // Rune Stubbe's version,
     float t = max(-nor.z, 0.0f);                       // much faster than original
     nor.x += (nor.x > 0.0f) ? -t : t;                  // implementation of this
@@ -128,18 +191,18 @@ vec3 unmap_octahedral(vec2 v) {
     return normalize(nor);
 }
 
-float SNORM_SCALE(uint N) {
+static float SNORM_SCALE(uint N) {
     float result = 1 << (N - 1u);
     return result - 0.5f;
 }
-float UNORM_SCALE(uint N) {
+static float UNORM_SCALE(uint N) {
     float result = 1 << N;
     return result - 1.0f;
 }
-uint PACK_UNORM(float x, uint N) {
+static uint PACK_UNORM(float x, uint N) {
     return round(x * UNORM_SCALE(N));
 }
-float UNPACK_UNORM(uint x, uint N) {
+static float UNPACK_UNORM(uint x, uint N) {
     float result = (x) & ((1u << (N)) - 1u);
     return result / UNORM_SCALE(N);
 }
@@ -156,14 +219,14 @@ float UNPACK_UNORM(uint x, uint N) {
 // #define PACK_UNORM(x, N) (round((x) * UNORM_SCALE((N))))
 // #define UNPACK_UNORM(x, N) (((x) & ((1u << (N)) - 1u)) / UNORM_SCALE((N)))
 
-uint pack_snorm_2x08(vec2 v) { PACK_SNORM_X2(v, 8); }
-vec2 unpack_snorm_2x08(uint d) { UNPACK_SNORM_X2(d, 8); }
+static uint pack_snorm_2x08(vec2 v) { PACK_SNORM_X2(v, 8); }
+static vec2 unpack_snorm_2x08(uint d) { UNPACK_SNORM_X2(d, 8); }
 
-uint pack_octahedral_16(vec3 nor) { return pack_snorm_2x08(map_octahedral(nor)); }
-vec3 unpack_octahedral_16(uint data) { return unmap_octahedral(unpack_snorm_2x08(data)); }
+static uint pack_octahedral_16(vec3 nor) { return pack_snorm_2x08(map_octahedral(nor)); }
+static vec3 unpack_octahedral_16(uint data) { return unmap_octahedral(unpack_snorm_2x08(data)); }
 
-uint pack_rgb565(vec3 col) { return (PACK_UNORM(col.r, 5) << 0) | (PACK_UNORM(col.g, 6) << 5) | (PACK_UNORM(col.b, 5) << 11); }
-vec3 unpack_rgb565(uint data) {
+static uint pack_rgb565(vec3 col) { return (PACK_UNORM(col.r, 5) << 0) | (PACK_UNORM(col.g, 6) << 5) | (PACK_UNORM(col.b, 5) << 11); }
+static vec3 unpack_rgb565(uint data) {
     vec3 result = {UNPACK_UNORM(data >> 0, 5), UNPACK_UNORM(data >> 5, 6), UNPACK_UNORM(data >> 11, 5)};
     return result;
 }
@@ -175,18 +238,17 @@ struct Voxel {
 struct PackedVoxel {
     uint data;
 };
-PackedVoxel pack_voxel(Voxel v) {
+static PackedVoxel pack_voxel(Voxel v) {
     PackedVoxel result;
     result.data = pack_rgb565(v.col) | (pack_octahedral_16(v.nrm) << 16);
     return result;
 }
-Voxel unpack_voxel(PackedVoxel v) {
+static Voxel unpack_voxel(PackedVoxel v) {
     Voxel result;
     result.col = unpack_rgb565(v.data >> 0);
     result.nrm = unpack_octahedral_16(v.data >> 16);
     return result;
 }
-
 
 static inline DensityNrm noise(RandomCtx random_ctx, vec3 x, float scale, float amp) {
     x = x * scale;
@@ -282,44 +344,42 @@ const uniform float NOISE_SCALE = 0.05f;
 const uniform float NOISE_AMPLITUDE = 20.0f;
 const uniform uint NOISE_OCTAVES = 5;
 
-static inline float voxel_value(RandomCtx random_ctx, vec3 pos) {
-    DensityNrm result;
-    // pos = fract(pos / 4.0f) * 4.0f - 2.0f;
-    // result += length(pos) - 1.9f;
-    result = gradient_z(pos, -1, 24.0f);
-    {
-        float noise_persistence = NOISE_PERSISTENCE;
-        float noise_lacunarity = NOISE_LACUNARITY;
-        float noise_scale = NOISE_SCALE;
-        float noise_amplitude = NOISE_AMPLITUDE;
-        for (uint i = 0; i < NOISE_OCTAVES; ++i) {
-            // pos = m * pos;
-            result = result + noise(random_ctx, pos, noise_scale, noise_amplitude);
-            noise_scale *= noise_lacunarity;
-            noise_amplitude *= noise_persistence;
-        }
+#if defined(__cplusplus)
+#define MAT3_INIT(a, b, c, d, e, f, g, h, i) \
+    { a, b, c, d, e, f, g, h, i }
+#else
+#define MAT3_INIT(a, b, c, d, e, f, g, h, i) \
+    {                                        \
+        { a, b, c, d, e, f, g, h, i }        \
     }
-    return result.val;
-}
-static inline DensityNrm voxel_nrm(RandomCtx random_ctx, vec3 pos) {
+#endif
+
+const uniform mat3 m = MAT3_INIT(+0.0f, +0.80f, +0.60f,
+                                 -0.8f, +0.36f, -0.48f,
+                                 -0.6f, -0.48f, +0.64f);
+const uniform mat3 mi = MAT3_INIT(+0.0f, -0.80f, -0.60f,
+                                  +0.8f, +0.36f, -0.48f,
+                                  +0.6f, -0.48f, +0.64f);
+
+static inline DensityNrm voxel_value(RandomCtx random_ctx, vec3 pos) {
     DensityNrm result;
     // pos = fract(pos / 4.0f) * 4.0f - 2.0f;
-    // result.val += length(pos) - 2.0f;
-    // result.nrm += normalize(pos);
+    // result.val = length(pos) - 2.0f;
+    // result.nrm = normalize(pos);
+    uniform mat3 inv = MAT3_INIT(1, 0, 0, 0, 1, 0, 0, 0, 1);
 
     result = gradient_z(pos, -1, 24.0f);
     {
-        float noise_persistence = NOISE_PERSISTENCE;
-        float noise_lacunarity = NOISE_LACUNARITY;
-        float noise_scale = NOISE_SCALE;
-        float noise_amplitude = NOISE_AMPLITUDE;
-        // auto inv = mat3(1, 0, 0, 0, 1, 0, 0, 0, 1);
-        for (uint i = 0; i < NOISE_OCTAVES; ++i) {
-            // pos = m * pos;
-            // inv = mi * inv;
+        uniform float noise_persistence = NOISE_PERSISTENCE;
+        uniform float noise_lacunarity = NOISE_LACUNARITY;
+        uniform float noise_scale = NOISE_SCALE;
+        uniform float noise_amplitude = NOISE_AMPLITUDE;
+        for (uniform uint i = 0; i < NOISE_OCTAVES; ++i) {
+            pos = m * pos;
+            inv = mi * inv;
             DensityNrm dn = noise(random_ctx, pos, noise_scale, noise_amplitude);
             result.val += dn.val;
-            result.nrm += /* inv * */ dn.nrm;
+            result.nrm += inv * dn.nrm;
             noise_scale *= noise_lacunarity;
             noise_amplitude *= noise_persistence;
         }
@@ -329,135 +389,21 @@ static inline DensityNrm voxel_nrm(RandomCtx random_ctx, vec3 pos) {
 }
 static inline MinMax voxel_minmax_value(RandomCtx random_ctx, vec3 p0, vec3 p1) {
     MinMax result = {0, 0};
-    // result += glm::vec2(-1, 1);
+    // MinMax sphere_minmax = {-1, 1};
+    // result = result + sphere_minmax;
     result = result + minmax_gradient_z(p0, p1, -1, 24.0f);
     {
-        float noise_persistence = NOISE_PERSISTENCE;
-        float noise_lacunarity = NOISE_LACUNARITY;
-        float noise_scale = NOISE_SCALE;
-        float noise_amplitude = NOISE_AMPLITUDE;
-        for (uint i = 0; i < NOISE_OCTAVES; ++i) {
-            // p0 = m * p0;
-            // p1 = m * p1;
+        uniform float noise_persistence = NOISE_PERSISTENCE;
+        uniform float noise_lacunarity = NOISE_LACUNARITY;
+        uniform float noise_scale = NOISE_SCALE;
+        uniform float noise_amplitude = NOISE_AMPLITUDE;
+        for (uniform uint i = 0; i < NOISE_OCTAVES; ++i) {
+            p0 = m * p0;
+            p1 = m * p1;
             result = result + minmax_noise_in_region(random_ctx, (p0 + p1) * 0.5f, abs(p1 - p0), noise_scale, noise_amplitude);
             noise_scale *= noise_lacunarity;
             noise_amplitude *= noise_persistence;
         }
     }
     return result;
-}
-
-export void generate_bitmask(
-    uniform int brick_xi, uniform int brick_yi, uniform int brick_zi,
-    uniform int chunk_xi, uniform int chunk_yi, uniform int chunk_zi,
-    uniform int level_i, uniform uint bits[], uint *uniform metadata,
-    RandomCtx random_ctx) {
-
-    bool has_voxel = false;
-    bool has_air_nx = false;
-    bool has_air_px = false;
-    bool has_air_ny = false;
-    bool has_air_py = false;
-    bool has_air_nz = false;
-    bool has_air_pz = false;
-
-    foreach (word_i = 0 ... (VOXEL_BRICK_SIZE * VOXEL_BRICK_SIZE * VOXEL_BRICK_SIZE / 32)) {
-        uint word_result = 0;
-        for (uniform uint in_word_i = 0; in_word_i < 32; ++in_word_i) {
-            uint i = word_i * 32 + in_word_i;
-            uint xi = i & ((1 << VOXEL_BRICK_SIZE_LOG2) - 1);
-            uint yi = (i >> VOXEL_BRICK_SIZE_LOG2) & ((1 << VOXEL_BRICK_SIZE_LOG2) - 1);
-            uint zi = (i >> (VOXEL_BRICK_SIZE_LOG2 * 2)) & ((1 << VOXEL_BRICK_SIZE_LOG2) - 1);
-
-            vec3 pos;
-            pos.x = (xi + brick_xi * VOXEL_BRICK_SIZE + chunk_xi * VOXEL_CHUNK_SIZE) << level_i;
-            pos.y = (yi + brick_yi * VOXEL_BRICK_SIZE + chunk_yi * VOXEL_CHUNK_SIZE) << level_i;
-            pos.z = (zi + brick_zi * VOXEL_BRICK_SIZE + chunk_zi * VOXEL_CHUNK_SIZE) << level_i;
-
-            pos.x = (pos.x + 0.5f) / 16.0f;
-            pos.y = (pos.y + 0.5f) / 16.0f;
-            pos.z = (pos.z + 0.5f) / 16.0f;
-
-            uint value = voxel_value(random_ctx, pos) < 0.0f;
-            word_result |= value << in_word_i;
-
-            has_voxel = has_voxel || (value != 0);
-            has_air_nx = has_air_nx || (xi == 0 && value == 0);
-            has_air_px = has_air_px || (xi == (VOXEL_BRICK_SIZE - 1) && value == 0);
-            has_air_ny = has_air_ny || (yi == 0 && value == 0);
-            has_air_py = has_air_py || (yi == (VOXEL_BRICK_SIZE - 1) && value == 0);
-            has_air_nz = has_air_nz || (zi == 0 && value == 0);
-            has_air_pz = has_air_pz || (zi == (VOXEL_BRICK_SIZE - 1) && value == 0);
-        }
-        bits[word_i] = word_result;
-    }
-
-    if (packmask(has_voxel) != 0) {
-        *metadata |= (1 << 12);
-    }
-    if (packmask(has_air_nx) != 0) {
-        *metadata |= (1 << 6);
-    }
-    if (packmask(has_air_px) != 0) {
-        *metadata |= (1 << 9);
-    }
-    if (packmask(has_air_ny) != 0) {
-        *metadata |= (1 << 7);
-    }
-    if (packmask(has_air_py) != 0) {
-        *metadata |= (1 << 10);
-    }
-    if (packmask(has_air_nz) != 0) {
-        *metadata |= (1 << 8);
-    }
-    if (packmask(has_air_pz) != 0) {
-        *metadata |= (1 << 11);
-    }
-
-    // *metadata = ((has_voxel_bits != 0) << 12) |
-    //     ((has_air_nx_bits != 0) << 6) |
-    //     ((has_air_px_bits != 0) << 9) |
-    //     ((has_air_ny_bits != 0) << 7) |
-    //     ((has_air_py_bits != 0) << 10) |
-    //     ((has_air_nz_bits != 0) << 8) |
-    //     ((has_air_pz_bits != 0) << 11);
-}
-
-export void generate_attributes(
-    uniform int brick_xi, uniform int brick_yi, uniform int brick_zi,
-    uniform int chunk_xi, uniform int chunk_yi, uniform int chunk_zi,
-    uniform int level_i, uniform uint packed_voxels[],
-    RandomCtx random_ctx) {
-    const uniform vec3 UP = {0, 0, -1};
-    const uniform vec3 GRASS_COL = {12, 163, 7};
-    const uniform vec3 DIRT_COL = {112, 62, 30};
-
-    foreach (word_i = 0 ... (VOXEL_BRICK_SIZE * VOXEL_BRICK_SIZE * VOXEL_BRICK_SIZE / 32)) {
-        for (uniform uint in_word_i = 0; in_word_i < 32; ++in_word_i) {
-            uint voxel_index = word_i * 32 + in_word_i;
-            uint xi = voxel_index & ((1 << VOXEL_BRICK_SIZE_LOG2) - 1);
-            uint yi = (voxel_index >> VOXEL_BRICK_SIZE_LOG2) & ((1 << VOXEL_BRICK_SIZE_LOG2) - 1);
-            uint zi = (voxel_index >> (VOXEL_BRICK_SIZE_LOG2 * 2)) & ((1 << VOXEL_BRICK_SIZE_LOG2) - 1);
-
-            vec3 pos;
-            pos.x = (xi + brick_xi * VOXEL_BRICK_SIZE + chunk_xi * VOXEL_CHUNK_SIZE) << level_i;
-            pos.y = (yi + brick_yi * VOXEL_BRICK_SIZE + chunk_yi * VOXEL_CHUNK_SIZE) << level_i;
-            pos.z = (zi + brick_zi * VOXEL_BRICK_SIZE + chunk_zi * VOXEL_CHUNK_SIZE) << level_i;
-
-            pos.x = (pos.x + 0.5f) / 16.0f;
-            pos.y = (pos.y + 0.5f) / 16.0f;
-            pos.z = (pos.z + 0.5f) / 16.0f;
-
-            DensityNrm dn = voxel_nrm(random_ctx, pos);
-            Voxel voxel;
-            if (dot(dn.nrm, UP) > 0.5f && dn.val > -2.5f) {
-                voxel.col = GRASS_COL / 255.0f;
-            } else {
-                voxel.col = DIRT_COL / 255.0f;
-            }
-            voxel.nrm = dn.nrm;
-            PackedVoxel packed_voxel = pack_voxel(voxel);
-            packed_voxels[voxel_index] = packed_voxel.data;
-        }
-    }
 }
