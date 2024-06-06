@@ -2,6 +2,7 @@
 #include "voxels/pack_unpack.inl"
 #include "voxels/voxel_mesh.inl"
 
+#include <chrono>
 #include <glm/common.hpp>
 #include <glm/glm.hpp>
 
@@ -10,11 +11,18 @@
 #include <gvox/containers/raw.h>
 
 #include <renderer/renderer.hpp>
+#include <utilities/thread_pool.hpp>
 
 #include <fstream>
 #include <array>
 #include <vector>
 #include <thread>
+
+#define USE_ISPC 1
+
+#if USE_ISPC
+#include <generation_ispc.h>
+#endif
 
 struct BrickMetadata {
     uint32_t exposed_nx : 1 {};
@@ -58,6 +66,12 @@ struct voxel_world::State {
 
     std::thread test_chunk_thread;
     bool launch_update;
+
+    std::atomic_uint64_t generate_chunk1s_total;
+    std::atomic_uint64_t generate_chunk2s_total;
+
+    std::atomic_uint64_t generate_chunk1s_total_n;
+    std::atomic_uint64_t generate_chunk2s_total_n;
 };
 
 struct DensityNrm {
@@ -67,7 +81,6 @@ struct DensityNrm {
 
 #include <random>
 
-const auto RANDOM_BUFFER_SIZE = size_t{256};
 const auto RANDOM_SEED = 0;
 const auto RANDOM_VALUES = []() {
     auto result = std::vector<uint8_t>{};
@@ -137,8 +150,8 @@ glm::vec2 minmax_gradient_z(glm::vec3 p0, glm::vec3 p1, float slope, float offse
     return glm::vec2(std::min(result[0], result[1]), std::max(result[0], result[1]));
 }
 
-constexpr int32_t CHUNK_NX = 8;
-constexpr int32_t CHUNK_NY = 8;
+constexpr int32_t CHUNK_NX = 16;
+constexpr int32_t CHUNK_NY = 16;
 constexpr int32_t CHUNK_NZ = 4;
 constexpr int32_t CHUNK_LEVELS = 1;
 constexpr mat3 m = mat3(0.00, 0.80, 0.60,
@@ -150,6 +163,7 @@ const float NOISE_PERSISTENCE = 0.20f;
 const float NOISE_LACUNARITY = 4.0f;
 const float NOISE_SCALE = 0.05f;
 const float NOISE_AMPLITUDE = 20.0f;
+const uint32_t NOISE_OCTAVES = 5;
 
 auto get_brick_metadata(std::unique_ptr<Chunk> &chunk, auto brick_index) -> BrickMetadata & {
     return *reinterpret_cast<BrickMetadata *>(&chunk->voxel_brick_bitmasks[brick_index].metadata);
@@ -165,8 +179,8 @@ auto voxel_value(glm::vec3 pos) {
         float noise_lacunarity = NOISE_LACUNARITY;
         float noise_scale = NOISE_SCALE;
         float noise_amplitude = NOISE_AMPLITUDE;
-        for (uint32_t i = 0; i < 5; ++i) {
-            pos = m * pos;
+        for (uint32_t i = 0; i < NOISE_OCTAVES; ++i) {
+            // pos = m * pos;
             result += noise(pos, noise_scale, noise_amplitude).val;
             noise_scale *= noise_lacunarity;
             noise_amplitude *= noise_persistence;
@@ -191,9 +205,9 @@ auto voxel_nrm(glm::vec3 pos) {
         float noise_scale = NOISE_SCALE;
         float noise_amplitude = NOISE_AMPLITUDE;
         auto inv = mat3(1, 0, 0, 0, 1, 0, 0, 0, 1);
-        for (uint32_t i = 0; i < 5; ++i) {
-            pos = m * pos;
-            inv = mi * inv;
+        for (uint32_t i = 0; i < NOISE_OCTAVES; ++i) {
+            // pos = m * pos;
+            // inv = mi * inv;
             auto dn = noise(pos, noise_scale, noise_amplitude);
             result.val += dn.val;
             result.nrm += inv * dn.nrm;
@@ -213,9 +227,9 @@ auto voxel_minmax_value(glm::vec3 p0, glm::vec3 p1) {
         float noise_lacunarity = NOISE_LACUNARITY;
         float noise_scale = NOISE_SCALE;
         float noise_amplitude = NOISE_AMPLITUDE;
-        for (uint32_t i = 0; i < 5; ++i) {
-            p0 = m * p0;
-            p1 = m * p1;
+        for (uint32_t i = 0; i < NOISE_OCTAVES; ++i) {
+            // p0 = m * p0;
+            // p1 = m * p1;
             result += minmax_noise_in_region((p0 + p1) * 0.5f, abs(p1 - p0), noise_scale, noise_amplitude);
             noise_scale *= noise_lacunarity;
             noise_amplitude *= noise_persistence;
@@ -223,6 +237,8 @@ auto voxel_minmax_value(glm::vec3 p0, glm::vec3 p1) {
     }
     return result;
 }
+
+using Clock = std::chrono::steady_clock;
 
 auto generate_chunk(voxel_world::VoxelWorld self, int32_t chunk_xi, int32_t chunk_yi, int32_t chunk_zi, int32_t level) {
     if (level > 0 && chunk_xi < CHUNK_NX / 2 && chunk_yi < CHUNK_NY / 2 && chunk_zi < CHUNK_NZ / 2) {
@@ -252,6 +268,8 @@ auto generate_chunk(voxel_world::VoxelWorld self, int32_t chunk_xi, int32_t chun
     auto &chunk = self->chunks[chunk_index];
     chunk = std::make_unique<Chunk>();
     chunk->pos = {chunk_xi, chunk_yi, chunk_zi};
+
+    auto t0 = Clock::now();
 
     for (int32_t brick_zi = 0; brick_zi < BRICK_CHUNK_SIZE; ++brick_zi) {
         for (int32_t brick_yi = 0; brick_yi < BRICK_CHUNK_SIZE; ++brick_yi) {
@@ -294,6 +312,10 @@ auto generate_chunk(voxel_world::VoxelWorld self, int32_t chunk_xi, int32_t chun
                     }
                 }
 
+                self->generate_chunk1s_total_n += 1;
+#if USE_ISPC
+                ispc::generate_bitmask(brick_xi, brick_yi, brick_zi, chunk_xi, chunk_yi, chunk_zi, level, bitmask.bits, &bitmask.metadata, RANDOM_VALUES.data());
+#else
                 for (uint32_t zi = 0; zi < VOXEL_BRICK_SIZE; ++zi) {
                     for (uint32_t yi = 0; yi < VOXEL_BRICK_SIZE; ++yi) {
                         for (uint32_t xi = 0; xi < VOXEL_BRICK_SIZE; ++xi) {
@@ -329,9 +351,14 @@ auto generate_chunk(voxel_world::VoxelWorld self, int32_t chunk_xi, int32_t chun
                         }
                     }
                 }
+#endif
             }
         }
     }
+
+    auto t1 = Clock::now();
+
+    self->generate_chunk1s_total += (t1 - t0).count();
 }
 
 auto generate_chunk2(voxel_world::VoxelWorld self, int32_t chunk_xi, int32_t chunk_yi, int32_t chunk_zi, int32_t level, bool update = true) {
@@ -340,6 +367,8 @@ auto generate_chunk2(voxel_world::VoxelWorld self, int32_t chunk_xi, int32_t chu
     if (!chunk) {
         return;
     }
+
+    auto t0 = Clock::now();
 
     for (int32_t brick_zi = 0; brick_zi < BRICK_CHUNK_SIZE; ++brick_zi) {
         for (int32_t brick_yi = 0; brick_yi < BRICK_CHUNK_SIZE; ++brick_yi) {
@@ -472,7 +501,11 @@ auto generate_chunk2(voxel_world::VoxelWorld self, int32_t chunk_xi, int32_t chu
                     // generate surface brick data
                     auto &attrib_brick = chunk->voxel_brick_attribs[brick_index];
                     attrib_brick = std::make_unique<VoxelAttribBrick>();
+                    self->generate_chunk2s_total_n += 1;
 
+#if USE_ISPC
+                    ispc::generate_attributes(brick_xi, brick_yi, brick_zi, chunk_xi, chunk_yi, chunk_zi, level, (uint32_t *)attrib_brick->packed_voxels, RANDOM_VALUES.data());
+#else
                     for (uint32_t zi = 0; zi < VOXEL_BRICK_SIZE; ++zi) {
                         for (uint32_t yi = 0; yi < VOXEL_BRICK_SIZE; ++yi) {
                             for (uint32_t xi = 0; xi < VOXEL_BRICK_SIZE; ++xi) {
@@ -491,7 +524,7 @@ auto generate_chunk2(voxel_world::VoxelWorld self, int32_t chunk_xi, int32_t chu
                             }
                         }
                     }
-
+#endif
                     auto get_brick_bit = [](VoxelBrickBitmask const &bitmask, uint32_t xi, uint32_t yi, uint32_t zi) {
                         uint32_t voxel_index = xi + yi * VOXEL_BRICK_SIZE + zi * VOXEL_BRICK_SIZE * VOXEL_BRICK_SIZE;
                         uint32_t voxel_word_index = voxel_index / 32;
@@ -566,6 +599,9 @@ auto generate_chunk2(voxel_world::VoxelWorld self, int32_t chunk_xi, int32_t chu
         }
     }
 
+    auto t1 = Clock::now();
+    self->generate_chunk2s_total += (t1 - t0).count();
+
     if (update) {
         chunk->bricks_changed = true;
     }
@@ -575,36 +611,83 @@ void voxel_world::init(VoxelWorld &self) {
     self = new State{};
     self->prev_time = 0.0f;
 
-    std::vector<std::thread> threads;
-    threads.reserve(CHUNK_NX * CHUNK_NY * CHUNK_NZ * CHUNK_LEVELS);
+    std::vector<std::pair<thread_pool::Task, void *>> tasks;
+    tasks.reserve(CHUNK_NX * CHUNK_NY * CHUNK_NZ * CHUNK_LEVELS);
 
-    for (int32_t level_i = 0; level_i < CHUNK_LEVELS; ++level_i) {
-        for (int32_t chunk_zi = 0; chunk_zi < CHUNK_NZ; ++chunk_zi) {
-            for (int32_t chunk_yi = 0; chunk_yi < CHUNK_NY; ++chunk_yi) {
-                for (int32_t chunk_xi = 0; chunk_xi < CHUNK_NX; ++chunk_xi) {
-                    threads.emplace_back([=]() { generate_chunk(self, chunk_xi, chunk_yi, chunk_zi, level_i); });
+    self->generate_chunk1s_total = {};
+    self->generate_chunk2s_total = {};
+    auto generate_chunk1s_main_total_ns = uint64_t{};
+    auto generate_chunk2s_main_total_ns = uint64_t{};
+
+    struct GenChunkArgs {
+        voxel_world::VoxelWorld self;
+        int32_t chunk_xi;
+        int32_t chunk_yi;
+        int32_t chunk_zi;
+        int32_t level;
+        bool update = true;
+    };
+
+    {
+        auto t0 = Clock::now();
+
+        for (int32_t level_i = 0; level_i < CHUNK_LEVELS; ++level_i) {
+            for (int32_t chunk_zi = 0; chunk_zi < CHUNK_NZ; ++chunk_zi) {
+                for (int32_t chunk_yi = 0; chunk_yi < CHUNK_NY; ++chunk_yi) {
+                    for (int32_t chunk_xi = 0; chunk_xi < CHUNK_NX; ++chunk_xi) {
+                        auto *user_ptr = new GenChunkArgs{self, chunk_xi, chunk_yi, chunk_zi, level_i};
+                        auto task = thread_pool::create_task([](void *user_ptr) { auto const &args = *(GenChunkArgs*)user_ptr; generate_chunk(args.self, args.chunk_xi, args.chunk_yi, args.chunk_zi, args.level); }, user_ptr);
+                        thread_pool::async_dispatch(task);
+                        tasks.emplace_back(task, user_ptr);
+                    }
                 }
             }
         }
+
+        for (auto &[task, user_ptr] : tasks) {
+            thread_pool::wait(task);
+            thread_pool::destroy_task(task);
+            delete (GenChunkArgs *)user_ptr;
+        }
+        tasks.clear();
+
+        auto t1 = Clock::now();
+        generate_chunk1s_main_total_ns += (t1 - t0).count();
     }
 
-    for (auto &thread : threads) {
-        thread.join();
-    }
-    threads.clear();
-
-    for (int32_t level_i = 0; level_i < CHUNK_LEVELS; ++level_i) {
-        for (int32_t chunk_zi = 0; chunk_zi < CHUNK_NZ; ++chunk_zi) {
-            for (int32_t chunk_yi = 0; chunk_yi < CHUNK_NY; ++chunk_yi) {
-                for (int32_t chunk_xi = 0; chunk_xi < CHUNK_NX; ++chunk_xi) {
-                    threads.emplace_back([=]() { generate_chunk2(self, chunk_xi, chunk_yi, chunk_zi, level_i); });
+    {
+        auto t0 = Clock::now();
+        for (int32_t level_i = 0; level_i < CHUNK_LEVELS; ++level_i) {
+            for (int32_t chunk_zi = 0; chunk_zi < CHUNK_NZ; ++chunk_zi) {
+                for (int32_t chunk_yi = 0; chunk_yi < CHUNK_NY; ++chunk_yi) {
+                    for (int32_t chunk_xi = 0; chunk_xi < CHUNK_NX; ++chunk_xi) {
+                        auto *user_ptr = new GenChunkArgs{self, chunk_xi, chunk_yi, chunk_zi, level_i};
+                        auto task = thread_pool::create_task([](void *user_ptr) { auto const &args = *(GenChunkArgs*)user_ptr; generate_chunk2(args.self, args.chunk_xi, args.chunk_yi, args.chunk_zi, args.level); }, user_ptr);
+                        thread_pool::async_dispatch(task);
+                        tasks.emplace_back(task, user_ptr);
+                    }
                 }
             }
         }
+        for (auto &[task, user_ptr] : tasks) {
+            thread_pool::wait(task);
+            thread_pool::destroy_task(task);
+            delete (GenChunkArgs *)user_ptr;
+        }
+        tasks.clear();
+
+        auto t1 = Clock::now();
+        generate_chunk2s_main_total_ns += (t1 - t0).count();
     }
-    for (auto &thread : threads) {
-        thread.join();
-    }
+
+    auto generate_chunk1s_total = std::chrono::duration<float, std::micro>(std::chrono::duration<uint64_t, std::nano>(self->generate_chunk1s_total)).count();
+    auto generate_chunk2s_total = std::chrono::duration<float, std::micro>(std::chrono::duration<uint64_t, std::nano>(self->generate_chunk2s_total)).count();
+
+    auto generate_chunk1s_main_total = std::chrono::duration<float, std::micro>(std::chrono::duration<uint64_t, std::nano>(generate_chunk1s_main_total_ns)).count();
+    auto generate_chunk2s_main_total = std::chrono::duration<float, std::micro>(std::chrono::duration<uint64_t, std::nano>(generate_chunk2s_main_total_ns)).count();
+
+    std::cout << "1: " << generate_chunk1s_main_total / 1'000'000 << " s | " << generate_chunk1s_main_total / self->generate_chunk1s_total_n << " us/brick (" << self->generate_chunk1s_total_n << " total bricks) " << generate_chunk1s_total / self->generate_chunk1s_total_n << " us/brick per thread" << std::endl;
+    std::cout << "2: " << generate_chunk2s_main_total / 1'000'000 << " s | " << generate_chunk2s_main_total / self->generate_chunk2s_total_n << " us/brick (" << self->generate_chunk2s_total_n << " total bricks) " << generate_chunk2s_total / self->generate_chunk2s_total_n << " us/brick per thread" << std::endl;
 }
 void voxel_world::deinit(VoxelWorld self) {
     delete self;
