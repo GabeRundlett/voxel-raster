@@ -175,10 +175,8 @@ void main() {
 
         vec4 pos_cs = vec4(uv_to_cs(uv), depth, 1.0);
         vec4 pos_vs = (deref(push.uses.gpu_input).cam.clip_to_view * pos_cs);
-        float dist_to_point = -(pos_vs.z / pos_vs.w);
 
-        vec4 prev_vs = pos_vs / pos_vs.w;
-        prev_vs.xyz += vec4(vs_velocity, 0).xyz;
+        vec4 prev_vs = pos_vs / pos_vs.w + vec4(vs_velocity, 0);
 
         vec4 prev_cs = (deref(push.uses.gpu_input).cam.view_to_clip * prev_vs);
         vec4 prev_pcs = (deref(push.uses.gpu_input).cam.clip_to_prev_clip * prev_cs);

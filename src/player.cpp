@@ -395,13 +395,13 @@ void get_camera(CameraState const &cam, CameraState const &prev_cam, Camera *cam
         1, 0, 0, 0,
         0, 1, 0, 0,
         0, 0, 1, 0,
-        sample_offset.x * -2.0f, sample_offset.y * -2.0f, 0, 1);
+        sample_offset.x * -1.0f, sample_offset.y * -1.0f, 0, 1);
 
     glm::mat4 sample_to_clip = glm::mat4(
         1, 0, 0, 0,
         0, 1, 0, 0,
         0, 0, 1, 0,
-        sample_offset.x * +2.0f, sample_offset.y * +2.0f, 0, 1);
+        sample_offset.x * +1.0f, sample_offset.y * +1.0f, 0, 1);
 
     camera->view_to_sample = std::bit_cast<daxa_f32mat4x4>(clip_to_sample * cam.view_to_clip);
     camera->sample_to_view = std::bit_cast<daxa_f32mat4x4>(cam.clip_to_view * sample_to_clip);
