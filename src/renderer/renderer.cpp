@@ -844,7 +844,7 @@ void renderer::init(Renderer &self, void *glfw_window_ptr) {
             },
             .write_out_shader_binary = ".out/spv",
             .language = daxa::ShaderLanguage::GLSL,
-            .enable_debug_info = false,
+            .enable_debug_info = true,
         },
         .name = "my pipeline manager",
     });

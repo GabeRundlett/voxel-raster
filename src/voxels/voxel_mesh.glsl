@@ -1,16 +1,14 @@
 #pragma once
 
 #include <voxels/voxel_mesh.inl>
+#include <voxels/pack_unpack.inl>
 
 uint load_bit(daxa_BufferPtr(GpuInput) gpu_input, daxa_BufferPtr(VoxelBrickBitmask) bitmask, daxa_BufferPtr(ivec4) position, uint xi, uint yi, uint zi) {
     // ivec3 pos = deref(position).xyz;
-    // uint a = uint(uint64_t(bitmask));
-    // uint b = uint(uint64_t(bitmask) >> uint64_t(32));
-    // float speed = 4.0; // + hash11(float(a ^ b)) * 100;
-    // float offset = 0.0; // + hash11(float(a ^ b)) * 100;
+    // float speed = 4.0;
+    // float offset = 0.0;
     // ivec3 p = pos * int(VOXEL_BRICK_SIZE) + ivec3(xi, yi, zi);
-    // p.x = p.x % 16;
-    // uint x = uint(abs(p.x + sin(deref(gpu_input).time * speed + p.y * 0.5 + offset) * (VOXEL_BRICK_SIZE / 2 - 1) - VOXEL_BRICK_SIZE / 2) < 2);
+    // uint x = uint(abs(p.x + sin(deref(gpu_input).time * speed + p.y * 0.5 + offset) * (VOXEL_BRICK_SIZE / 2 - 1) - VOXEL_BRICK_SIZE / 2) - 2 < 0);
     uint bit_index = xi + yi * VOXEL_BRICK_SIZE + zi * VOXEL_BRICK_SIZE * VOXEL_BRICK_SIZE;
     uint word_index = bit_index / 32;
     uint in_word_index = bit_index % 32;
@@ -138,4 +136,42 @@ vec2 brick_extent_pixels(daxa_BufferPtr(GpuInput) gpu_input, daxa_BufferPtr(Voxe
     vec2 pixel_extent = ndc_extent * 0.5 * deref(gpu_input).render_size;
 
     return pixel_extent;
+}
+
+Voxel load_voxel(daxa_BufferPtr(GpuInput) gpu_input, daxa_BufferPtr(VoxelChunk) voxel_chunk, uint brick_index, uvec3 voxel_pos) {
+    uint voxel_index = voxel_pos.x + voxel_pos.y * VOXEL_BRICK_SIZE + voxel_pos.z * VOXEL_BRICK_SIZE * VOXEL_BRICK_SIZE;
+    return unpack_voxel(deref(deref(voxel_chunk).attribs[brick_index]).packed_voxels[voxel_index]);
+
+    // uint word_index = voxel_index / 32;
+    // uint in_word_index = voxel_index % 32;
+    // uint bit = (deref(deref(voxel_chunk).bitmasks[brick_index]).bits[word_index] >> in_word_index) & 1;
+    // if (bit != 0) {
+    //     return unpack_voxel(deref(deref(voxel_chunk).attribs[brick_index]).packed_voxels[voxel_index]);
+    // } else {
+    //     ivec3 pos = deref(deref(voxel_chunk).pos_scl[brick_index]).xyz;
+    //     vec3 p = pos * int(VOXEL_BRICK_SIZE) + vec3(voxel_pos);
+    //     float speed = 4.0;
+    //     float offset = 0.0;
+    //     vec3 dval = vec3(0);
+    //     {
+    //         float a = offset * 0.5;
+    //         float b = deref(gpu_input).time * speed;
+    //         float c = p.y;
+    //         float d = (VOXEL_BRICK_SIZE / 2 - 1);
+    //         float e = -VOXEL_BRICK_SIZE / 2;
+    //         dval.x = (d * sin(a * c + b) + p.x + e) / abs(p.x + d * sin(a * c + b) + e);
+    //     }
+    //     {
+    //         float a = offset * 0.5;
+    //         float b = deref(gpu_input).time * speed;
+    //         float c = p.x;
+    //         float d = (VOXEL_BRICK_SIZE / 2 - 1);
+    //         float e = -VOXEL_BRICK_SIZE / 2;
+    //         dval.y = (a * d * cos(a * p.y + b) * (d * sin(a * p.y + b) + c + e)) / abs(c + d * sin(a * p.y + b) + e);
+    //     }
+    //     Voxel result;
+    //     result.col = vec3(dval);
+    //     result.nrm = vec3(0, 0, -1);
+    //     return result;
+    // }
 }

@@ -1,5 +1,4 @@
 #include "voxel_world.hpp"
-#include "voxels/pack_unpack.inl"
 #include "voxels/voxel_mesh.inl"
 
 #include <chrono>
@@ -35,6 +34,12 @@ struct BrickMetadata {
     uint32_t has_air_py : 1 {};
     uint32_t has_air_pz : 1 {};
     uint32_t has_voxel : 1 {};
+};
+
+enum GenerationStage {
+    NOT_GENERATED,
+    GENERATED_BITMASK,
+    GENERATED_SURFACE_BRICK_ATTRIBS,
 };
 
 struct Chunk {
@@ -90,14 +95,10 @@ const auto RANDOM_VALUES = []() {
     return result;
 }();
 
-constexpr int32_t CHUNK_NX = 8;
-constexpr int32_t CHUNK_NY = 8;
-constexpr int32_t CHUNK_NZ = 4;
+constexpr int32_t CHUNK_NX = 32;
+constexpr int32_t CHUNK_NY = 32;
+constexpr int32_t CHUNK_NZ = 32;
 constexpr int32_t CHUNK_LEVELS = 1;
-constexpr mat3 m = mat3(0.00, 0.80, 0.60,
-                        -0.80, 0.36, -0.48,
-                        -0.60, -0.48, 0.64);
-const mat3 mi = inverse(m);
 
 auto get_brick_metadata(std::unique_ptr<Chunk> &chunk, auto brick_index) -> BrickMetadata & {
     return *reinterpret_cast<BrickMetadata *>(&chunk->voxel_brick_bitmasks[brick_index].metadata);
@@ -232,7 +233,7 @@ auto generate_chunk2(voxel_world::VoxelWorld self, int32_t chunk_xi, int32_t chu
                         brick_metadata.exposed_nx = neighbor_brick_metadata.has_air_px;
                         neighbor_bitmask_nx = &neighbor_chunk->voxel_brick_bitmasks[neighbor_brick_index];
                     } else {
-                        brick_metadata.exposed_nx = true;
+                        // brick_metadata.exposed_nx = true;
                     }
                 }
                 if (brick_yi != 0) {
@@ -249,7 +250,7 @@ auto generate_chunk2(voxel_world::VoxelWorld self, int32_t chunk_xi, int32_t chu
                         brick_metadata.exposed_ny = neighbor_brick_metadata.has_air_py;
                         neighbor_bitmask_ny = &neighbor_chunk->voxel_brick_bitmasks[neighbor_brick_index];
                     } else {
-                        brick_metadata.exposed_ny = true;
+                        // brick_metadata.exposed_ny = true;
                     }
                 }
                 if (brick_zi != 0) {
@@ -266,7 +267,7 @@ auto generate_chunk2(voxel_world::VoxelWorld self, int32_t chunk_xi, int32_t chu
                         brick_metadata.exposed_nz = neighbor_brick_metadata.has_air_pz;
                         neighbor_bitmask_nz = &neighbor_chunk->voxel_brick_bitmasks[neighbor_brick_index];
                     } else {
-                        brick_metadata.exposed_nz = true;
+                        // brick_metadata.exposed_nz = true;
                     }
                 }
                 if (brick_xi != BRICK_CHUNK_SIZE - 1) {
@@ -283,7 +284,7 @@ auto generate_chunk2(voxel_world::VoxelWorld self, int32_t chunk_xi, int32_t chu
                         brick_metadata.exposed_px = neighbor_brick_metadata.has_air_nx;
                         neighbor_bitmask_px = &neighbor_chunk->voxel_brick_bitmasks[neighbor_brick_index];
                     } else {
-                        brick_metadata.exposed_px = true;
+                        // brick_metadata.exposed_px = true;
                     }
                 }
                 if (brick_yi != BRICK_CHUNK_SIZE - 1) {
@@ -300,7 +301,7 @@ auto generate_chunk2(voxel_world::VoxelWorld self, int32_t chunk_xi, int32_t chu
                         brick_metadata.exposed_py = neighbor_brick_metadata.has_air_ny;
                         neighbor_bitmask_py = &neighbor_chunk->voxel_brick_bitmasks[neighbor_brick_index];
                     } else {
-                        brick_metadata.exposed_py = true;
+                        // brick_metadata.exposed_py = true;
                     }
                 }
                 if (brick_zi != BRICK_CHUNK_SIZE - 1) {
@@ -317,7 +318,7 @@ auto generate_chunk2(voxel_world::VoxelWorld self, int32_t chunk_xi, int32_t chu
                         brick_metadata.exposed_pz = neighbor_brick_metadata.has_air_nz;
                         neighbor_bitmask_pz = &neighbor_chunk->voxel_brick_bitmasks[neighbor_brick_index];
                     } else {
-                        brick_metadata.exposed_pz = true;
+                        // brick_metadata.exposed_pz = true;
                     }
                 }
 
@@ -359,11 +360,23 @@ auto generate_chunk2(voxel_world::VoxelWorld self, int32_t chunk_xi, int32_t chu
                                 set_brick_neighbor_bit(bitmask, ai, bi, 0, get_brick_bit(*neighbor_bitmask_nx, VOXEL_BRICK_SIZE - 1, ai, bi));
                             }
                         }
+                    } else {
+                        for (uint32_t bi = 0; bi < VOXEL_BRICK_SIZE; ++bi) {
+                            for (uint32_t ai = 0; ai < VOXEL_BRICK_SIZE; ++ai) {
+                                set_brick_neighbor_bit(bitmask, ai, bi, 0, 1);
+                            }
+                        }
                     }
                     if (neighbor_bitmask_px != nullptr) {
                         for (uint32_t bi = 0; bi < VOXEL_BRICK_SIZE; ++bi) {
                             for (uint32_t ai = 0; ai < VOXEL_BRICK_SIZE; ++ai) {
                                 set_brick_neighbor_bit(bitmask, ai, bi, 3, get_brick_bit(*neighbor_bitmask_px, 0, ai, bi));
+                            }
+                        }
+                    } else {
+                        for (uint32_t bi = 0; bi < VOXEL_BRICK_SIZE; ++bi) {
+                            for (uint32_t ai = 0; ai < VOXEL_BRICK_SIZE; ++ai) {
+                                set_brick_neighbor_bit(bitmask, ai, bi, 3, 1);
                             }
                         }
                     }
@@ -374,11 +387,23 @@ auto generate_chunk2(voxel_world::VoxelWorld self, int32_t chunk_xi, int32_t chu
                                 set_brick_neighbor_bit(bitmask, ai, bi, 1, get_brick_bit(*neighbor_bitmask_ny, ai, VOXEL_BRICK_SIZE - 1, bi));
                             }
                         }
+                    } else {
+                        for (uint32_t bi = 0; bi < VOXEL_BRICK_SIZE; ++bi) {
+                            for (uint32_t ai = 0; ai < VOXEL_BRICK_SIZE; ++ai) {
+                                set_brick_neighbor_bit(bitmask, ai, bi, 1, 1);
+                            }
+                        }
                     }
                     if (neighbor_bitmask_py != nullptr) {
                         for (uint32_t bi = 0; bi < VOXEL_BRICK_SIZE; ++bi) {
                             for (uint32_t ai = 0; ai < VOXEL_BRICK_SIZE; ++ai) {
                                 set_brick_neighbor_bit(bitmask, ai, bi, 4, get_brick_bit(*neighbor_bitmask_py, ai, 0, bi));
+                            }
+                        }
+                    } else {
+                        for (uint32_t bi = 0; bi < VOXEL_BRICK_SIZE; ++bi) {
+                            for (uint32_t ai = 0; ai < VOXEL_BRICK_SIZE; ++ai) {
+                                set_brick_neighbor_bit(bitmask, ai, bi, 4, 1);
                             }
                         }
                     }
@@ -389,11 +414,23 @@ auto generate_chunk2(voxel_world::VoxelWorld self, int32_t chunk_xi, int32_t chu
                                 set_brick_neighbor_bit(bitmask, ai, bi, 2, get_brick_bit(*neighbor_bitmask_nz, ai, bi, VOXEL_BRICK_SIZE - 1));
                             }
                         }
+                    } else {
+                        for (uint32_t bi = 0; bi < VOXEL_BRICK_SIZE; ++bi) {
+                            for (uint32_t ai = 0; ai < VOXEL_BRICK_SIZE; ++ai) {
+                                set_brick_neighbor_bit(bitmask, ai, bi, 2, 1);
+                            }
+                        }
                     }
                     if (neighbor_bitmask_pz != nullptr) {
                         for (uint32_t bi = 0; bi < VOXEL_BRICK_SIZE; ++bi) {
                             for (uint32_t ai = 0; ai < VOXEL_BRICK_SIZE; ++ai) {
                                 set_brick_neighbor_bit(bitmask, ai, bi, 5, get_brick_bit(*neighbor_bitmask_pz, ai, bi, 0));
+                            }
+                        }
+                    } else {
+                        for (uint32_t bi = 0; bi < VOXEL_BRICK_SIZE; ++bi) {
+                            for (uint32_t ai = 0; ai < VOXEL_BRICK_SIZE; ++ai) {
+                                set_brick_neighbor_bit(bitmask, ai, bi, 5, 1);
                             }
                         }
                     }

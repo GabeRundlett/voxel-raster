@@ -96,10 +96,7 @@ void shade() {
         }
 
         BrickInstance brick_instance = deref(push.uses.brick_instance_allocator[metadata.brick_instance_index]);
-
-        VoxelChunk voxel_chunk = deref(push.uses.chunks[brick_instance.chunk_index]);
-        uint voxel_index = face.pos.x + face.pos.y * VOXEL_BRICK_SIZE + face.pos.z * VOXEL_BRICK_SIZE * VOXEL_BRICK_SIZE;
-        Voxel voxel = unpack_voxel(deref(voxel_chunk.attribs[brick_instance.brick_index]).packed_voxels[voxel_index]);
+        Voxel voxel = load_voxel(push.uses.gpu_input, push.uses.chunks[brick_instance.chunk_index], brick_instance.brick_index, face.pos);
 
         // vec3 face_nrm = vec3(0, 0, 0);
         // switch (face.axis / 2) {
