@@ -2,7 +2,7 @@
 #include <renderer/visbuffer.glsl>
 #include <voxels/pack_unpack.inl>
 #include <voxels/voxel_mesh.glsl>
-#include <renderer/meshlet_allocator.glsl>
+#include <renderer/allocators.glsl>
 #include <camera.glsl>
 
 DAXA_DECL_PUSH_CONSTANT(ShadeVisbufferPush, push)

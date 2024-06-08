@@ -1,7 +1,7 @@
 #include <shared.inl>
 #include <renderer/visbuffer.glsl>
 #include <voxels/voxel_mesh.glsl>
-#include <renderer/meshlet_allocator.glsl>
+#include <renderer/allocators.glsl>
 #include <renderer/culling.glsl>
 
 DAXA_DECL_PUSH_CONSTANT(ComputeRasterizePush, push)

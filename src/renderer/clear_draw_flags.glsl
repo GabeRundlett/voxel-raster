@@ -1,5 +1,5 @@
 #include <shared.inl>
-#include <renderer/meshlet_allocator.glsl>
+#include <renderer/allocators.glsl>
 
 DAXA_DECL_PUSH_CONSTANT(ClearDrawFlagsPush, push)
 
