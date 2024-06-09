@@ -8,10 +8,15 @@ uint allocate_meshlets(daxa_RWBufferPtr(VoxelMeshlet) meshlet_allocator, uint me
         uint result = atomicAdd(deref(allocator_state).sw_meshlet_count, meshlet_n);
         if (result <= MAX_SW_MESHLET_COUNT - meshlet_n) {
             return result + 1;
+        } else {
+            // Future meshlets can still fail to allocate due to us, but its better than nothing
+            atomicAdd(deref(allocator_state).sw_meshlet_count, -meshlet_n);
         }
     }
     uint result = atomicAdd(deref(allocator_state).hw_meshlet_count, meshlet_n);
     if (result > MAX_MESHLET_COUNT - MAX_SW_MESHLET_COUNT - meshlet_n) {
+        // Future meshlets can still fail to allocate due to us, but its better than nothing
+        atomicAdd(deref(allocator_state).hw_meshlet_count, -meshlet_n);
         return 0;
     }
     return result + MAX_SW_MESHLET_COUNT + 1;
@@ -28,6 +33,8 @@ uint allocate_brick_instances(daxa_RWBufferPtr(BrickInstance) brick_instance_all
     daxa_RWBufferPtr(BrickInstanceAllocatorState) allocator_state = daxa_RWBufferPtr(BrickInstanceAllocatorState)(brick_instance_allocator);
     uint result = atomicAdd(deref(allocator_state).instance_count, brick_instance_n);
     if (result > MAX_BRICK_INSTANCE_COUNT - 1) {
+        // Future bricks can still fail to allocate due to us, but its better than nothing
+        atomicAdd(deref(allocator_state).instance_count, -brick_instance_n);
         return 0;
     }
     return result + 1;

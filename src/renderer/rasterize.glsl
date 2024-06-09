@@ -140,6 +140,8 @@ void rasterize_triangle(in vec3[3] triangle, ivec2 viewport_size, uint64_t paylo
 }
 
 void rasterize_quad(in vec3[4] quad, ivec2 viewport_size, uint64_t payload) {
+    // TODO: Specialize logic for quad rendering. This shouldn't be too difficult
+    // and may improve perf drastically.
     rasterize_triangle(vec3[](quad[0], quad[2], quad[1]), viewport_size, payload);
     rasterize_triangle(vec3[](quad[1], quad[2], quad[3]), viewport_size, payload);
 }

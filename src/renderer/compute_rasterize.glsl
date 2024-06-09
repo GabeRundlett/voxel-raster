@@ -13,7 +13,7 @@ float saturate(float x) {
 }
 
 #define u_visbuffer daxa_access(r64uiImage, push.uses.visbuffer64)
-#define SUBPIXEL_BITS 8
+#define SUBPIXEL_BITS 12
 #define SUBPIXEL_SAMPLES (1 << SUBPIXEL_BITS)
 
 DAXA_STORAGE_IMAGE_LAYOUT_WITH_FORMAT(r32ui)

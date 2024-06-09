@@ -722,9 +722,9 @@ void record_tasks(renderer::Renderer self) {
                             .delta_time = self->gpu_input.delta_time,
                             .jitter = self->gpu_input.jitter,
                             .camera_info = {
-                                .near_plane = {},
+                                .near_plane = 0.01f,
                                 .far_plane = {},
-                                .vertical_fov = {}, // TODO...
+                                .vertical_fov = 74.0f * (3.14159f / 180.0f), // TODO...
                             },
                         });
                 },
@@ -832,6 +832,9 @@ void renderer::init(Renderer &self, void *glfw_window_ptr) {
             .display_size_x = self->gpu_input.render_size.x,
             .display_size_y = self->gpu_input.render_size.y,
         },
+        .depth_inf = true,
+        .depth_inv = true,
+        .color_hdr = true,
     });
     ImGui_ImplGlfw_InitForVulkan((GLFWwindow *)glfw_window_ptr, true);
     self->pipeline_manager = daxa::PipelineManager({
@@ -931,12 +934,6 @@ void renderer::init(Renderer &self, void *glfw_window_ptr) {
         auto result = self->pipeline_manager.add_raster_pipeline({
             .mesh_shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"draw_visbuffer.glsl"}, .compile_options = {.required_subgroup_size = 32}},
             .fragment_shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"draw_visbuffer.glsl"}},
-            // .color_attachments = {{.format = daxa::Format::R32_UINT}},
-            // .depth_test = daxa::DepthTestInfo{
-            //     .depth_attachment_format = daxa::Format::D32_SFLOAT,
-            //     .enable_depth_write = true,
-            //     .depth_test_compare_op = daxa::CompareOp::GREATER,
-            // },
             .raster = {.polygon_mode = daxa::PolygonMode::FILL},
             .push_constant_size = sizeof(DrawVisbufferPush),
             .name = "draw_visbuffer",
@@ -951,12 +948,6 @@ void renderer::init(Renderer &self, void *glfw_window_ptr) {
         auto result = self->pipeline_manager.add_raster_pipeline({
             .mesh_shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"draw_visbuffer.glsl"}, .compile_options = {.defines = {{"DO_DEPTH_CULL", "1"}}, .required_subgroup_size = 32}},
             .fragment_shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"draw_visbuffer.glsl"}},
-            // .color_attachments = {{.format = daxa::Format::R32_UINT}},
-            // .depth_test = daxa::DepthTestInfo{
-            //     .depth_attachment_format = daxa::Format::D32_SFLOAT,
-            //     .enable_depth_write = true,
-            //     .depth_test_compare_op = daxa::CompareOp::GREATER,
-            // },
             .raster = {.polygon_mode = daxa::PolygonMode::FILL},
             .push_constant_size = sizeof(DrawVisbufferPush),
             .name = "draw_visbuffer_depth_cull",
@@ -971,12 +962,6 @@ void renderer::init(Renderer &self, void *glfw_window_ptr) {
         auto result = self->pipeline_manager.add_raster_pipeline({
             .mesh_shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"draw_visbuffer.glsl"}, .compile_options = {.defines = {{"DRAW_FROM_OBSERVER", "1"}}, .required_subgroup_size = 32}},
             .fragment_shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"draw_visbuffer.glsl"}},
-            // .color_attachments = {{.format = daxa::Format::R32_UINT}},
-            // .depth_test = daxa::DepthTestInfo{
-            //     .depth_attachment_format = daxa::Format::D32_SFLOAT,
-            //     .enable_depth_write = true,
-            //     .depth_test_compare_op = daxa::CompareOp::GREATER,
-            // },
             .raster = {.polygon_mode = daxa::PolygonMode::FILL},
             .push_constant_size = sizeof(DrawVisbufferPush),
             .name = "draw_visbuffer_observer",
@@ -1363,6 +1348,7 @@ void renderer::draw(Renderer self, player::Player player, voxel_world::VoxelWorl
     auto delta_time = std::chrono::duration<float>(now - self->prev_time).count();
     self->gpu_input.time = time;
     self->gpu_input.delta_time = delta_time;
+    self->prev_time = now;
 
     auto swapchain_image = self->swapchain.acquire_next_image();
     if (swapchain_image.is_empty()) {
@@ -1376,7 +1362,10 @@ void renderer::draw(Renderer self, player::Player player, voxel_world::VoxelWorl
     {
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
-        ImGui::ShowMetricsWindow(nullptr);
+        ImGui::Begin("test");
+        ImGui::Text("%.3f ms (%.3f fps)", delta_time * 1000.0f, 1.0f / delta_time);
+        ImGui::Text("pos = %f %f %f", self->gpu_input.cam.view_to_world.w.x, self->gpu_input.cam.view_to_world.w.y, self->gpu_input.cam.view_to_world.w.z);
+        ImGui::End();
         ImGui::Render();
     }
 

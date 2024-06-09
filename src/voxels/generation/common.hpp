@@ -367,7 +367,6 @@ static inline DensityNrm voxel_value(RandomCtx random_ctx, vec3 pos) {
     // result.val = length(pos) - 2.0f;
     // result.nrm = normalize(pos);
     uniform mat3 inv = MAT3_INIT(1, 0, 0, 0, 1, 0, 0, 0, 1);
-
     result = gradient_z(pos, -1, 24.0f);
     {
         uniform float noise_persistence = NOISE_PERSISTENCE;

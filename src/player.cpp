@@ -94,7 +94,7 @@ void player::deinit(Player self) {
 void player::on_mouse_move(Player self, float x, float y) {
     auto on_mouse_move = [](CameraState *self, float x, float y) {
         self->yaw += x * SENS * 0.001f;
-        self->pitch += y * SENS * 0.001f;
+        self->pitch -= y * SENS * 0.001f;
         self->pitch = glm::clamp(self->pitch, MAX_ROT_EPS, M_PI - MAX_ROT_EPS);
 
         self->rot_dirty = true;
@@ -252,7 +252,7 @@ void update_camera(CameraState *self) {
     if (self->rot_dirty) {
         self->forward = glm::vec3(self->view_to_world * glm::vec4(0, 0, -1, 0));
         self->lateral = glm::vec3(self->view_to_world * glm::vec4(+1, 0, 0, 0));
-        self->upwards = glm::vec3(self->view_to_world * glm::vec4(0, -1, 0, 0));
+        self->upwards = glm::vec3(self->view_to_world * glm::vec4(0, +1, 0, 0));
     }
 
     if (self->prj_dirty) {
@@ -263,14 +263,14 @@ void update_camera(CameraState *self) {
 
         self->view_to_clip = glm::mat4{0.0f};
         self->view_to_clip[0][0] = +1.0f / tan_half_fov / aspect;
-        self->view_to_clip[1][1] = +1.0f / tan_half_fov;
+        self->view_to_clip[1][1] = -1.0f / tan_half_fov;
         self->view_to_clip[2][2] = +0.0f;
         self->view_to_clip[2][3] = -1.0f;
         self->view_to_clip[3][2] = near;
 
         self->clip_to_view = glm::mat4{0.0f};
         self->clip_to_view[0][0] = tan_half_fov * aspect;
-        self->clip_to_view[1][1] = tan_half_fov;
+        self->clip_to_view[1][1] = -tan_half_fov;
         self->clip_to_view[2][2] = +0.0f;
         self->clip_to_view[2][3] = +1.0f / near;
         self->clip_to_view[3][2] = -1.0f;
@@ -295,11 +295,11 @@ void player::update(Player self, float dt) {
                 self->trn_dirty = true;
             }
             if (self->move_u) {
-                self->pos += glm::vec3(0, 0, -1) * (speed * dt);
+                self->pos += glm::vec3(0, 0, 1) * (speed * dt);
                 self->trn_dirty = true;
             }
             if (self->move_d) {
-                self->pos -= glm::vec3(0, 0, -1) * (speed * dt);
+                self->pos -= glm::vec3(0, 0, 1) * (speed * dt);
                 self->trn_dirty = true;
             }
         } else {
@@ -395,13 +395,13 @@ void get_camera(CameraState const &cam, CameraState const &prev_cam, Camera *cam
         1, 0, 0, 0,
         0, 1, 0, 0,
         0, 0, 1, 0,
-        sample_offset.x * -1.0f, sample_offset.y * -1.0f, 0, 1);
+        sample_offset.x * -2.0f, sample_offset.y * +2.0f, 0, 1);
 
     glm::mat4 sample_to_clip = glm::mat4(
         1, 0, 0, 0,
         0, 1, 0, 0,
         0, 0, 1, 0,
-        sample_offset.x * +1.0f, sample_offset.y * +1.0f, 0, 1);
+        sample_offset.x * +2.0f, sample_offset.y * -2.0f, 0, 1);
 
     camera->view_to_sample = std::bit_cast<daxa_f32mat4x4>(clip_to_sample * cam.view_to_clip);
     camera->sample_to_view = std::bit_cast<daxa_f32mat4x4>(cam.clip_to_view * sample_to_clip);
