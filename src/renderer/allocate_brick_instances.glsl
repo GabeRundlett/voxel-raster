@@ -55,7 +55,7 @@ bool is_brick_instance_visible(BrickInstance brick_instance) {
     }
 
     bool between_raster_grid_lines = is_between_raster_grid_lines(ndc_min.xy, ndc_max.xy, vec2(deref(push.uses.gpu_input).render_size));
-    const bool depth_unoccluded = !is_ndc_aabb_hiz_depth_occluded(ndc_min, ndc_max, deref(push.uses.gpu_input).next_lower_po2_render_size, push.uses.hiz);
+    const bool depth_unoccluded = !is_ndc_aabb_hiz_depth_occluded(ndc_min, ndc_max, deref(push.uses.gpu_input).render_size, deref(push.uses.gpu_input).next_lower_po2_render_size, push.uses.hiz);
 
     bool inside_frustum = !is_outside_frustum(ndc_min.xy, ndc_max.xy);
 

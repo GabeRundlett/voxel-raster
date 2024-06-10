@@ -132,7 +132,7 @@ void main() {
         vec3 ndc_max = max(max(p0, p1), max(p2, p3));
 
 #if DO_DEPTH_CULL
-        if (is_ndc_aabb_hiz_depth_occluded(ndc_min, ndc_max, deref(push.uses.gpu_input).next_lower_po2_render_size, push.uses.hiz)) {
+        if (is_ndc_aabb_hiz_depth_occluded(ndc_min, ndc_max, deref(push.uses.gpu_input).render_size, deref(push.uses.gpu_input).next_lower_po2_render_size, push.uses.hiz)) {
             return;
         }
 #endif

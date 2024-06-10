@@ -34,8 +34,16 @@ bool is_texel_aabb_hiz_depth_occluded(
 
 bool is_ndc_aabb_hiz_depth_occluded(
     vec3 ndc_min, vec3 ndc_max,
+    uvec2 viewport_size,
     uvec2 hiz_res,
     daxa_ImageViewIndex hiz) {
+    const vec2 scale = vec2(viewport_size) * 0.5;
+    const vec2 bias = vec2(viewport_size) * 0.5 + 0.5;
+    ndc_min.xy = floor(ndc_min.xy * scale + bias);
+    ndc_max.xy = floor(ndc_max.xy * scale + bias);
+    ndc_min.xy = (ndc_min.xy - bias) / scale;
+    ndc_max.xy = (ndc_max.xy - bias) / scale;
+
     const vec2 f_hiz_resolution = hiz_res;
     const vec2 min_uv = (ndc_min.xy + 1.0f) * 0.5f;
     const vec2 max_uv = (ndc_max.xy + 1.0f) * 0.5f;

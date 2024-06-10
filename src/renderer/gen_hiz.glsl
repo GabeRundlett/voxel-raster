@@ -23,10 +23,10 @@ void downsample_64x64(
         if (src_mip == -1) {
             src_i = ivec2(((vec2(src_i) + 1.0) * invSize) * deref(push.uses.gpu_input).render_size.xy);
 
-            uint64_t t0 = imageLoad(daxa_u64image2D(push.uses.src), src_i + ivec2(0, 0)).x;
-            uint64_t t1 = imageLoad(daxa_u64image2D(push.uses.src), src_i + ivec2(0, 1)).x;
-            uint64_t t2 = imageLoad(daxa_u64image2D(push.uses.src), src_i + ivec2(1, 0)).x;
-            uint64_t t3 = imageLoad(daxa_u64image2D(push.uses.src), src_i + ivec2(1, 1)).x;
+            uint64_t t0 = imageLoad(daxa_u64image2D(push.uses.src), min(src_i + ivec2(0, 0), ivec2(deref(push.uses.gpu_input).render_size.xy) - 1)).x;
+            uint64_t t1 = imageLoad(daxa_u64image2D(push.uses.src), min(src_i + ivec2(0, 1), ivec2(deref(push.uses.gpu_input).render_size.xy) - 1)).x;
+            uint64_t t2 = imageLoad(daxa_u64image2D(push.uses.src), min(src_i + ivec2(1, 0), ivec2(deref(push.uses.gpu_input).render_size.xy) - 1)).x;
+            uint64_t t3 = imageLoad(daxa_u64image2D(push.uses.src), min(src_i + ivec2(1, 1), ivec2(deref(push.uses.gpu_input).render_size.xy) - 1)).x;
 
             fetch = vec4(
                 uintBitsToFloat(uint(t0 >> uint64_t(32))),

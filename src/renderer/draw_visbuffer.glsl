@@ -52,7 +52,7 @@ void emit_prim(vec3 in_p0, vec3 in_p1, vec3 in_p2, vec3 in_p3) {
     uint face_id = gl_LocalInvocationIndex;
 
 #if DO_DEPTH_CULL
-    const bool depth_occluded = is_ndc_aabb_hiz_depth_occluded(ndc_min, ndc_max, deref(push.uses.gpu_input).next_lower_po2_render_size, push.uses.hiz);
+    const bool depth_occluded = is_ndc_aabb_hiz_depth_occluded(ndc_min, ndc_max, deref(push.uses.gpu_input).render_size, deref(push.uses.gpu_input).next_lower_po2_render_size, push.uses.hiz);
     bool cull_poly = outside_frustum || between_raster_grid_lines || facing_away || depth_occluded;
 #else
     bool cull_poly = outside_frustum || between_raster_grid_lines || facing_away;

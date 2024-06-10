@@ -1400,6 +1400,16 @@ void renderer::draw(Renderer self, player::Player player, voxel_world::VoxelWorl
         }
         {
             ImGui::Text("Keybinds:");
+            ImGui::Text("ESC = Toggle capture mouse and keyboard");
+            ImGui::Text("WASD/SPACE/CONTROL = Move current camera");
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("* corresponds to Forward, Left, Backward, Right, Up, Down");
+            }
+            ImGui::Text("SHIFT = Sprint");
+            ImGui::Text("Q = Toggle up movement direction");
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("* Toggles the up direction between global up and relative up");
+            }
             ImGui::Text("P = Toggle observer camera view");
             ImGui::Text("O = Teleport observer camera to main camera");
             ImGui::Text("N = Control main camera from observer *");
@@ -1407,7 +1417,6 @@ void renderer::draw(Renderer self, player::Player player, voxel_world::VoxelWorl
                 ImGui::SetTooltip("* only if already in observer camera view");
             }
             ImGui::Text("L = Toggle FSR2");
-            ImGui::Text("ESC = Toggle capture mouse and keyboard");
         }
         ImGui::End();
         ImGui::Render();
