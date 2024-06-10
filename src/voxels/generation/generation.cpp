@@ -62,7 +62,7 @@ void generate_attributes_cpp(
                 float z = (float((zi + brick_zi * VOXEL_BRICK_SIZE + chunk_zi * VOXEL_CHUNK_SIZE) << level_i) + 0.5f) / 16.0f;
                 auto dn = voxel_value(random_ctx, glm::vec3(x, y, z));
                 auto col = glm::vec3(0.0f);
-                if (dot(dn.nrm, vec3(0, 0, -1)) > 0.5f && dn.val > -0.5f) {
+                if (dot(dn.nrm, vec3(0, 0, 1)) > 0.5f && dn.val > -0.5f) {
                     col = glm::vec3(12, 163, 7) / 255.0f;
                 } else {
                     col = glm::vec3(112, 62, 30) / 255.0f;

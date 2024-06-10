@@ -42,8 +42,12 @@ void emit_prim(vec3 in_p0, vec3 in_p1, vec3 in_p2, vec3 in_p3) {
     vec3 ndc_max = max(max(p0, p1), max(p2, p3));
 #endif
 
+    const vec2 v01 = p1.xy - p0.xy;
+    const vec2 v02 = p2.xy - p0.xy;
+    const float det_xy = v01.x * v02.y - v01.y * v02.x;
+
     bool between_raster_grid_lines = is_between_raster_grid_lines(ndc_min.xy, ndc_max.xy, vec2(deref(push.uses.gpu_input).render_size));
-    bool facing_away = determinant(mat3(p0_h.xyw, p1_h.xyw, p2_h.xyw)) <= 0;
+    bool facing_away = det_xy >= 0.0;
     bool outside_frustum = is_outside_frustum(ndc_min.xy, ndc_max.xy);
     uint face_id = gl_LocalInvocationIndex;
 
@@ -200,12 +204,6 @@ void main() {
 #endif
 
     write_pixel(ivec2(gl_FragCoord.xy), v_payload.data, gl_FragCoord.z);
-
-// #if ENABLE_DEBUG_VIS
-//     imageAtomicAdd(atomic_u32_table[daxa_image_view_id_to_index(push.uses.debug_overdraw)], ivec2(gl_FragCoord.xy), 1);
-// #endif
-
-//     f_out = uvec4(v_payload.data, 0, 0, 0);
 }
 
 #endif

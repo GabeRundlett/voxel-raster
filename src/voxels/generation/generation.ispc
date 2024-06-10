@@ -75,7 +75,7 @@ export void generate_attributes(
     uniform int chunk_xi, uniform int chunk_yi, uniform int chunk_zi,
     uniform int level_i, uniform uint packed_voxels[],
     RandomCtx random_ctx) {
-    const uniform vec3 UP = {0, 0, -1};
+    const uniform vec3 UP = {0, 0, 1};
     const uniform vec3 GRASS_COL = {12, 163, 7};
     const uniform vec3 DIRT_COL = {112, 62, 30};
 

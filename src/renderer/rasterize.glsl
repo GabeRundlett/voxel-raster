@@ -140,8 +140,160 @@ void rasterize_triangle(in vec3[3] triangle, ivec2 viewport_size, uint64_t paylo
 }
 
 void rasterize_quad(in vec3[4] quad, ivec2 viewport_size, uint64_t payload) {
-    // TODO: Specialize logic for quad rendering. This shouldn't be too difficult
-    // and may improve perf drastically.
-    rasterize_triangle(vec3[](quad[0], quad[2], quad[1]), viewport_size, payload);
-    rasterize_triangle(vec3[](quad[1], quad[2], quad[3]), viewport_size, payload);
+#if 1
+    // Specialized logic for quad rendering:
+
+    const vec3 v01 = quad[1] - quad[0];
+    const vec3 v02 = quad[2] - quad[0];
+    const float det_xy = v01.x * v02.y - v01.y * v02.x;
+    if (det_xy >= 0.0) {
+        return;
+    }
+
+    const float inv_det = 1.0 / det_xy;
+    vec2 grad_z = vec2(
+        (v01.z * v02.y - v01.y * v02.z) * inv_det,
+        (v01.x * v02.z - v01.z * v02.x) * inv_det);
+
+    vec2 vert_0 = quad[0].xy;
+    vec2 vert_1 = quad[1].xy;
+    vec2 vert_2 = quad[2].xy;
+    vec2 vert_3 = quad[3].xy;
+
+    const vec2 min_subpixel = min(min(vert_0, vert_1), min(vert_2, vert_3));
+    const vec2 max_subpixel = max(max(vert_0, vert_1), max(vert_2, vert_3));
+
+    ivec2 min_pixel = ivec2(floor((min_subpixel + (SUBPIXEL_SAMPLES / 2) - 1) * (1.0 / float(SUBPIXEL_SAMPLES))));
+    ivec2 max_pixel = ivec2(floor((max_subpixel - (SUBPIXEL_SAMPLES / 2) - 1) * (1.0 / float(SUBPIXEL_SAMPLES))));
+
+    min_pixel = max(min_pixel, ivec2(0));
+    max_pixel = min(max_pixel, viewport_size.xy - 1);
+    if (any(greaterThan(min_pixel, max_pixel))) {
+        return;
+    }
+
+    max_pixel = min(max_pixel, min_pixel + 63);
+
+    const vec2 edge_01 = vert_0 - vert_1;
+    const vec2 edge_13 = vert_1 - vert_3;
+    const vec2 edge_32 = vert_3 - vert_2;
+    const vec2 edge_20 = vert_2 - vert_0;
+
+    const vec2 base_subpixel = vec2(min_pixel) * SUBPIXEL_SAMPLES + (SUBPIXEL_SAMPLES / 2);
+    vert_0 -= base_subpixel;
+    vert_1 -= base_subpixel;
+    vert_2 -= base_subpixel;
+    vert_3 -= base_subpixel;
+
+    float hec_0 = edge_01.y * vert_0.x - edge_01.x * vert_0.y;
+    float hec_1 = edge_13.y * vert_1.x - edge_13.x * vert_1.y;
+    float hec_3 = edge_32.y * vert_3.x - edge_32.x * vert_3.y;
+    float hec_2 = edge_20.y * vert_2.x - edge_20.x * vert_2.y;
+
+    hec_0 -= saturate(edge_01.y + saturate(1.0 - edge_01.x));
+    hec_1 -= saturate(edge_13.y + saturate(1.0 - edge_13.x));
+    hec_3 -= saturate(edge_32.y + saturate(1.0 - edge_32.x));
+    hec_2 -= saturate(edge_20.y + saturate(1.0 - edge_20.x));
+
+    const float z_0 = quad[0].z - (grad_z.x * vert_0.x + grad_z.y * vert_0.y);
+    grad_z *= SUBPIXEL_SAMPLES;
+
+    float hec_y_0 = hec_0 * (1.0 / float(SUBPIXEL_SAMPLES));
+    float hec_y_1 = hec_1 * (1.0 / float(SUBPIXEL_SAMPLES));
+    float hec_y_3 = hec_3 * (1.0 / float(SUBPIXEL_SAMPLES));
+    float hec_y_2 = hec_2 * (1.0 / float(SUBPIXEL_SAMPLES));
+    float z_y = z_0;
+
+    if (subgroupAny(max_pixel.x - min_pixel.x > 4)) {
+        const vec4 edge_0123 = vec4(edge_01.y, edge_13.y, edge_32.y, edge_20.y);
+        const bvec4 is_open_edge = lessThan(edge_0123, vec4(0.0));
+        const vec4 inv_edge_0123 = vec4(
+            edge_0123.x == 0 ? 1e8 : (1.0 / edge_0123.x),
+            edge_0123.y == 0 ? 1e8 : (1.0 / edge_0123.y),
+            edge_0123.z == 0 ? 1e8 : (1.0 / edge_0123.z),
+            edge_0123.w == 0 ? 1e8 : (1.0 / edge_0123.w));
+        int y = min_pixel.y;
+        while (true) {
+            const vec4 cross_x = vec4(hec_y_0, hec_y_1, hec_y_3, hec_y_2) * inv_edge_0123;
+            const vec4 min_x = vec4(
+                is_open_edge.x ? cross_x.x : 0.0,
+                is_open_edge.y ? cross_x.y : 0.0,
+                is_open_edge.z ? cross_x.z : 0.0,
+                is_open_edge.w ? cross_x.w : 0.0);
+            const vec4 max_x = vec4(
+                is_open_edge.x ? max_pixel.x - min_pixel.x : cross_x.x,
+                is_open_edge.y ? max_pixel.x - min_pixel.x : cross_x.y,
+                is_open_edge.z ? max_pixel.x - min_pixel.x : cross_x.z,
+                is_open_edge.w ? max_pixel.x - min_pixel.x : cross_x.w);
+            float x_0 = ceil(max(max(min_x.x, min_x.y), max(min_x.z, min_x.w)));
+            float x_1 = min(min(max_x.x, max_x.y), min(max_x.z, max_x.w));
+            float z_x = z_y + grad_z.x * x_0;
+
+            x_0 += min_pixel.x;
+            x_1 += min_pixel.x;
+            for (float x = x_0; x <= x_1; ++x) {
+                write_pixel(ivec2(x, y), payload, z_x);
+                z_x += grad_z.x;
+            }
+
+            if (y >= max_pixel.y) {
+                break;
+            }
+            hec_y_0 += edge_01.x;
+            hec_y_1 += edge_13.x;
+            hec_y_3 += edge_32.x;
+            hec_y_2 += edge_20.x;
+            z_y += grad_z.y;
+            ++y;
+        }
+    } else {
+        int y = min_pixel.y;
+        while (true) {
+            int x = min_pixel.x;
+            if (min(min(hec_y_0, hec_y_1), min(hec_y_3, hec_y_2)) >= 0.0) {
+                write_pixel(ivec2(x, y), payload, z_y);
+            }
+
+            if (x < max_pixel.x) {
+                float hec_x_0 = hec_y_0 - edge_01.y;
+                float hec_x_1 = hec_y_1 - edge_13.y;
+                float hec_x_3 = hec_y_3 - edge_32.y;
+                float hec_x_2 = hec_y_2 - edge_20.y;
+                float z_x = z_y + grad_z.x;
+                ++x;
+
+                while (true) {
+                    if (min(min(hec_x_0, hec_x_1), min(hec_x_3, hec_x_2)) >= 0.0) {
+                        write_pixel(ivec2(x, y), payload, z_x);
+                    }
+
+                    if (x >= max_pixel.x) {
+                        break;
+                    }
+
+                    hec_x_0 -= edge_01.y;
+                    hec_x_1 -= edge_13.y;
+                    hec_x_3 -= edge_32.y;
+                    hec_x_2 -= edge_20.y;
+                    z_x += grad_z.x;
+                    ++x;
+                }
+            }
+
+            if (y >= max_pixel.y) {
+                break;
+            }
+
+            hec_y_0 += edge_01.x;
+            hec_y_1 += edge_13.x;
+            hec_y_3 += edge_32.x;
+            hec_y_2 += edge_20.x;
+            z_y += grad_z.y;
+            ++y;
+        }
+    }
+#else
+    rasterize_triangle(vec3[](quad[0], quad[1], quad[2]), viewport_size, payload);
+    rasterize_triangle(vec3[](quad[2], quad[1], quad[3]), viewport_size, payload);
+#endif
 }

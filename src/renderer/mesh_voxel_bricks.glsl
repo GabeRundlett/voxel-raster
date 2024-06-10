@@ -10,7 +10,7 @@ shared VoxelBrickMesh result_mesh;
 shared uint face_ids[MAX_OUTER_FACES_PER_BRICK];
 uint brick_instance_index;
 BrickInstance brick_instance;
-VoxelChunk chunk;
+daxa_BufferPtr(VoxelChunk) chunk;
 
 void init_results() {
     if (gl_LocalInvocationIndex == 0) {
@@ -30,8 +30,8 @@ void write_results() {
         result_mesh.meshlet_start = allocate_meshlets(push.uses.meshlet_allocator, meshlet_n, size_x < 8);
 
         if (result_mesh.meshlet_start != 0) {
-            deref(chunk.meshes[brick_instance.brick_index]).face_count = result_mesh.face_count;
-            deref(chunk.meshes[brick_instance.brick_index]).meshlet_start = result_mesh.meshlet_start;
+            deref(deref(chunk).meshes[brick_instance.brick_index]).face_count = result_mesh.face_count;
+            deref(deref(chunk).meshes[brick_instance.brick_index]).meshlet_start = result_mesh.meshlet_start;
         }
     }
 
@@ -59,7 +59,7 @@ void main() {
     }
 
     brick_instance = deref(push.uses.brick_instance_allocator[brick_instance_index]);
-    chunk = deref(push.uses.chunks[brick_instance.chunk_index]);
+    chunk = push.uses.chunks[brick_instance.chunk_index];
 
     init_results();
 
@@ -67,8 +67,8 @@ void main() {
     uint yi = gl_LocalInvocationID.y;
     uint fi = gl_LocalInvocationID.z;
 
-    uint bit_strip = load_strip(push.uses.gpu_input, chunk.bitmasks[brick_instance.brick_index], chunk.pos_scl[brick_instance.brick_index], xi, yi, fi);
-    uvec2 edges_exposed = load_brick_faces_exposed(push.uses.gpu_input, chunk.bitmasks[brick_instance.brick_index], xi, yi, fi);
+    uint bit_strip = load_strip(push.uses.gpu_input, daxa_BufferPtr(VoxelBrickBitmask)(deref(chunk).bitmasks[brick_instance.brick_index]), daxa_BufferPtr(ivec4)(deref(chunk).pos_scl[brick_instance.brick_index]), xi, yi, fi);
+    uvec2 edges_exposed = load_brick_faces_exposed(push.uses.gpu_input, daxa_BufferPtr(VoxelBrickBitmask)(deref(chunk).bitmasks[brick_instance.brick_index]), xi, yi, fi);
 
     uint b_edge_mask = bit_strip & ~(bit_strip << 1);
     uint t_edge_mask = bit_strip & ~(bit_strip >> 1);
