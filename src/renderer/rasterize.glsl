@@ -143,14 +143,16 @@ void rasterize_quad(in vec3[4] quad, ivec2 viewport_size, uint64_t payload) {
 #if 1
     // Specialized logic for quad rendering:
 
-    const vec3 v01 = quad[1] - quad[0];
-    const vec3 v02 = quad[2] - quad[0];
-    const float det_xy = v01.x * v02.y - v01.y * v02.x;
+    float quad0_z = quad[0].z;
+
+    vec3 v01 = quad[1] - quad[0];
+    vec3 v02 = quad[2] - quad[0];
+    float det_xy = v01.x * v02.y - v01.y * v02.x;
     if (det_xy >= 0.0) {
         return;
     }
 
-    const float inv_det = 1.0 / det_xy;
+    float inv_det = 1.0 / det_xy;
     vec2 grad_z = vec2(
         (v01.z * v02.y - v01.y * v02.z) * inv_det,
         (v01.x * v02.z - v01.z * v02.x) * inv_det);
@@ -160,8 +162,8 @@ void rasterize_quad(in vec3[4] quad, ivec2 viewport_size, uint64_t payload) {
     vec2 vert_2 = quad[2].xy;
     vec2 vert_3 = quad[3].xy;
 
-    const vec2 min_subpixel = min(min(vert_0, vert_1), min(vert_2, vert_3));
-    const vec2 max_subpixel = max(max(vert_0, vert_1), max(vert_2, vert_3));
+    vec2 min_subpixel = min(min(vert_0, vert_1), min(vert_2, vert_3));
+    vec2 max_subpixel = max(max(vert_0, vert_1), max(vert_2, vert_3));
 
     ivec2 min_pixel = ivec2(floor((min_subpixel + (SUBPIXEL_SAMPLES / 2) - 1) * (1.0 / float(SUBPIXEL_SAMPLES))));
     ivec2 max_pixel = ivec2(floor((max_subpixel - (SUBPIXEL_SAMPLES / 2) - 1) * (1.0 / float(SUBPIXEL_SAMPLES))));
@@ -171,6 +173,72 @@ void rasterize_quad(in vec3[4] quad, ivec2 viewport_size, uint64_t payload) {
     if (any(greaterThan(min_pixel, max_pixel))) {
         return;
     }
+
+#if DRAW_FROM_OBSERVER
+    {
+        const vec2 scale = vec2(0.5, 0.5) * vec2(viewport_size) * float(SUBPIXEL_SAMPLES);
+        const vec2 bias = (0.5 * vec2(viewport_size)) * float(SUBPIXEL_SAMPLES) + 0.5;
+
+        mat4 main_clip_to_observer_clip =
+            deref(push.uses.gpu_input).observer_cam.view_to_sample * deref(push.uses.gpu_input).observer_cam.world_to_view *
+            deref(push.uses.gpu_input).cam.view_to_world * deref(push.uses.gpu_input).cam.sample_to_view;
+        vec4 temp0 = main_clip_to_observer_clip * vec4((quad[0].xy - bias) / scale, quad[0].z, 1);
+        vec4 temp1 = main_clip_to_observer_clip * vec4((quad[1].xy - bias) / scale, quad[1].z, 1);
+        vec4 temp2 = main_clip_to_observer_clip * vec4((quad[2].xy - bias) / scale, quad[2].z, 1);
+        vec4 temp3 = main_clip_to_observer_clip * vec4((quad[3].xy - bias) / scale, quad[3].z, 1);
+
+        temp0 = temp0 / temp0.w;
+        temp1 = temp1 / temp1.w;
+        temp2 = temp2 / temp2.w;
+        temp3 = temp3 / temp3.w;
+
+        if (temp0.z < 0 || temp1.z < 0 || temp2.z < 0 || temp3.z < 0) {
+            return;
+        }
+
+        temp0.xy = floor(temp0.xy * scale + bias);
+        temp1.xy = floor(temp1.xy * scale + bias);
+        temp2.xy = floor(temp2.xy * scale + bias);
+        temp3.xy = floor(temp3.xy * scale + bias);
+
+        det_xy = (temp1.x - temp0.x) * (temp2.y - temp0.y) - (temp1.y - temp0.y) * (temp2.x - temp0.x);
+        if (det_xy >= 0.0) {
+            // if we're a back-face, we want to swap the winding order, since we only want to backface cull for
+            // the backfaces relative to the main camera.
+            vec4 temp = temp1;
+            temp1 = temp2;
+            temp2 = temp;
+        }
+
+        quad0_z = temp0.z;
+        vert_0 = temp0.xy;
+        vert_1 = temp1.xy;
+        vert_2 = temp2.xy;
+        vert_3 = temp3.xy;
+
+        v01 = temp1.xyz - temp0.xyz;
+        v02 = temp2.xyz - temp0.xyz;
+    }
+
+    det_xy = v01.x * v02.y - v01.y * v02.x;
+    inv_det = 1.0 / det_xy;
+
+    grad_z = vec2(
+        (v01.z * v02.y - v01.y * v02.z) * inv_det,
+        (v01.x * v02.z - v01.z * v02.x) * inv_det);
+
+    min_subpixel = min(min(vert_0, vert_1), min(vert_2, vert_3));
+    max_subpixel = max(max(vert_0, vert_1), max(vert_2, vert_3));
+
+    min_pixel = ivec2(floor((min_subpixel + (SUBPIXEL_SAMPLES / 2) - 1) * (1.0 / float(SUBPIXEL_SAMPLES))));
+    max_pixel = ivec2(floor((max_subpixel - (SUBPIXEL_SAMPLES / 2) - 1) * (1.0 / float(SUBPIXEL_SAMPLES))));
+
+    min_pixel = max(min_pixel, ivec2(0));
+    max_pixel = min(max_pixel, viewport_size.xy - 1);
+    if (any(greaterThan(min_pixel, max_pixel))) {
+        return;
+    }
+#endif
 
     max_pixel = min(max_pixel, min_pixel + 63);
 
@@ -195,7 +263,7 @@ void rasterize_quad(in vec3[4] quad, ivec2 viewport_size, uint64_t payload) {
     hec_3 -= saturate(edge_32.y + saturate(1.0 - edge_32.x));
     hec_2 -= saturate(edge_20.y + saturate(1.0 - edge_20.x));
 
-    const float z_0 = quad[0].z - (grad_z.x * vert_0.x + grad_z.y * vert_0.y);
+    const float z_0 = quad0_z - (grad_z.x * vert_0.x + grad_z.y * vert_0.y);
     grad_z *= SUBPIXEL_SAMPLES;
 
     float hec_y_0 = hec_0 * (1.0 / float(SUBPIXEL_SAMPLES));
