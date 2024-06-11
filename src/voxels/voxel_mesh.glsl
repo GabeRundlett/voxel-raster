@@ -5,10 +5,11 @@
 
 uint load_bit(daxa_BufferPtr(GpuInput) gpu_input, daxa_BufferPtr(VoxelBrickBitmask) bitmask, daxa_BufferPtr(ivec4) position, uint xi, uint yi, uint zi) {
     // ivec3 pos = deref(position).xyz;
-    // float speed = 4.0;
-    // float offset = 0.0;
+    // float t = deref(gpu_input).time * 3 + float(uint((uint64_t(position) / 16)) & 0xffff) * 4;
+    // vec3 offset = vec3(sin(t), cos(t), sin(t * 0.71)) * 1.0;
     // ivec3 p = pos * int(VOXEL_BRICK_SIZE) + ivec3(xi, yi, zi);
-    // uint x = uint(abs(p.x + sin(deref(gpu_input).time * speed + p.y * 0.5 + offset) * (VOXEL_BRICK_SIZE / 2 - 1) - VOXEL_BRICK_SIZE / 2) - 2 < 0);
+    // float r = cos(t * 2.95) * 0.5 + 0.5 + 2.0;
+    // uint x = uint(length(vec3(p & 7) - 4.0 + 0.5 - offset) - r < 0);
     uint bit_index = xi + yi * VOXEL_BRICK_SIZE + zi * VOXEL_BRICK_SIZE * VOXEL_BRICK_SIZE;
     uint word_index = bit_index / 32;
     uint in_word_index = bit_index % 32;
@@ -148,30 +149,15 @@ Voxel load_voxel(daxa_BufferPtr(GpuInput) gpu_input, daxa_BufferPtr(VoxelChunk) 
     // if (bit != 0) {
     //     return unpack_voxel(deref(deref(voxel_chunk).attribs[brick_index]).packed_voxels[voxel_index]);
     // } else {
-    //     ivec3 pos = deref(deref(voxel_chunk).pos_scl[brick_index]).xyz;
-    //     vec3 p = pos * int(VOXEL_BRICK_SIZE) + vec3(voxel_pos);
-    //     float speed = 4.0;
-    //     float offset = 0.0;
-    //     vec3 dval = vec3(0);
-    //     {
-    //         float a = offset * 0.5;
-    //         float b = deref(gpu_input).time * speed;
-    //         float c = p.y;
-    //         float d = (VOXEL_BRICK_SIZE / 2 - 1);
-    //         float e = -VOXEL_BRICK_SIZE / 2;
-    //         dval.x = (d * sin(a * c + b) + p.x + e) / abs(p.x + d * sin(a * c + b) + e);
-    //     }
-    //     {
-    //         float a = offset * 0.5;
-    //         float b = deref(gpu_input).time * speed;
-    //         float c = p.x;
-    //         float d = (VOXEL_BRICK_SIZE / 2 - 1);
-    //         float e = -VOXEL_BRICK_SIZE / 2;
-    //         dval.y = (a * d * cos(a * p.y + b) * (d * sin(a * p.y + b) + c + e)) / abs(c + d * sin(a * p.y + b) + e);
-    //     }
+    //     daxa_BufferPtr(ivec4) position = daxa_BufferPtr(ivec4)(deref(voxel_chunk).pos_scl[brick_index]);
+    //     ivec3 pos = deref(position).xyz;
+    //     float t = deref(gpu_input).time * 3 + float(uint((uint64_t(position) / 16)) & 0xffff) * 4;
+    //     vec3 offset = vec3(sin(t), cos(t), sin(t * 0.71)) * 1.0;
+    //     ivec3 p = pos * int(VOXEL_BRICK_SIZE) + ivec3(voxel_pos);
+
     //     Voxel result;
-    //     result.col = vec3(dval);
-    //     result.nrm = vec3(0, 0, -1);
+    //     result.nrm = normalize(vec3(p & 7) - 4.0 + 0.5 - offset);
+    //     result.col = vec3(223, 152, 7) / 255;
     //     return result;
     // }
 }
