@@ -34,8 +34,66 @@ bool is_brick_instance_visible(BrickInstance brick_instance) {
 
     vec3 ndc_min;
     vec3 ndc_max;
-    vec3 vs_min;
-    vec3 vs_max;
+
+    mat4 clip_to_world = deref(push.uses.gpu_input).cam.view_to_world * deref(push.uses.gpu_input).cam.sample_to_view;
+
+    vec3 frustum_l_nrm;
+    vec3 frustum_r_nrm;
+    vec3 frustum_t_nrm;
+    vec3 frustum_b_nrm;
+    vec3 frustum_l_origin;
+    vec3 frustum_r_origin;
+    vec3 frustum_t_origin;
+    vec3 frustum_b_origin;
+
+    {
+        vec4 fp0_h = clip_to_world * vec4(-1, -1, 1, 1);
+        vec4 fp1_h = clip_to_world * vec4(-1, -1, 0.001, 1);
+        vec4 fp2_h = clip_to_world * vec4(-1, +1, 0.001, 1);
+        vec3 fp0 = fp0_h.xyz / fp0_h.w;
+        vec3 fp1 = fp1_h.xyz / fp1_h.w;
+        vec3 fp2 = fp2_h.xyz / fp2_h.w;
+        frustum_l_origin = fp0;
+        frustum_l_nrm = cross(fp1 - fp0, fp2 - fp0);
+    }
+
+    {
+        vec4 fp0_h = clip_to_world * vec4(+1, -1, 1, 1);
+        vec4 fp1_h = clip_to_world * vec4(+1, +1, 0.001, 1);
+        vec4 fp2_h = clip_to_world * vec4(+1, -1, 0.001, 1);
+        vec3 fp0 = fp0_h.xyz / fp0_h.w;
+        vec3 fp1 = fp1_h.xyz / fp1_h.w;
+        vec3 fp2 = fp2_h.xyz / fp2_h.w;
+        frustum_r_origin = fp0;
+        frustum_r_nrm = cross(fp1 - fp0, fp2 - fp0);
+    }
+
+    {
+        vec4 fp0_h = clip_to_world * vec4(-1, -1, 1, 1);
+        vec4 fp1_h = clip_to_world * vec4(+1, -1, 0.001, 1);
+        vec4 fp2_h = clip_to_world * vec4(-1, -1, 0.001, 1);
+        vec3 fp0 = fp0_h.xyz / fp0_h.w;
+        vec3 fp1 = fp1_h.xyz / fp1_h.w;
+        vec3 fp2 = fp2_h.xyz / fp2_h.w;
+        frustum_t_origin = fp0;
+        frustum_t_nrm = cross(fp1 - fp0, fp2 - fp0);
+    }
+
+    {
+        vec4 fp0_h = clip_to_world * vec4(-1, +1, 1, 1);
+        vec4 fp1_h = clip_to_world * vec4(-1, +1, 0.001, 1);
+        vec4 fp2_h = clip_to_world * vec4(+1, +1, 0.001, 1);
+        vec3 fp0 = fp0_h.xyz / fp0_h.w;
+        vec3 fp1 = fp1_h.xyz / fp1_h.w;
+        vec3 fp2 = fp2_h.xyz / fp2_h.w;
+        frustum_b_origin = fp0;
+        frustum_b_nrm = cross(fp1 - fp0, fp2 - fp0);
+    }
+
+    bool frustum_l_outside = true;
+    bool frustum_r_outside = true;
+    bool frustum_t_outside = true;
+    bool frustum_b_outside = true;
 
     [[unroll]] for (uint vert_i = 0; vert_i < 8; ++vert_i) {
         vec4 vs_h = deref(push.uses.gpu_input).cam.world_to_view * vec4(vertices[vert_i], 1);
@@ -44,25 +102,21 @@ bool is_brick_instance_visible(BrickInstance brick_instance) {
         if (vert_i == 0) {
             ndc_min = p;
             ndc_max = p;
-            vs_min = vs_h.xyz;
-            vs_max = vs_h.xyz;
         } else {
             ndc_min = min(ndc_min, p);
             ndc_max = max(ndc_max, p);
-            vs_min = min(vs_min, vs_h.xyz);
-            vs_max = max(vs_max, vs_h.xyz);
         }
+
+        frustum_l_outside = frustum_l_outside && (dot(vertices[vert_i] - frustum_l_origin, frustum_l_nrm) > 0);
+        frustum_r_outside = frustum_r_outside && (dot(vertices[vert_i] - frustum_r_origin, frustum_r_nrm) > 0);
+        frustum_t_outside = frustum_t_outside && (dot(vertices[vert_i] - frustum_t_origin, frustum_t_nrm) > 0);
+        frustum_b_outside = frustum_b_outside && (dot(vertices[vert_i] - frustum_b_origin, frustum_b_nrm) > 0);
     }
 
     bool between_raster_grid_lines = is_between_raster_grid_lines(ndc_min.xy, ndc_max.xy, vec2(deref(push.uses.gpu_input).render_size));
     const bool depth_unoccluded = !is_ndc_aabb_hiz_depth_occluded(ndc_min, ndc_max, deref(push.uses.gpu_input).render_size, deref(push.uses.gpu_input).next_lower_po2_render_size, push.uses.hiz);
 
-    bool inside_frustum = !is_outside_frustum(ndc_min.xy, ndc_max.xy);
-
-    // TODO: Fix near-plane edge-case
-    // bool brick_envelops_camera = all(lessThan(vs_min, vec3(0))) && all(greaterThan(vs_max, vec3(0)));
-    // bool frustum_fix = ndc_min.z > 0 || brick_envelops_camera;
-    // inside_frustum = inside_frustum && frustum_fix;
+    bool inside_frustum = !(frustum_l_outside || frustum_r_outside || frustum_t_outside || frustum_b_outside);
 
     return inside_frustum && depth_unoccluded && !between_raster_grid_lines;
 }
