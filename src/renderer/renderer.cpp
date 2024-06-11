@@ -30,7 +30,7 @@
 struct renderer::ChunkState {
     daxa::BufferId brick_data;
     uint32_t brick_count;
-    uint32_t tracked_index = -1;
+    uint32_t tracked_index = 0xffffffff;
     VoxelBrickBitmask const *bitmasks;
     VoxelAttribBrick const *attribs;
     int const *positions;
