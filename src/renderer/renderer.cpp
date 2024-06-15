@@ -68,6 +68,7 @@ struct renderer::State {
     std::shared_ptr<daxa::RasterPipeline> debug_lines_pipeline;
     daxa::TaskImage task_swapchain_image;
     daxa::TaskGraph loop_task_graph;
+    daxa::TaskGraph loop_empty_task_graph;
 
     std::vector<Chunk> chunks_to_update;
     std::vector<VoxelChunk> chunks;
@@ -409,6 +410,32 @@ auto task_gen_hiz_single_pass(renderer::Renderer self, daxa::TaskGraph &task_gra
 }
 
 void record_tasks(renderer::Renderer self) {
+    {
+        self->loop_empty_task_graph = daxa::TaskGraph({
+            .device = self->device,
+            .swapchain = self->swapchain,
+            .name = "loop_empty",
+        });
+        self->loop_empty_task_graph.use_persistent_image(self->task_swapchain_image);
+
+        clear_task_images(self->loop_empty_task_graph, std::array<daxa::TaskImageView, 1>{self->task_swapchain_image}, std::array<daxa::ClearValue, 1>{std::array<uint32_t, 4>{0, 0, 0, 0}});
+
+        self->loop_empty_task_graph.add_task({
+            .attachments = {
+                daxa::inl_attachment(daxa::TaskImageAccess::COLOR_ATTACHMENT, daxa::ImageViewType::REGULAR_2D, self->task_swapchain_image),
+            },
+            .task = [self](daxa::TaskInterface const &ti) {
+                auto swapchain_image = self->task_swapchain_image.get_state().images[0];
+                self->imgui_renderer.record_commands(ImGui::GetDrawData(), ti.recorder, swapchain_image, self->gpu_input.render_size.x, self->gpu_input.render_size.y);
+            },
+            .name = "ImGui draw",
+        });
+
+        self->loop_empty_task_graph.submit({});
+        self->loop_empty_task_graph.present({});
+        self->loop_empty_task_graph.complete({});
+    }
+
     self->loop_task_graph = daxa::TaskGraph({
         .device = self->device,
         .swapchain = self->swapchain,
@@ -1245,6 +1272,54 @@ void renderer::on_resize(Renderer self, int size_x, int size_y) {
 
 void renderer::draw(Renderer self, player::Player player, voxel_world::VoxelWorld voxel_world) {
     if (self->needs_update) {
+        {
+            auto temp_task_graph = daxa::TaskGraph({
+                .device = s_instance->device,
+                .name = "update_task_graph",
+            });
+            temp_task_graph.use_persistent_buffer(self->task_brick_data);
+            temp_task_graph.use_persistent_buffer(self->task_chunks);
+
+            temp_task_graph.use_persistent_buffer(self->task_brick_meshlet_allocator);
+            temp_task_graph.use_persistent_buffer(self->task_brick_instance_allocator);
+            temp_task_graph.use_persistent_buffer(self->task_visible_brick_instance_allocator);
+
+            auto task_input_buffer = temp_task_graph.create_transient_buffer({
+                .size = sizeof(GpuInput),
+                .name = "gpu_input",
+            });
+            auto task_indirect_infos = temp_task_graph.create_transient_buffer({
+                .size = sizeof(DispatchIndirectStruct) * 4,
+                .name = "indirect_infos",
+            });
+            temp_task_graph.add_task(SetIndirectInfosTask{
+                .views = std::array{
+                    daxa::attachment_view(SetIndirectInfosH::AT.gpu_input, task_input_buffer),
+                    daxa::attachment_view(SetIndirectInfosH::AT.brick_instance_allocator, self->task_brick_instance_allocator),
+                    daxa::attachment_view(SetIndirectInfosH::AT.meshlet_allocator, self->task_brick_meshlet_allocator),
+                    daxa::attachment_view(SetIndirectInfosH::AT.indirect_info, task_indirect_infos),
+                },
+                .pipeline = self->set_indirect_infos0.get(),
+            });
+            temp_task_graph.add_task(ClearDrawFlagsTask{
+                .views = std::array{
+                    daxa::attachment_view(ClearDrawFlagsH::AT.chunks, self->task_chunks),
+                    daxa::attachment_view(ClearDrawFlagsH::AT.brick_data, self->task_brick_data),
+                    daxa::attachment_view(ClearDrawFlagsH::AT.brick_instance_allocator, self->task_brick_instance_allocator),
+                    daxa::attachment_view(ClearDrawFlagsH::AT.indirect_info, task_indirect_infos),
+                },
+                .pipeline = self->clear_draw_flags_pipeline.get(),
+            });
+
+            task_fill_buffer(temp_task_graph, self->task_brick_meshlet_allocator, daxa_u32vec2{});
+            task_fill_buffer(temp_task_graph, self->task_brick_instance_allocator, uint32_t{0});
+            task_fill_buffer(temp_task_graph, self->task_visible_brick_instance_allocator, uint32_t{0});
+
+            temp_task_graph.submit({});
+            temp_task_graph.complete({});
+            temp_task_graph.execute({});
+        }
+
         self->task_brick_data.set_buffers({.buffers = self->tracked_brick_data});
         auto new_chunk_n = self->tracked_brick_data.size();
         if (new_chunk_n != self->gpu_input.chunk_n) {
@@ -1430,7 +1505,11 @@ void renderer::draw(Renderer self, player::Player player, voxel_world::VoxelWorl
     player::get_camera(player, &self->gpu_input.cam, &self->gpu_input);
     player::get_observer_camera(player, &self->gpu_input.observer_cam, &self->gpu_input);
 
-    self->loop_task_graph.execute({});
+    if (self->tracked_brick_data.empty()) {
+        self->loop_empty_task_graph.execute({});
+    } else {
+        self->loop_task_graph.execute({});
+    }
     self->device.collect_garbage();
 
     self->debug_lines.clear();
@@ -1477,22 +1556,17 @@ void renderer::deinit(Chunk self) {
 }
 
 void renderer::update(Chunk self, int brick_count, VoxelBrickBitmask const *bitmasks, VoxelAttribBrick const *attribs, int const *positions) {
+    self->needs_update = true;
     self->brick_count = brick_count;
-    if (brick_count == 0) {
-        return;
-    }
 
     if (self->bitmasks != bitmasks) {
         self->bitmasks = bitmasks;
-        self->needs_update = true;
     }
     if (self->attribs != attribs) {
         self->attribs = attribs;
-        self->needs_update = true;
     }
     if (self->positions != positions) {
         self->positions = positions;
-        self->needs_update = true;
     }
 }
 

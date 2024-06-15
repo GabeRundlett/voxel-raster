@@ -29,3 +29,22 @@
 
 #define RANDOM_BUFFER_SIZE_LOG2 8
 #define RANDOM_BUFFER_SIZE (1 << RANDOM_BUFFER_SIZE_LOG2)
+
+#if defined(__cplusplus)
+using RandomCtx = unsigned char const *;
+#elif ISPC
+#define RandomCtx const uint8 *uniform
+#endif
+
+struct MinMax {
+    float min;
+    float max;
+};
+
+struct NoiseSettings {
+    float persistence;
+    float lacunarity;
+    float scale;
+    float amplitude;
+    int octaves;
+};

@@ -4,7 +4,7 @@ export void generate_bitmask(
     uniform int brick_xi, uniform int brick_yi, uniform int brick_zi,
     uniform int chunk_xi, uniform int chunk_yi, uniform int chunk_zi,
     uniform int level_i, uniform uint bits[], uint *uniform metadata,
-    RandomCtx random_ctx) {
+    uniform NoiseSettings const *uniform noise_settings, RandomCtx random_ctx) {
 
     bool has_voxel = false;
     bool has_air_nx = false;
@@ -32,7 +32,7 @@ export void generate_bitmask(
             pos.y = (pos.y + 0.5f) / 16.0f;
             pos.z = (pos.z + 0.5f) / 16.0f;
 
-            DensityNrm dn = voxel_value(random_ctx, pos);
+            DensityNrm dn = voxel_value(random_ctx, noise_settings, pos);
             uint value = dn.val < 0.0f;
             word_result |= value << in_word_i;
 
@@ -74,7 +74,7 @@ export void generate_attributes(
     uniform int brick_xi, uniform int brick_yi, uniform int brick_zi,
     uniform int chunk_xi, uniform int chunk_yi, uniform int chunk_zi,
     uniform int level_i, uniform uint packed_voxels[],
-    RandomCtx random_ctx) {
+    uniform NoiseSettings const *uniform noise_settings, RandomCtx random_ctx) {
     const uniform vec3 UP = {0, 0, 1};
     const uniform vec3 GRASS_COL = {12, 163, 7};
     const uniform vec3 DIRT_COL = {112, 62, 30};
@@ -95,7 +95,7 @@ export void generate_attributes(
             pos.y = (pos.y + 0.5f) / 16.0f;
             pos.z = (pos.z + 0.5f) / 16.0f;
 
-            DensityNrm dn = voxel_value(random_ctx, pos);
+            DensityNrm dn = voxel_value(random_ctx, noise_settings, pos);
             Voxel voxel;
             if (dot(dn.nrm, UP) > 0.5f && dn.val > -2.5f) {
                 voxel.col = GRASS_COL / 255.0f;

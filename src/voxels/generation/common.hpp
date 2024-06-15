@@ -109,13 +109,6 @@ static inline float dot(vec3 a, vec3 b) {
 }
 #endif
 
-#define RandomCtx const uint8 *uniform
-
-struct MinMax {
-    float min;
-    float max;
-};
-
 struct DensityNrm {
     float val;
     vec3 nrm;
@@ -338,12 +331,6 @@ static inline MinMax minmax_gradient_z(vec3 p0, vec3 p1, float slope, float offs
     return result;
 }
 
-const uniform float NOISE_PERSISTENCE = 0.20f;
-const uniform float NOISE_LACUNARITY = 4.0f;
-const uniform float NOISE_SCALE = 0.05f;
-const uniform float NOISE_AMPLITUDE = 20.0f;
-const uniform uint NOISE_OCTAVES = 5;
-
 #if defined(__cplusplus)
 #define MAT3_INIT(a, b, c, d, e, f, g, h, i) \
     { a, b, c, d, e, f, g, h, i }
@@ -361,7 +348,7 @@ const uniform mat3 mi = MAT3_INIT(+0.0f, -0.80f, -0.60f,
                                   +0.8f, +0.36f, -0.48f,
                                   +0.6f, -0.48f, +0.64f);
 
-static inline DensityNrm voxel_value(RandomCtx random_ctx, vec3 pos) {
+static inline DensityNrm voxel_value(RandomCtx random_ctx, uniform NoiseSettings const *uniform noise_settings, vec3 pos) {
     DensityNrm result;
     // pos = fract(pos / 4.0f) * 4.0f - 2.0f;
     // result.val = length(pos) - 2.0f;
@@ -369,11 +356,11 @@ static inline DensityNrm voxel_value(RandomCtx random_ctx, vec3 pos) {
     uniform mat3 inv = MAT3_INIT(1, 0, 0, 0, 1, 0, 0, 0, 1);
     result = gradient_z(pos, 1, 24.0f);
     {
-        uniform float noise_persistence = NOISE_PERSISTENCE;
-        uniform float noise_lacunarity = NOISE_LACUNARITY;
-        uniform float noise_scale = NOISE_SCALE;
-        uniform float noise_amplitude = NOISE_AMPLITUDE;
-        for (uniform uint i = 0; i < NOISE_OCTAVES; ++i) {
+        uniform float noise_persistence = noise_settings->persistence;
+        uniform float noise_lacunarity = noise_settings->lacunarity;
+        uniform float noise_scale = noise_settings->scale;
+        uniform float noise_amplitude = noise_settings->amplitude;
+        for (uniform int i = 0; i < noise_settings->octaves; ++i) {
             pos = m * pos;
             inv = mi * inv;
             DensityNrm dn = noise(random_ctx, pos, noise_scale, noise_amplitude);
@@ -386,17 +373,17 @@ static inline DensityNrm voxel_value(RandomCtx random_ctx, vec3 pos) {
     result.nrm = normalize(result.nrm);
     return result;
 }
-static inline MinMax voxel_minmax_value(RandomCtx random_ctx, vec3 p0, vec3 p1) {
+static inline MinMax voxel_minmax_value(RandomCtx random_ctx, uniform NoiseSettings const *uniform noise_settings, vec3 p0, vec3 p1) {
     MinMax result = {0, 0};
     // MinMax sphere_minmax = {-1, 1};
     // result = result + sphere_minmax;
     result = result + minmax_gradient_z(p0, p1, 1, 24.0f);
     {
-        uniform float noise_persistence = NOISE_PERSISTENCE;
-        uniform float noise_lacunarity = NOISE_LACUNARITY;
-        uniform float noise_scale = NOISE_SCALE;
-        uniform float noise_amplitude = NOISE_AMPLITUDE;
-        for (uniform uint i = 0; i < NOISE_OCTAVES; ++i) {
+        uniform float noise_persistence = noise_settings->persistence;
+        uniform float noise_lacunarity = noise_settings->lacunarity;
+        uniform float noise_scale = noise_settings->scale;
+        uniform float noise_amplitude = noise_settings->amplitude;
+        for (uniform int i = 0; i < noise_settings->octaves; ++i) {
             p0 = m * p0;
             p1 = m * p1;
             result = result + minmax_noise_in_region(random_ctx, (p0 + p1) * 0.5f, abs(p1 - p0), noise_scale, noise_amplitude);
