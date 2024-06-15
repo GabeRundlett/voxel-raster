@@ -31,9 +31,9 @@ struct renderer::ChunkState {
     daxa::BufferId brick_data;
     uint32_t brick_count;
     uint32_t tracked_index = 0xffffffff;
-    VoxelBrickBitmask const *bitmasks;
-    VoxelAttribBrick const *attribs;
-    int const *positions;
+    std::vector<VoxelBrickBitmask> bitmasks;
+    std::vector<VoxelAttribBrick> attribs;
+    std::vector<int> positions;
     bool needs_update = false;
 };
 
@@ -1417,9 +1417,9 @@ void renderer::draw(Renderer self, player::Player player, voxel_world::VoxelWorl
                         });
                     };
 
-                    upload(ti.get(buffer_view).ids[chunk->tracked_index], chunk->bitmasks, sizeof(VoxelBrickBitmask) * brick_count, bitmasks_offset);
-                    upload(ti.get(buffer_view).ids[chunk->tracked_index], chunk->positions, sizeof(daxa_i32vec4) * brick_count, pos_scl_offset);
-                    upload(ti.get(buffer_view).ids[chunk->tracked_index], chunk->attribs, sizeof(VoxelAttribBrick) * brick_count, attribs_offset);
+                    upload(ti.get(buffer_view).ids[chunk->tracked_index], chunk->bitmasks.data(), sizeof(VoxelBrickBitmask) * brick_count, bitmasks_offset);
+                    upload(ti.get(buffer_view).ids[chunk->tracked_index], chunk->positions.data(), sizeof(daxa_i32vec4) * brick_count, pos_scl_offset);
+                    upload(ti.get(buffer_view).ids[chunk->tracked_index], chunk->attribs.data(), sizeof(VoxelAttribBrick) * brick_count, attribs_offset);
                     clear(ti.get(buffer_view).ids[chunk->tracked_index], sizeof(daxa_u32) * brick_count, flags_offset);
                 }
             },
@@ -1555,18 +1555,32 @@ void renderer::deinit(Chunk self) {
     }
 }
 
-void renderer::update(Chunk self, int brick_count, VoxelBrickBitmask const *bitmasks, VoxelAttribBrick const *attribs, int const *positions) {
+void renderer::update(Chunk self, int brick_count, int const *surface_brick_indices, VoxelBrickBitmask const *bitmasks, VoxelAttribBrick const *const *attribs, int const *positions) {
     self->needs_update = true;
     self->brick_count = brick_count;
 
-    if (self->bitmasks != bitmasks) {
-        self->bitmasks = bitmasks;
+    self->bitmasks.clear();
+    self->bitmasks.reserve(brick_count);
+    for (int i = 0; i < brick_count; ++i) {
+        int brick_index = surface_brick_indices[i];
+        self->bitmasks.push_back(bitmasks[brick_index]);
     }
-    if (self->attribs != attribs) {
-        self->attribs = attribs;
+
+    self->attribs.clear();
+    self->attribs.reserve(brick_count);
+    for (int i = 0; i < brick_count; ++i) {
+        int brick_index = surface_brick_indices[i];
+        self->attribs.push_back(*attribs[brick_index]);
     }
-    if (self->positions != positions) {
-        self->positions = positions;
+
+    self->positions.clear();
+    self->positions.reserve(brick_count * 4);
+    for (int i = 0; i < brick_count; ++i) {
+        int brick_index = surface_brick_indices[i];
+        self->positions.push_back(positions[brick_index * 4 + 0]);
+        self->positions.push_back(positions[brick_index * 4 + 1]);
+        self->positions.push_back(positions[brick_index * 4 + 2]);
+        self->positions.push_back(positions[brick_index * 4 + 3]);
     }
 }
 

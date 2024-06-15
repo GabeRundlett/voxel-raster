@@ -30,6 +30,6 @@ namespace renderer {
 
     void init(Chunk &self);
     void deinit(Chunk self);
-    void update(Chunk self, int brick_count, VoxelBrickBitmask const *bitmasks, VoxelAttribBrick const *attribs, int const *positions);
+    void update(Chunk self, int brick_count, int const *surface_brick_indices, VoxelBrickBitmask const *bitmasks, VoxelAttribBrick const *const *attribs, int const *positions);
     void render_chunk(Chunk self, float const *pos);
 } // namespace renderer

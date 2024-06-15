@@ -45,9 +45,9 @@ enum GenerationStage {
 struct Chunk {
     std::array<VoxelBrickBitmask, BRICKS_PER_CHUNK> voxel_brick_bitmasks{};
     std::array<std::unique_ptr<VoxelAttribBrick>, BRICKS_PER_CHUNK> voxel_brick_attribs{};
-    std::vector<VoxelBrickBitmask> surface_brick_bitmasks;
-    std::vector<glm::ivec4> surface_brick_positions;
-    std::vector<VoxelAttribBrick> surface_attrib_bricks;
+    std::array<glm::ivec4, BRICKS_PER_CHUNK> voxel_brick_positions{};
+    std::vector<int> surface_brick_indices;
+
     renderer::Chunk render_chunk = nullptr;
     glm::vec3 pos;
     bool bricks_changed;
@@ -209,9 +209,7 @@ auto generate_chunk2(voxel_world::VoxelWorld self, int32_t chunk_xi, int32_t chu
 
     auto t0 = Clock::now();
 
-    chunk->surface_brick_bitmasks.clear();
-    chunk->surface_brick_positions.clear();
-    chunk->surface_attrib_bricks.clear();
+    chunk->surface_brick_indices.clear();
 
     for (int32_t brick_zi = 0; brick_zi < BRICK_CHUNK_SIZE; ++brick_zi) {
         for (int32_t brick_yi = 0; brick_yi < BRICK_CHUNK_SIZE; ++brick_yi) {
@@ -343,10 +341,12 @@ auto generate_chunk2(voxel_world::VoxelWorld self, int32_t chunk_xi, int32_t chu
                 if (brick_metadata.has_voxel && exposed) {
                     // generate surface brick data
                     auto &attrib_brick = chunk->voxel_brick_attribs[brick_index];
-                    attrib_brick = std::make_unique<VoxelAttribBrick>();
                     self->generate_chunk2s_total_n += 1;
 
-                    generate_attributes(brick_xi, brick_yi, brick_zi, chunk_xi, chunk_yi, chunk_zi, level, (uint32_t *)attrib_brick->packed_voxels, &noise_settings, RANDOM_VALUES.data());
+                    if (attrib_brick == nullptr) {
+                        attrib_brick = std::make_unique<VoxelAttribBrick>();
+                        generate_attributes(brick_xi, brick_yi, brick_zi, chunk_xi, chunk_yi, chunk_zi, level, (uint32_t *)attrib_brick->packed_voxels, &noise_settings, RANDOM_VALUES.data());
+                    }
 
                     auto get_brick_bit = [](VoxelBrickBitmask const &bitmask, uint32_t xi, uint32_t yi, uint32_t zi) {
                         uint32_t voxel_index = xi + yi * VOXEL_BRICK_SIZE + zi * VOXEL_BRICK_SIZE * VOXEL_BRICK_SIZE;
@@ -450,9 +450,8 @@ auto generate_chunk2(voxel_world::VoxelWorld self, int32_t chunk_xi, int32_t chu
                         }
                     }
 
-                    chunk->surface_brick_bitmasks.push_back(bitmask);
-                    chunk->surface_brick_positions.push_back(position);
-                    chunk->surface_attrib_bricks.push_back(*attrib_brick);
+                    chunk->voxel_brick_positions[brick_index] = position;
+                    chunk->surface_brick_indices.push_back(brick_index);
                 }
             }
         }
@@ -563,19 +562,51 @@ void voxel_world::update(VoxelWorld self) {
     auto elapsed = std::chrono::duration<float>(now - self->prev_time).count();
     auto time = std::chrono::duration<float>(now - self->start_time).count();
 
+    if (elapsed > 0.25f && false) {
+        using namespace std::chrono_literals;
+        self->prev_time = now;
+        noise_settings.scale = (sin(time) * 0.5f + 0.5f) * 0.1f + 0.25f;
+        noise_settings.amplitude = 100.0f;
+
+        for (int i = 0; i < 8; ++i) {
+            int xi = (i >> 0) & 1;
+            int yi = (i >> 1) & 1;
+            int zi = (i >> 2) & 1;
+            generate_chunk(self, xi, yi, zi, 0);
+        }
+
+        for (int i = 0; i < 8; ++i) {
+            int xi = (i >> 0) & 1;
+            int yi = (i >> 1) & 1;
+            int zi = (i >> 2) & 1;
+            generate_chunk2(self, xi, yi, zi, 0);
+        }
+
+        noise_settings.scale = 0.05f;
+        noise_settings.amplitude = 20.0f;
+
+        for (int i = 0; i < 4; ++i) {
+            int xi = (i >> 0) & 1;
+            int yi = (i >> 1) & 1;
+            generate_chunk2(self, 2, xi, yi, 0);
+            generate_chunk2(self, xi, 2, yi, 0);
+            generate_chunk2(self, xi, yi, 2, 0);
+        }
+    }
+
     for (uint32_t chunk_index = 0; chunk_index < MAX_CHUNK_COUNT; ++chunk_index) {
         auto &chunk = self->chunks[chunk_index];
         if (!chunk) {
             continue;
         }
 
-        auto brick_count = chunk->surface_brick_bitmasks.size();
+        auto brick_count = chunk->surface_brick_indices.size();
 
         if (chunk->bricks_changed) {
             if (chunk->render_chunk == nullptr) {
                 renderer::init(chunk->render_chunk);
             }
-            renderer::update(chunk->render_chunk, brick_count, chunk->surface_brick_bitmasks.data(), chunk->surface_attrib_bricks.data(), (int const *)chunk->surface_brick_positions.data());
+            renderer::update(chunk->render_chunk, brick_count, chunk->surface_brick_indices.data(), chunk->voxel_brick_bitmasks.data(), reinterpret_cast<VoxelAttribBrick const *const *>(chunk->voxel_brick_attribs.data()), (int const *)chunk->voxel_brick_positions.data());
             chunk->bricks_changed = false;
         }
 

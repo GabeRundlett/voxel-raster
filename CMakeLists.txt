@@ -1,9 +1,11 @@
 cmake_minimum_required(VERSION 3.21)
 
-include("${CMAKE_CURRENT_LIST_DIR}/cmake/deps.cmake")
-include("${CMAKE_CURRENT_LIST_DIR}/cmake/ispc.cmake")
-
 set(USE_ISPC 1)
+
+include("${CMAKE_CURRENT_LIST_DIR}/cmake/deps.cmake")
+if (USE_ISPC)
+    include("${CMAKE_CURRENT_LIST_DIR}/cmake/ispc.cmake")
+endif()
 
 project(voxel_raster VERSION 0.1.0)
 add_executable(${PROJECT_NAME}
