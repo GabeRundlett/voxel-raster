@@ -48,6 +48,7 @@ struct Controller {
 
     bool is_flying : 1;
     bool on_ground : 1;
+    bool is_crouched : 1;
 
     CameraState prev_cam;
     CameraState cam;
@@ -85,7 +86,7 @@ void player::init(Player &self) {
     self->main.pos = glm::vec3{40.0f, 40.0f, 40.0f};
     self->main.yaw = 0.0f;
     self->main.pitch = M_PI * 0.5f;
-    self->main.speed = 1.0f;
+    self->main.speed = 1.5f;
 
     self->main.rot_dirty = true;
     self->main.prj_dirty = true;
@@ -125,7 +126,7 @@ void player::on_mouse_scroll(Player self, float x, float y) {
         } else {
             self->speed *= 1.2f;
         }
-        self->speed = glm::clamp(self->speed, 1.0f, 64.0f);
+        self->speed = glm::clamp(self->speed, 1.5f, 64.0f);
     };
     if (self->controlling_observer) {
         on_mouse_scroll(&self->observer, x, y);
@@ -250,6 +251,15 @@ glm::mat4 translation_matrix(glm::vec3 pos) {
         pos.x, pos.y, pos.z, 1);
 }
 
+float const standing_height = 1.75f;
+float const crouch_height = 1.0f;
+float const jump_strength = 1.0f;
+
+float const VOXEL_SCL = 16.0f;
+float const VOXEL_SIZE = 1.0f / VOXEL_SCL;
+
+glm::vec3 const eye_offset = glm::vec3(0, 0, -0.2f);
+
 void update_camera(Controller *self) {
     auto view_dirty = self->rot_dirty || self->trn_dirty || true;
 
@@ -260,8 +270,8 @@ void update_camera(Controller *self) {
     }
 
     if (view_dirty) {
-        self->cam.view_to_world = translation_matrix(self->pos + self->cam_pos_offset) * rotation_matrix(self->yaw, self->pitch, 0.0f);
-        self->cam.world_to_view = inv_rotation_matrix(self->yaw, self->pitch, 0.0f) * translation_matrix((self->pos + self->cam_pos_offset) * -1.0f);
+        self->cam.view_to_world = translation_matrix(self->pos + self->cam_pos_offset + eye_offset) * rotation_matrix(self->yaw, self->pitch, 0.0f);
+        self->cam.world_to_view = inv_rotation_matrix(self->yaw, self->pitch, 0.0f) * translation_matrix((self->pos + self->cam_pos_offset + eye_offset) * -1.0f);
     }
 
     if (self->rot_dirty) {
@@ -306,8 +316,8 @@ void update_camera(Controller *self) {
 void player::update(Player self, float dt) {
     auto update = [](Controller *self, float dt) {
         self->prev_cam = self->cam;
-        float const speed = (self->move_sprint ? 10.0f : 1.0f) * self->speed;
-        float const jump_strength = 1.0f;
+        float const speed = (self->move_sprint ? (self->is_flying ? 10.0f : 3.0f) : 1.0f) * self->speed;
+        float height = standing_height;
 
         auto move_vec = glm::vec3(0);
         auto acc = glm::vec3(0);
@@ -366,6 +376,21 @@ void player::update(Player self, float dt) {
             } else {
                 acc.z -= GRAVITY;
             }
+
+            if (self->move_d != 0) {
+                if (!self->is_crouched) {
+                    self->pos.z -= height - crouch_height;
+                    self->cam_pos_offset.z += height - crouch_height;
+                }
+                self->is_crouched = true;
+                height = crouch_height;
+            } else {
+                if (self->is_crouched) {
+                    self->pos.z += height - crouch_height;
+                    self->cam_pos_offset.z -= height - crouch_height;
+                }
+                self->is_crouched = false;
+            }
         }
 
         self->vel += acc * dt;
@@ -374,10 +399,6 @@ void player::update(Player self, float dt) {
             self->trn_dirty = true;
         }
         self->pos += vel * dt;
-
-        float const VOXEL_SCL = 16.0f;
-        float const VOXEL_SIZE = 1.0f / VOXEL_SCL;
-        float const height = 1.75f;
 
         self->on_ground = false;
         bool inside_terrain = false;
@@ -457,6 +478,7 @@ void player::update(Player self, float dt) {
     };
     update(&self->observer, dt);
     update(&self->main, dt);
+    using Box = std::array<glm::vec3, 3>;
 
     if (self->viewing_observer) {
         using Line = std::array<glm::vec3, 3>;
@@ -504,12 +526,19 @@ void player::update(Player self, float dt) {
             // auto pt = Point{points[pi0], {0.0f, 1.0f, 1.0f}, {0.125f, 0.125f, 1.0f}};
             // renderer::submit_debug_points((renderer::Point const *)&pt, 1);
         }
+
+        {
+            float const height = self->main.is_crouched ? crouch_height : standing_height;
+            auto p = self->main.pos - glm::vec3(0, 0, height) + glm::vec3(-2 * VOXEL_SIZE, -2 * VOXEL_SIZE, -2 * VOXEL_SIZE);
+            int32_t voxel_height = height * VOXEL_SCL + 1;
+            auto cube = Box{p, p + glm::vec3(5, 5, voxel_height) * VOXEL_SIZE, {1.0f, 1.0f, 1.0f}};
+            renderer::submit_debug_box_lines((renderer::Box const *)&cube, 1);
+        }
     }
 
-    auto ray_pos = self->main.pos + self->main.cam_pos_offset;
+    auto ray_pos = self->main.pos + self->main.cam_pos_offset + eye_offset;
     auto ray_cast = voxel_world::ray_cast(&ray_pos.x, &self->main.forward.x);
     if (ray_cast.distance != -1.0f && ray_cast.distance / 16.0f < 10.0f) {
-        using Box = std::array<glm::vec3, 3>;
         auto cube = Box{
             glm::vec3(ray_cast.voxel_x, ray_cast.voxel_y, ray_cast.voxel_z) / 16.0f,
             glm::vec3(ray_cast.voxel_x + 1, ray_cast.voxel_y + 1, ray_cast.voxel_z + 1) / 16.0f,
