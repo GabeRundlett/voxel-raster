@@ -576,6 +576,32 @@ float hitAabb(const Aabb aabb, const Ray r) {
     return t1 > max(t0, 0.0f) ? t0 : -1.0f;
 }
 
+constexpr auto positive_mod(auto x, auto d) {
+    return ((x % d) + d) % d;
+}
+
+auto get_voxel_is_solid(voxel_world::VoxelWorld self, ivec3 p) -> bool {
+    ivec3 chunk_i = p / int(VOXEL_CHUNK_SIZE);
+
+    if (any(lessThan(chunk_i, ivec3(0))) || any(greaterThanEqual(chunk_i, ivec3(CHUNK_NX, CHUNK_NY, CHUNK_NZ)))) {
+        return false;
+    }
+
+    ivec3 brick_i = positive_mod(p / int(VOXEL_BRICK_SIZE), int(BRICK_CHUNK_SIZE));
+    ivec3 voxel_i = positive_mod(p, int(VOXEL_BRICK_SIZE));
+    auto chunk_index = chunk_i.x + chunk_i.y * CHUNK_NX + chunk_i.z * CHUNK_NX * CHUNK_NY;
+    auto brick_index = brick_i.x + brick_i.y * BRICK_CHUNK_SIZE + brick_i.z * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
+    auto voxel_index = voxel_i.x + voxel_i.y * VOXEL_BRICK_SIZE + voxel_i.z * VOXEL_BRICK_SIZE * VOXEL_BRICK_SIZE;
+    auto &chunk = self->chunks[chunk_index];
+    if (!chunk) {
+        return false;
+    }
+    auto &brick_bitmask = chunk->voxel_brick_bitmasks[brick_index];
+    uint voxel_word_index = voxel_index / 32;
+    uint voxel_in_word_index = voxel_index % 32;
+    return ((brick_bitmask.bits[voxel_word_index] >> voxel_in_word_index) & 1) != 0;
+}
+
 auto dda_voxels(voxel_world::VoxelWorld self, Ray ray) -> std::pair<ivec3, float> {
     using Line = std::array<vec3, 3>;
     using Point = std::array<vec3, 3>;
@@ -591,23 +617,6 @@ auto dda_voxels(voxel_world::VoxelWorld self, Ray ray) -> std::pair<ivec3, float
         return {ivec3{0, 0, 0}, -1.0f};
     }
 
-    auto getVoxel = [&](ivec3 p) {
-        ivec3 chunk_i = p / int(VOXEL_CHUNK_SIZE);
-        ivec3 brick_i = (p / int(VOXEL_BRICK_SIZE)) % int(BRICK_CHUNK_SIZE);
-        ivec3 voxel_i = p % int(VOXEL_BRICK_SIZE);
-        auto chunk_index = chunk_i.x + chunk_i.y * CHUNK_NX + chunk_i.z * CHUNK_NX * CHUNK_NY;
-        auto brick_index = brick_i.x + brick_i.y * BRICK_CHUNK_SIZE + brick_i.z * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
-        auto voxel_index = voxel_i.x + voxel_i.y * VOXEL_BRICK_SIZE + voxel_i.z * VOXEL_BRICK_SIZE * VOXEL_BRICK_SIZE;
-        auto &chunk = self->chunks[chunk_index];
-        if (!chunk) {
-            return false;
-        }
-        auto &brick_bitmask = chunk->voxel_brick_bitmasks[brick_index];
-        uint voxel_word_index = voxel_index / 32;
-        uint voxel_in_word_index = voxel_index % 32;
-        return ((brick_bitmask.bits[voxel_word_index] >> voxel_in_word_index) & 1) != 0;
-    };
-
     ivec3 bmin = ivec3(floor(aabb.minimum));
     ivec3 mapPos = clamp(ivec3(floor(ray.origin * 16.0f)) - bmin, ivec3(aabb.minimum), ivec3(aabb.maximum));
     vec3 deltaDist = abs(vec3(length(ray.direction)) / ray.direction);
@@ -619,7 +628,7 @@ auto dda_voxels(voxel_world::VoxelWorld self, Ray ray) -> std::pair<ivec3, float
     const int max_steps = min(500, int(aabb.maximum.x + aabb.maximum.y + aabb.maximum.z));
 
     for (int i = 0; i < max_steps; i++) {
-        if (getVoxel(mapPos) == true) {
+        if (get_voxel_is_solid(self, mapPos) == true) {
             aabb.minimum += vec3(mapPos) * (1.0f / 16.0f);
             aabb.maximum = aabb.minimum + (1.0f / 16.0f);
             tHit += hitAabb(aabb, ray);
@@ -817,4 +826,9 @@ void voxel_world::load_model(char const *path) {
 auto voxel_world::ray_cast(float const *ray_o, float const *ray_d) -> RayCastHit {
     auto [pos, dist] = dda_voxels(s_instance, Ray{{ray_o[0], ray_o[1], ray_o[2]}, {ray_d[0], ray_d[1], ray_d[2]}});
     return RayCastHit{.voxel_x = pos.x, .voxel_y = pos.y, .voxel_z = pos.z, .distance = dist};
+}
+
+auto voxel_world::is_solid(float const *pos) -> bool {
+    auto p = glm::ivec3(glm::vec3(pos[0], pos[1], pos[2]) * 16.0f);
+    return get_voxel_is_solid(s_instance, p);
 }

@@ -9,25 +9,29 @@
 #include <GLFW/glfw3.h>
 
 struct CameraState {
+    glm::mat4 view_to_world;
+    glm::mat4 world_to_view;
+    glm::mat4 view_to_clip;
+    glm::mat4 clip_to_view;
+};
+
+struct Controller {
     glm::vec3 pos;
+    glm::vec3 cam_pos_offset;
+    glm::vec3 vel;
     float yaw;
     float pitch;
+    float speed;
+
+    float aspect;
+    float vertical_fov_degrees;
+    float near;
 
     glm::vec3 forward;
     glm::vec2 forward_flat;
     glm::vec3 lateral;
     glm::vec2 lateral_flat;
     glm::vec3 upwards;
-
-    float aspect;
-    float vertical_fov_degrees;
-    float near;
-    float speed;
-
-    glm::mat4 view_to_world;
-    glm::mat4 world_to_view;
-    glm::mat4 view_to_clip;
-    glm::mat4 clip_to_view;
 
     bool move_f : 1;
     bool move_b : 1;
@@ -37,12 +41,19 @@ struct CameraState {
     bool move_d : 1;
     bool move_flat : 1;
     bool move_sprint : 1;
+
     bool rot_dirty : 1;
     bool trn_dirty : 1;
     bool prj_dirty : 1;
+
+    bool is_flying : 1;
+    bool on_ground : 1;
+
+    CameraState prev_cam;
+    CameraState cam;
 };
 
-void clear_move_state(CameraState *self) {
+void clear_move_state(Controller *self) {
     self->move_f = false;
     self->move_b = false;
     self->move_l = false;
@@ -57,10 +68,8 @@ void clear_move_state(CameraState *self) {
 }
 
 struct player::State {
-    CameraState main_cam;
-    CameraState prev_main_cam;
-    CameraState observer_cam;
-    CameraState prev_observer_cam;
+    Controller main;
+    Controller observer;
 
     bool controlling_observer : 1;
     bool viewing_observer : 1;
@@ -73,19 +82,21 @@ float const M_PI = 3.14159265f;
 void player::init(Player &self) {
     self = new State{};
 
-    self->main_cam.pos = glm::vec3{0.0f, 0.0f, -1.0f};
-    self->main_cam.yaw = 0.0f;
-    self->main_cam.pitch = M_PI * 0.5f;
+    self->main.pos = glm::vec3{40.0f, 40.0f, 40.0f};
+    self->main.yaw = 0.0f;
+    self->main.pitch = M_PI * 0.5f;
+    self->main.speed = 1.0f;
 
-    self->main_cam.aspect = 1.0f;
-    self->main_cam.vertical_fov_degrees = 74.0f;
-    self->main_cam.near = 0.01f;
-    self->main_cam.speed = 1.0f;
+    self->main.rot_dirty = true;
+    self->main.prj_dirty = true;
+    self->main.is_flying = true;
+    self->main.on_ground = false;
 
-    self->main_cam.rot_dirty = true;
-    self->main_cam.prj_dirty = true;
+    self->main.aspect = 1.0f;
+    self->main.vertical_fov_degrees = 74.0f;
+    self->main.near = 0.01f;
 
-    self->observer_cam = self->main_cam;
+    self->observer = self->main;
     self->controlling_observer = false;
 }
 void player::deinit(Player self) {
@@ -93,7 +104,7 @@ void player::deinit(Player self) {
 }
 
 void player::on_mouse_move(Player self, float x, float y) {
-    auto on_mouse_move = [](CameraState *self, float x, float y) {
+    auto on_mouse_move = [](Controller *self, float x, float y) {
         self->yaw += x * SENS * 0.001f;
         self->pitch -= y * SENS * 0.001f;
         self->pitch = glm::clamp(self->pitch, MAX_ROT_EPS, M_PI - MAX_ROT_EPS);
@@ -101,14 +112,14 @@ void player::on_mouse_move(Player self, float x, float y) {
         self->rot_dirty = true;
     };
     if (self->controlling_observer) {
-        on_mouse_move(&self->observer_cam, x, y);
+        on_mouse_move(&self->observer, x, y);
     } else {
-        on_mouse_move(&self->main_cam, x, y);
+        on_mouse_move(&self->main, x, y);
     }
 }
 
 void player::on_mouse_scroll(Player self, float x, float y) {
-    auto on_mouse_scroll = [](CameraState *self, float x, float y) {
+    auto on_mouse_scroll = [](Controller *self, float x, float y) {
         if (y < 0) {
             self->speed *= 0.85f;
         } else {
@@ -117,14 +128,14 @@ void player::on_mouse_scroll(Player self, float x, float y) {
         self->speed = glm::clamp(self->speed, 1.0f, 64.0f);
     };
     if (self->controlling_observer) {
-        on_mouse_scroll(&self->observer_cam, x, y);
+        on_mouse_scroll(&self->observer, x, y);
     } else {
-        on_mouse_scroll(&self->main_cam, x, y);
+        on_mouse_scroll(&self->main, x, y);
     }
 }
 
 void player::on_key(Player self, int key_id, int action) {
-    auto on_key = [](CameraState *self, int key_id, int action) {
+    auto on_key = [](Controller *self, int key_id, int action) {
         if (key_id == GLFW_KEY_W) {
             self->move_f = action != GLFW_RELEASE;
         }
@@ -149,43 +160,46 @@ void player::on_key(Player self, int key_id, int action) {
         if (key_id == GLFW_KEY_LEFT_SHIFT) {
             self->move_sprint = action != GLFW_RELEASE;
         }
+        if (key_id == GLFW_KEY_F && action == GLFW_PRESS) {
+            self->is_flying = !self->is_flying;
+        }
     };
     if (self->controlling_observer) {
-        on_key(&self->observer_cam, key_id, action);
+        on_key(&self->observer, key_id, action);
     } else {
-        on_key(&self->main_cam, key_id, action);
+        on_key(&self->main, key_id, action);
     }
 
     if (key_id == GLFW_KEY_N && action == GLFW_PRESS && self->viewing_observer) {
         self->controlling_observer = !self->controlling_observer;
         if (!self->controlling_observer) {
-            clear_move_state(&self->observer_cam);
+            clear_move_state(&self->observer);
         } else {
-            clear_move_state(&self->main_cam);
+            clear_move_state(&self->main);
         }
     }
     if (key_id == GLFW_KEY_P && action == GLFW_PRESS) {
         self->viewing_observer = !self->viewing_observer;
         self->controlling_observer = self->viewing_observer;
         if (!self->controlling_observer) {
-            clear_move_state(&self->observer_cam);
+            clear_move_state(&self->observer);
         } else {
-            clear_move_state(&self->main_cam);
+            clear_move_state(&self->main);
         }
     }
     if (key_id == GLFW_KEY_O && action == GLFW_PRESS) {
-        self->observer_cam = self->main_cam;
+        self->observer = self->main;
     }
 }
 
 void player::on_resize(Player self, int size_x, int size_y) {
-    auto on_resize = [](CameraState *self, int size_x, int size_y) {
+    auto on_resize = [](Controller *self, int size_x, int size_y) {
         self->aspect = float(size_x) / float(size_y);
         self->prj_dirty = true;
     };
 
-    on_resize(&self->main_cam, size_x, size_y);
-    on_resize(&self->observer_cam, size_x, size_y);
+    on_resize(&self->main, size_x, size_y);
+    on_resize(&self->observer, size_x, size_y);
 }
 
 glm::mat4 rotation_matrix(float yaw, float pitch, float roll) {
@@ -236,8 +250,8 @@ glm::mat4 translation_matrix(glm::vec3 pos) {
         pos.x, pos.y, pos.z, 1);
 }
 
-void update_camera(CameraState *self) {
-    auto view_dirty = self->rot_dirty || self->trn_dirty;
+void update_camera(Controller *self) {
+    auto view_dirty = self->rot_dirty || self->trn_dirty || true;
 
     if (self->rot_dirty) {
         float sin_rot_z = sinf(self->yaw), cos_rot_z = cosf(self->yaw);
@@ -246,14 +260,14 @@ void update_camera(CameraState *self) {
     }
 
     if (view_dirty) {
-        self->view_to_world = translation_matrix(self->pos) * rotation_matrix(self->yaw, self->pitch, 0.0f);
-        self->world_to_view = inv_rotation_matrix(self->yaw, self->pitch, 0.0f) * translation_matrix(self->pos * -1.0f);
+        self->cam.view_to_world = translation_matrix(self->pos + self->cam_pos_offset) * rotation_matrix(self->yaw, self->pitch, 0.0f);
+        self->cam.world_to_view = inv_rotation_matrix(self->yaw, self->pitch, 0.0f) * translation_matrix((self->pos + self->cam_pos_offset) * -1.0f);
     }
 
     if (self->rot_dirty) {
-        self->forward = glm::vec3(self->view_to_world * glm::vec4(0, 0, -1, 0));
-        self->lateral = glm::vec3(self->view_to_world * glm::vec4(+1, 0, 0, 0));
-        self->upwards = glm::vec3(self->view_to_world * glm::vec4(0, +1, 0, 0));
+        self->forward = glm::vec3(self->cam.view_to_world * glm::vec4(0, 0, -1, 0));
+        self->lateral = glm::vec3(self->cam.view_to_world * glm::vec4(+1, 0, 0, 0));
+        self->upwards = glm::vec3(self->cam.view_to_world * glm::vec4(0, +1, 0, 0));
     }
 
     if (self->prj_dirty) {
@@ -262,19 +276,19 @@ void update_camera(CameraState *self) {
         auto aspect = self->aspect;
         auto near = self->near;
 
-        self->view_to_clip = glm::mat4{0.0f};
-        self->view_to_clip[0][0] = +1.0f / tan_half_fov / aspect;
-        self->view_to_clip[1][1] = -1.0f / tan_half_fov;
-        self->view_to_clip[2][2] = +0.0f;
-        self->view_to_clip[2][3] = -1.0f;
-        self->view_to_clip[3][2] = near;
+        self->cam.view_to_clip = glm::mat4{0.0f};
+        self->cam.view_to_clip[0][0] = +1.0f / tan_half_fov / aspect;
+        self->cam.view_to_clip[1][1] = -1.0f / tan_half_fov;
+        self->cam.view_to_clip[2][2] = +0.0f;
+        self->cam.view_to_clip[2][3] = -1.0f;
+        self->cam.view_to_clip[3][2] = near;
 
-        self->clip_to_view = glm::mat4{0.0f};
-        self->clip_to_view[0][0] = tan_half_fov * aspect;
-        self->clip_to_view[1][1] = -tan_half_fov;
-        self->clip_to_view[2][2] = +0.0f;
-        self->clip_to_view[2][3] = +1.0f / near;
-        self->clip_to_view[3][2] = -1.0f;
+        self->cam.clip_to_view = glm::mat4{0.0f};
+        self->cam.clip_to_view[0][0] = tan_half_fov * aspect;
+        self->cam.clip_to_view[1][1] = -tan_half_fov;
+        self->cam.clip_to_view[2][2] = +0.0f;
+        self->cam.clip_to_view[2][3] = +1.0f / near;
+        self->cam.clip_to_view[3][2] = -1.0f;
     }
 
     self->rot_dirty = false;
@@ -282,57 +296,167 @@ void update_camera(CameraState *self) {
     self->prj_dirty = false;
 }
 
+#define EARTH_GRAV 9.807f
+#define MOON_GRAV 1.625f
+#define MARS_GRAV 3.728f
+#define JUPITER_GRAV 25.93f
+
+#define GRAVITY EARTH_GRAV
+
 void player::update(Player self, float dt) {
-    auto update = [](CameraState *self, CameraState *prev_self, float dt) {
-        *prev_self = *self;
+    auto update = [](Controller *self, float dt) {
+        self->prev_cam = self->cam;
         float const speed = (self->move_sprint ? 10.0f : 1.0f) * self->speed;
-        if (self->move_flat) {
-            if (self->move_f) {
-                self->pos += glm::vec3(self->forward_flat, 0) * (speed * dt);
-                self->trn_dirty = true;
+        float const jump_strength = 1.0f;
+
+        auto move_vec = glm::vec3(0);
+        auto acc = glm::vec3(0);
+
+        if (self->is_flying) {
+            self->vel = glm::vec3(0);
+            if (self->move_flat) {
+                if (self->move_f) {
+                    move_vec += glm::vec3(self->forward_flat, 0);
+                }
+                if (self->move_b) {
+                    move_vec -= glm::vec3(self->forward_flat, 0);
+                }
+                if (self->move_u) {
+                    move_vec += glm::vec3(0, 0, 1);
+                }
+                if (self->move_d) {
+                    move_vec -= glm::vec3(0, 0, 1);
+                }
+            } else {
+                if (self->move_f) {
+                    move_vec += self->forward;
+                }
+                if (self->move_b) {
+                    move_vec -= self->forward;
+                }
+                if (self->move_u) {
+                    move_vec += self->upwards;
+                }
+                if (self->move_d) {
+                    move_vec -= self->upwards;
+                }
             }
-            if (self->move_b) {
-                self->pos -= glm::vec3(self->forward_flat, 0) * (speed * dt);
-                self->trn_dirty = true;
+            if (self->move_l) {
+                move_vec -= self->lateral;
             }
-            if (self->move_u) {
-                self->pos += glm::vec3(0, 0, 1) * (speed * dt);
-                self->trn_dirty = true;
-            }
-            if (self->move_d) {
-                self->pos -= glm::vec3(0, 0, 1) * (speed * dt);
-                self->trn_dirty = true;
+            if (self->move_r) {
+                move_vec += self->lateral;
             }
         } else {
             if (self->move_f) {
-                self->pos += self->forward * (speed * dt);
-                self->trn_dirty = true;
+                move_vec += glm::vec3(self->forward_flat, 0);
             }
             if (self->move_b) {
-                self->pos -= self->forward * (speed * dt);
-                self->trn_dirty = true;
+                move_vec -= glm::vec3(self->forward_flat, 0);
             }
-            if (self->move_u) {
-                self->pos += self->upwards * (speed * dt);
-                self->trn_dirty = true;
+            if (self->move_l) {
+                move_vec -= self->lateral;
             }
-            if (self->move_d) {
-                self->pos -= self->upwards * (speed * dt);
-                self->trn_dirty = true;
+            if (self->move_r) {
+                move_vec += self->lateral;
+            }
+
+            if (self->on_ground && self->move_u) {
+                self->vel.z = EARTH_GRAV * sqrt(jump_strength * 2.0 / EARTH_GRAV);
+            } else {
+                acc.z -= GRAVITY;
             }
         }
-        if (self->move_l) {
-            self->pos -= self->lateral * (speed * dt);
+
+        self->vel += acc * dt;
+        auto vel = self->vel + move_vec * speed;
+        if (length(vel) > 0.0f) {
             self->trn_dirty = true;
         }
-        if (self->move_r) {
-            self->pos += self->lateral * (speed * dt);
-            self->trn_dirty = true;
+        self->pos += vel * dt;
+
+        float const VOXEL_SCL = 16.0f;
+        float const VOXEL_SIZE = 1.0f / VOXEL_SCL;
+        float const height = 1.75f;
+
+        self->on_ground = false;
+        bool inside_terrain = false;
+        int32_t voxel_height = height * VOXEL_SCL + 1;
+
+        for (int32_t xi = -2; xi <= 2; ++xi) {
+            for (int32_t yi = -2; yi <= 2; ++yi) {
+                for (int32_t zi = 0; zi <= voxel_height; ++zi) {
+                    auto p = self->pos - glm::vec3(0, 0, height) + glm::vec3(xi * VOXEL_SIZE, yi * VOXEL_SIZE, zi * VOXEL_SIZE);
+                    auto in_voxel = voxel_world::is_solid(&p.x);
+                    if (in_voxel) {
+                        inside_terrain = true;
+                        break;
+                    }
+                }
+            }
         }
+
+        if (inside_terrain) {
+            bool space_above = false;
+            int32_t first_height = -1;
+            for (int32_t zi = 0; zi < voxel_height + voxel_height / 2; ++zi) {
+                bool found_voxel = false;
+                for (int32_t xi = -2; xi <= 2; ++xi) {
+                    if (found_voxel) {
+                        break;
+                    }
+                    for (int32_t yi = -2; yi <= 2; ++yi) {
+                        if (found_voxel) {
+                            break;
+                        }
+                        auto p = self->pos - glm::vec3(0, 0, height) + glm::vec3(xi * VOXEL_SIZE, yi * VOXEL_SIZE, zi * VOXEL_SIZE);
+                        auto solid = voxel_world::is_solid(&p.x);
+                        if (solid) {
+                            found_voxel = true;
+                        }
+                    }
+                }
+                if (zi - first_height >= voxel_height) {
+                    break;
+                }
+                if (found_voxel) {
+                    first_height = -1;
+                    space_above = false;
+                }
+                if (!found_voxel && zi < voxel_height / 2 && first_height == -1) {
+                    first_height = zi;
+                    space_above = true;
+                }
+            }
+            if (space_above) {
+                float current_z = self->pos.z;
+                self->pos = self->pos + glm::vec3(0, 0, VOXEL_SIZE * first_height);
+                self->pos.z = floor(self->pos.z * VOXEL_SCL) * VOXEL_SIZE;
+                float new_z = self->pos.z;
+                self->cam_pos_offset.z += current_z - new_z;
+                self->on_ground = true;
+                self->vel.z = 0;
+            } else {
+                self->pos -= vel * dt;
+            }
+        }
+
+        auto cam_pos_offset_sign = sign(self->cam_pos_offset);
+        auto const interp_speed = std::max(length(self->cam_pos_offset) * float(VOXEL_SCL), 0.25f);
+        self->cam_pos_offset = self->cam_pos_offset - cam_pos_offset_sign * dt * interp_speed;
+
+        auto new_cam_pos_offset_sign = sign(self->cam_pos_offset);
+        if (new_cam_pos_offset_sign.x != cam_pos_offset_sign.x)
+            self->cam_pos_offset.x = 0.0f;
+        if (new_cam_pos_offset_sign.y != cam_pos_offset_sign.y)
+            self->cam_pos_offset.y = 0.0f;
+        if (new_cam_pos_offset_sign.z != cam_pos_offset_sign.z)
+            self->cam_pos_offset.z = 0.0f;
+
         update_camera(self);
     };
-    update(&self->observer_cam, &self->prev_observer_cam, dt);
-    update(&self->main_cam, &self->prev_main_cam, dt);
+    update(&self->observer, dt);
+    update(&self->main, dt);
 
     if (self->viewing_observer) {
         using Line = std::array<glm::vec3, 3>;
@@ -352,7 +476,7 @@ void player::update(Player self, float dt) {
         for (auto &point : points) {
             point.x = point.x * 2.0f - 1.0f;
             point.y = point.y * 2.0f - 1.0f;
-            auto ws_p = self->main_cam.view_to_world * self->main_cam.clip_to_view * glm::vec4(point, 1.0f);
+            auto ws_p = self->main.cam.view_to_world * self->main.cam.clip_to_view * glm::vec4(point, 1.0f);
             point = glm::vec3(ws_p.x, ws_p.y, ws_p.z) / ws_p.w;
         }
 
@@ -382,7 +506,8 @@ void player::update(Player self, float dt) {
         }
     }
 
-    auto ray_cast = voxel_world::ray_cast(&self->main_cam.pos.x, &self->main_cam.forward.x);
+    auto ray_pos = self->main.pos + self->main.cam_pos_offset;
+    auto ray_cast = voxel_world::ray_cast(&ray_pos.x, &self->main.forward.x);
     if (ray_cast.distance != -1.0f && ray_cast.distance / 16.0f < 10.0f) {
         using Box = std::array<glm::vec3, 3>;
         auto cube = Box{
@@ -437,13 +562,13 @@ void get_camera(CameraState const &cam, CameraState const &prev_cam, Camera *cam
 }
 
 void player::get_camera(Player self, Camera *camera, GpuInput const *gpu_input) {
-    update_camera(&self->main_cam);
-    get_camera(self->main_cam, self->prev_main_cam, camera, gpu_input, true);
+    update_camera(&self->main);
+    get_camera(self->main.cam, self->main.prev_cam, camera, gpu_input, true);
 }
 
 void player::get_observer_camera(Player self, Camera *camera, GpuInput const *gpu_input) {
-    update_camera(&self->observer_cam);
-    get_camera(self->observer_cam, self->prev_observer_cam, camera, gpu_input, false);
+    update_camera(&self->observer);
+    get_camera(self->observer.cam, self->observer.prev_cam, camera, gpu_input, false);
 }
 
 auto player::should_draw_from_observer(Player self) -> bool {

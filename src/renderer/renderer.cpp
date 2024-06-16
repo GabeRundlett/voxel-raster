@@ -1559,6 +1559,7 @@ void renderer::draw(Renderer self, player::Player player, voxel_world::VoxelWorl
                 ImGui::SetTooltip("* only if already in observer camera view");
             }
             ImGui::Text("L = Toggle FSR2");
+            ImGui::Text("F = Toggle Fly");
         }
         ImGui::End();
         ImGui::Render();

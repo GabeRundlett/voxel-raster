@@ -18,4 +18,5 @@ namespace voxel_world {
         float distance;
     };
     auto ray_cast(float const *ray_o, float const *ray_d) -> RayCastHit;
+    auto is_solid(float const *pos) -> bool;
 } // namespace voxel_world
