@@ -1549,25 +1549,30 @@ void renderer::draw(Renderer self, player::Player player, voxel_world::VoxelWorl
             ImGui::SetTooltip("Observer camera position");
         }
         {
-            ImGui::Text("Keybinds:");
-            ImGui::Text("ESC = Toggle capture mouse and keyboard");
-            ImGui::Text("WASD/SPACE/CONTROL = Move current camera");
+            ImGui::Text("Inputs:");
+            ImGui::Text(" ESC    | Toggle capture mouse and keyboard");
+            ImGui::Text(" WASD/SPACE/CONTROL | Move current camera");
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("* corresponds to Forward, Left, Backward, Right, Up, Down");
             }
-            ImGui::Text("SHIFT = Sprint");
-            ImGui::Text("Q = Toggle up movement direction");
+            ImGui::Text(" SHIFT  | Sprint");
+            ImGui::Text(" SCROLL | Speed-up/down");
+            ImGui::Text(" Q      | Toggle up movement direction");
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("* Toggles the up direction between global up and relative up");
             }
-            ImGui::Text("P = Toggle observer camera view");
-            ImGui::Text("O = Teleport observer camera to main camera");
-            ImGui::Text("N = Control main camera from observer *");
+            ImGui::Text(" P      | Toggle observer camera view");
+            ImGui::Text(" O      | Teleport observer camera to main camera");
+            ImGui::Text(" N      | Control main camera from observer *");
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("* only if already in observer camera view");
             }
-            ImGui::Text("L = Toggle FSR2");
-            ImGui::Text("F = Toggle Fly");
+            ImGui::Text(" L      | Toggle FSR2");
+            ImGui::Text(" F      | Toggle Fly");
+            ImGui::Text(" F5     | Toggle Third-person");
+            ImGui::Text(" C      | Toggle Fast-placement");
+            ImGui::Text(" LMB    | Break voxels");
+            ImGui::Text(" RMB    | Place voxels");
         }
         ImGui::End();
         ImGui::Render();

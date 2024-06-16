@@ -54,6 +54,7 @@ struct Controller {
 
     bool brush_a : 1;
     bool brush_b : 1;
+    bool fast_placement : 1;
 
     CameraState prev_cam;
     CameraState cam;
@@ -179,6 +180,9 @@ void player::on_key(Player self, int key_id, int action) {
         }
         if (key_id == GLFW_KEY_F && action == GLFW_PRESS) {
             self->is_flying = !self->is_flying;
+        }
+        if (key_id == GLFW_KEY_C && action == GLFW_PRESS) {
+            self->fast_placement = !self->fast_placement;
         }
     };
     if (self->controlling_observer) {
@@ -608,7 +612,9 @@ void player::update(Player self, float dt) {
         if (self->main.brush_a) {
             glm::ivec3 pos = {self->ray_cast.voxel_x, self->ray_cast.voxel_y, self->ray_cast.voxel_z};
             voxel_world::apply_brush_a(&pos.x);
-            // self->main.brush_a = false;
+            if (!self->main.fast_placement) {
+                self->main.brush_a = false;
+            }
         }
         if (self->main.brush_b) {
             auto ap0 = cube[0] - glm::vec3(5.0f * VOXEL_SIZE);
@@ -627,7 +633,9 @@ void player::update(Player self, float dt) {
                 glm::ivec3 nrm = {self->ray_cast.nrm_x, self->ray_cast.nrm_y, self->ray_cast.nrm_z};
                 pos += nrm;
                 voxel_world::apply_brush_b(&pos.x);
-                // self->main.brush_b = false;
+                if (!self->main.fast_placement) {
+                    self->main.brush_b = false;
+                }
             }
         }
     }
