@@ -102,7 +102,8 @@ export void generate_attributes(
             } else {
                 voxel.col = DIRT_COL / 255.0f;
             }
-            voxel.nrm = dn.nrm;
+            ivec3 o = {xi, yi, zi};
+            voxel.nrm = dither_nrm(random_ctx, dn.nrm, o);
             PackedVoxel packed_voxel = pack_voxel(voxel);
             packed_voxels[voxel_index] = packed_voxel.data;
         }

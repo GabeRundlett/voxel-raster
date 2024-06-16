@@ -67,6 +67,8 @@ void generate_attributes_cpp(
                 } else {
                     col = glm::vec3(112, 62, 30) / 255.0f;
                 }
+                ivec3 o = {xi, yi, zi};
+                dn.nrm = dither_nrm(random_ctx, dn.nrm, o);
                 packed_voxels[voxel_index] = pack_voxel(Voxel(col, dn.nrm)).data;
             }
         }

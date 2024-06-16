@@ -101,9 +101,9 @@ const auto RANDOM_VALUES = []() {
     return result;
 }();
 
-constexpr int32_t CHUNK_NX = 32;
-constexpr int32_t CHUNK_NY = 32;
-constexpr int32_t CHUNK_NZ = 32;
+constexpr int32_t CHUNK_NX = 16;
+constexpr int32_t CHUNK_NY = 16;
+constexpr int32_t CHUNK_NZ = 16;
 constexpr int32_t CHUNK_LEVELS = 1;
 
 static_assert(CHUNK_NX * CHUNK_NY * CHUNK_NZ * CHUNK_LEVELS <= MAX_CHUNK_COUNT);
@@ -602,7 +602,82 @@ auto get_voxel_is_solid(voxel_world::VoxelWorld self, ivec3 p) -> bool {
     return ((brick_bitmask.bits[voxel_word_index] >> voxel_in_word_index) & 1) != 0;
 }
 
-auto dda_voxels(voxel_world::VoxelWorld self, Ray ray) -> std::pair<ivec3, float> {
+void set_voxel_bit(voxel_world::VoxelWorld self, ivec3 p, bool value) {
+    ivec3 chunk_i = p / int(VOXEL_CHUNK_SIZE);
+
+    if (any(lessThan(chunk_i, ivec3(0))) || any(greaterThanEqual(chunk_i, ivec3(CHUNK_NX, CHUNK_NY, CHUNK_NZ)))) {
+        return;
+    }
+
+    ivec3 brick_i = positive_mod(p / int(VOXEL_BRICK_SIZE), int(BRICK_CHUNK_SIZE));
+    ivec3 voxel_i = positive_mod(p, int(VOXEL_BRICK_SIZE));
+    auto chunk_index = chunk_i.x + chunk_i.y * CHUNK_NX + chunk_i.z * CHUNK_NX * CHUNK_NY;
+    auto brick_index = brick_i.x + brick_i.y * BRICK_CHUNK_SIZE + brick_i.z * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
+    auto voxel_index = voxel_i.x + voxel_i.y * VOXEL_BRICK_SIZE + voxel_i.z * VOXEL_BRICK_SIZE * VOXEL_BRICK_SIZE;
+    auto &chunk = self->chunks[chunk_index];
+    if (!chunk) {
+        return;
+    }
+    auto &brick_bitmask = chunk->voxel_brick_bitmasks[brick_index];
+    uint voxel_word_index = voxel_index / 32;
+    uint voxel_in_word_index = voxel_index % 32;
+
+    bool prev_value = ((brick_bitmask.bits[voxel_word_index] >> voxel_in_word_index) & 1) != 0;
+
+    auto &brick_metadata = get_brick_metadata(chunk, brick_index);
+
+    if (prev_value != value) {
+        chunk->bricks_changed = true;
+    }
+
+    if (value) {
+        brick_bitmask.bits[voxel_word_index] |= 1 << voxel_in_word_index;
+        brick_metadata.has_voxel = true;
+    } else {
+        brick_bitmask.bits[voxel_word_index] &= ~(1 << voxel_in_word_index);
+        brick_metadata.has_air_px = brick_metadata.has_air_px || voxel_i.x == VOXEL_BRICK_SIZE - 1;
+        brick_metadata.has_air_nx = brick_metadata.has_air_nx || voxel_i.x == 0;
+        brick_metadata.has_air_py = brick_metadata.has_air_py || voxel_i.x == VOXEL_BRICK_SIZE - 1;
+        brick_metadata.has_air_ny = brick_metadata.has_air_ny || voxel_i.x == 0;
+        brick_metadata.has_air_pz = brick_metadata.has_air_pz || voxel_i.x == VOXEL_BRICK_SIZE - 1;
+        brick_metadata.has_air_nz = brick_metadata.has_air_nz || voxel_i.x == 0;
+    }
+}
+
+#include "pack_unpack.inl"
+
+void set_voxel_attrib(voxel_world::VoxelWorld self, ivec3 p, Voxel value) {
+    ivec3 chunk_i = p / int(VOXEL_CHUNK_SIZE);
+
+    if (any(lessThan(chunk_i, ivec3(0))) || any(greaterThanEqual(chunk_i, ivec3(CHUNK_NX, CHUNK_NY, CHUNK_NZ)))) {
+        return;
+    }
+
+    ivec3 brick_i = positive_mod(p / int(VOXEL_BRICK_SIZE), int(BRICK_CHUNK_SIZE));
+    ivec3 voxel_i = positive_mod(p, int(VOXEL_BRICK_SIZE));
+    auto chunk_index = chunk_i.x + chunk_i.y * CHUNK_NX + chunk_i.z * CHUNK_NX * CHUNK_NY;
+    auto brick_index = brick_i.x + brick_i.y * BRICK_CHUNK_SIZE + brick_i.z * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
+    auto voxel_index = voxel_i.x + voxel_i.y * VOXEL_BRICK_SIZE + voxel_i.z * VOXEL_BRICK_SIZE * VOXEL_BRICK_SIZE;
+    auto &chunk = self->chunks[chunk_index];
+    if (!chunk) {
+        return;
+    }
+    auto &brick_attribs = chunk->voxel_brick_attribs[brick_index];
+    if (!brick_attribs) {
+        return;
+    }
+
+    PackedVoxel prev_value = brick_attribs->packed_voxels[voxel_index];
+    PackedVoxel new_value = pack_voxel(value);
+
+    if (prev_value.data != new_value.data) {
+        chunk->bricks_changed = true;
+    }
+
+    brick_attribs->packed_voxels[voxel_index] = new_value;
+}
+
+auto dda_voxels(voxel_world::VoxelWorld self, Ray ray) -> std::tuple<ivec3, ivec3, float> {
     using Line = std::array<vec3, 3>;
     using Point = std::array<vec3, 3>;
     using Box = std::array<vec3, 3>;
@@ -614,7 +689,7 @@ auto dda_voxels(voxel_world::VoxelWorld self, Ray ray) -> std::pair<ivec3, float
     ray.origin += ray.direction * tHit * BIAS;
 
     if (tHit < 0) {
-        return {ivec3{0, 0, 0}, -1.0f};
+        return {ivec3{0, 0, 0}, ivec3{0, 0, 0}, -1.0f};
     }
 
     ivec3 bmin = ivec3(floor(aabb.minimum));
@@ -632,7 +707,13 @@ auto dda_voxels(voxel_world::VoxelWorld self, Ray ray) -> std::pair<ivec3, float
             aabb.minimum += vec3(mapPos) * (1.0f / 16.0f);
             aabb.maximum = aabb.minimum + (1.0f / 16.0f);
             tHit += hitAabb(aabb, ray);
-            return {mapPos, tHit};
+
+            // int x_face = (mask.x * ((rayStep.x + 1) / 2 + 0));
+            // int y_face = (mask.y * ((rayStep.y + 1) / 2 + 2));
+            // int z_face = (mask.z * ((rayStep.z + 1) / 2 + 4));
+            // x_face + y_face + z_face
+
+            return {mapPos, -rayStep * ivec3(mask), tHit};
         }
         mask = lessThanEqual(sideDist, min(vec3(sideDist.y, sideDist.z, sideDist.x), vec3(sideDist.z, sideDist.x, sideDist.y)));
         sideDist += vec3(mask) * deltaDist;
@@ -651,7 +732,7 @@ auto dda_voxels(voxel_world::VoxelWorld self, Ray ray) -> std::pair<ivec3, float
         // prev_pos = next_pos;
     }
 
-    return {ivec3{0, 0, 0}, -1.0f};
+    return {ivec3{0, 0, 0}, {0, 0, 0}, -1.0f};
 }
 
 void voxel_world::init(VoxelWorld &self) {
@@ -711,6 +792,10 @@ void voxel_world::update(VoxelWorld self) {
         auto brick_count = chunk->surface_brick_indices.size();
 
         if (chunk->bricks_changed) {
+            int xi = chunk_index % CHUNK_NX;
+            int yi = (chunk_index / CHUNK_NX) % CHUNK_NY;
+            int zi = (chunk_index / CHUNK_NY) / CHUNK_NZ;
+            generate_chunk2(self, xi, yi, zi, 0);
             if (chunk->render_chunk == nullptr) {
                 renderer::init(chunk->render_chunk);
             }
@@ -824,11 +909,34 @@ void voxel_world::load_model(char const *path) {
 }
 
 auto voxel_world::ray_cast(float const *ray_o, float const *ray_d) -> RayCastHit {
-    auto [pos, dist] = dda_voxels(s_instance, Ray{{ray_o[0], ray_o[1], ray_o[2]}, {ray_d[0], ray_d[1], ray_d[2]}});
-    return RayCastHit{.voxel_x = pos.x, .voxel_y = pos.y, .voxel_z = pos.z, .distance = dist};
+    auto [pos, face, dist] = dda_voxels(s_instance, Ray{{ray_o[0], ray_o[1], ray_o[2]}, {ray_d[0], ray_d[1], ray_d[2]}});
+    return RayCastHit{.voxel_x = pos.x, .voxel_y = pos.y, .voxel_z = pos.z, .nrm_x = face.x, .nrm_y = face.y, .nrm_z = face.z, .distance = dist};
 }
 
 auto voxel_world::is_solid(float const *pos) -> bool {
     auto p = glm::ivec3(glm::vec3(pos[0], pos[1], pos[2]) * 16.0f);
     return get_voxel_is_solid(s_instance, p);
+}
+
+void voxel_world::apply_brush_a(int const *pos) {
+    for (int zi = -2; zi <= 2; ++zi) {
+        for (int yi = -2; yi <= 2; ++yi) {
+            for (int xi = -2; xi <= 2; ++xi) {
+                auto p = glm::ivec3(pos[0], pos[1], pos[2]) + glm::ivec3(xi, yi, zi);
+                set_voxel_bit(s_instance, p, false);
+            }
+        }
+    }
+}
+
+void voxel_world::apply_brush_b(int const *pos) {
+    for (int zi = -2; zi <= 2; ++zi) {
+        for (int yi = -2; yi <= 2; ++yi) {
+            for (int xi = -2; xi <= 2; ++xi) {
+                auto p = glm::ivec3(pos[0], pos[1], pos[2]) + glm::ivec3(xi, yi, zi);
+                set_voxel_bit(s_instance, p, true);
+                set_voxel_attrib(s_instance, p, Voxel{.col = {1, 0.5f, 0}, .nrm = {0, 0, 1}});
+            }
+        }
+    }
 }

@@ -21,6 +21,10 @@ static inline uniform float get(uniform mat3 &m, uniform int i, uniform int j) {
     return m.data[i * 3 + j];
 }
 
+static inline float get(mat3 &m, uniform int i, uniform int j) {
+    return m.data[i * 3 + j];
+}
+
 static inline void set(uniform mat3 &m, uniform int i, uniform int j, uniform float x) {
     m.data[i * 3 + j] = x;
 }
@@ -61,6 +65,13 @@ static inline uniform mat3 operator*(uniform mat3 m1, uniform mat3 m2) {
 }
 
 static inline vec3 operator*(uniform mat3 m, vec3 v) {
+    vec3 result;
+    result.x = get(m, 0, 0) * v.x + get(m, 1, 0) * v.y + get(m, 2, 0) * v.z;
+    result.y = get(m, 0, 1) * v.x + get(m, 1, 1) * v.y + get(m, 2, 1) * v.z;
+    result.z = get(m, 0, 2) * v.x + get(m, 1, 2) * v.y + get(m, 2, 2) * v.z;
+    return result;
+}
+static inline vec3 operator*(mat3 m, vec3 v) {
     vec3 result;
     result.x = get(m, 0, 0) * v.x + get(m, 1, 0) * v.y + get(m, 2, 0) * v.z;
     result.y = get(m, 0, 1) * v.x + get(m, 1, 1) * v.y + get(m, 2, 1) * v.z;
@@ -392,4 +403,48 @@ static inline MinMax voxel_minmax_value(RandomCtx random_ctx, uniform NoiseSetti
         }
     }
     return result;
+}
+
+// Building an Orthonormal Basis, Revisited
+// http://jcgt.org/published/0006/01/01/
+static inline mat3 build_orthonormal_basis(vec3 n) {
+    vec3 b1;
+    vec3 b2;
+
+    if (n.z < 0.0) {
+        const float a = 1.0 / (1.0 - n.z);
+        const float b = n.x * n.y * a;
+        b1.x = 1.0 - n.x * n.x * a; b1.y = -b; b1.z = n.x;
+        b2.x = b; b2.y = n.y * n.y * a - 1.0; b2.z = -n.y;
+    } else {
+        const float a = 1.0 / (1.0 + n.z);
+        const float b = -n.x * n.y * a;
+        b1.x = 1.0 - n.x * n.x * a; b1.y = b; b1.z = -n.x;
+        b2.x = b; b2.y = 1.0 - n.y * n.y * a; b2.z = -n.y;
+    }
+
+    mat3 result = MAT3_INIT(b1.x, b1.y, b1.z, b2.x, b2.y, b2.z, n.x, n.y, n.z);
+    return result;
+}
+
+#if !defined M_PI
+#define M_PI 3.1415926535f
+#endif
+
+static inline vec3 uniform_sample_cone(vec2 urand, float cos_theta_max) {
+    float cos_theta = (1.0 - urand.x) + urand.x * cos_theta_max;
+    float sin_theta = sqrt(clamp(1.0 - cos_theta * cos_theta, 0.0, 1.0));
+    float phi = urand.y * (M_PI * 2.0);
+    vec3 result = {sin_theta * cos(phi), sin_theta * sin(phi), cos_theta};
+    return result;
+}
+
+static inline vec3 dither_nrm(RandomCtx random_ctx, vec3 nrm, ivec3 pos) {
+    ivec3 o0 = {nrm.x * 100, nrm.y * 100, nrm.z * 100};
+    ivec3 o1 = {nrm.z * 100, nrm.x * 100, nrm.y * 100};
+
+    const mat3 basis = build_orthonormal_basis(normalize(nrm));
+    const vec2 urand = {fast_random(random_ctx, pos + o0), fast_random(random_ctx, pos + o1)};
+    vec3 p = uniform_sample_cone(urand, cos(0.0123));
+    return basis * p;
 }

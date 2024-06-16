@@ -73,6 +73,15 @@ void init(AppState &self) {
                 player::on_mouse_scroll(self.player, x, y);
             }
         });
+    glfwSetMouseButtonCallback(
+        self.glfw_window_ptr,
+        [](GLFWwindow *glfw_window, int button_id, int action, int) {
+            auto &self = *reinterpret_cast<AppState *>(glfwGetWindowUserPointer(glfw_window));
+
+            if (!self.paused) {
+                player::on_mouse_button(self.player, button_id, action);
+            }
+        });
     glfwSetKeyCallback(
         self.glfw_window_ptr,
         [](GLFWwindow *glfw_window, int key, int, int action, int) {

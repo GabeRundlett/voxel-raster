@@ -1,6 +1,7 @@
 #include "player.hpp"
 #include "camera.inl"
 
+#include <glm/fwd.hpp>
 #include <renderer/renderer.hpp>
 #include <voxels/voxel_world.hpp>
 #include <renderer/shared.inl>
@@ -49,6 +50,10 @@ struct Controller {
     bool is_flying : 1;
     bool on_ground : 1;
     bool is_crouched : 1;
+    bool is_third_person : 1;
+
+    bool brush_a : 1;
+    bool brush_b : 1;
 
     CameraState prev_cam;
     CameraState cam;
@@ -69,6 +74,8 @@ void clear_move_state(Controller *self) {
 }
 
 struct player::State {
+    voxel_world::RayCastHit ray_cast;
+
     Controller main;
     Controller observer;
 
@@ -135,6 +142,15 @@ void player::on_mouse_scroll(Player self, float x, float y) {
     }
 }
 
+void player::on_mouse_button(Player self, int button_id, int action) {
+    if (button_id == GLFW_MOUSE_BUTTON_LEFT) {
+        self->main.brush_a = action != GLFW_RELEASE;
+    }
+    if (button_id == GLFW_MOUSE_BUTTON_RIGHT) {
+        self->main.brush_b = action != GLFW_RELEASE;
+    }
+}
+
 void player::on_key(Player self, int key_id, int action) {
     auto on_key = [](Controller *self, int key_id, int action) {
         if (key_id == GLFW_KEY_W) {
@@ -169,6 +185,9 @@ void player::on_key(Player self, int key_id, int action) {
         on_key(&self->observer, key_id, action);
     } else {
         on_key(&self->main, key_id, action);
+        if (key_id == GLFW_KEY_F5 && action == GLFW_PRESS) {
+            self->main.is_third_person = !self->main.is_third_person;
+        }
     }
 
     if (key_id == GLFW_KEY_N && action == GLFW_PRESS && self->viewing_observer) {
@@ -260,6 +279,18 @@ float const VOXEL_SIZE = 1.0f / VOXEL_SCL;
 
 glm::vec3 const eye_offset = glm::vec3(0, 0, -0.2f);
 
+using Line = std::array<glm::vec3, 3>;
+using Point = std::array<glm::vec3, 3>;
+using Box = std::array<glm::vec3, 3>;
+
+auto view_vec(Controller *self) {
+    if (self->is_third_person) {
+        return -self->forward;
+    } else {
+        return eye_offset;
+    }
+}
+
 void update_camera(Controller *self) {
     auto view_dirty = self->rot_dirty || self->trn_dirty || true;
 
@@ -270,8 +301,8 @@ void update_camera(Controller *self) {
     }
 
     if (view_dirty) {
-        self->cam.view_to_world = translation_matrix(self->pos + self->cam_pos_offset + eye_offset) * rotation_matrix(self->yaw, self->pitch, 0.0f);
-        self->cam.world_to_view = inv_rotation_matrix(self->yaw, self->pitch, 0.0f) * translation_matrix((self->pos + self->cam_pos_offset + eye_offset) * -1.0f);
+        self->cam.view_to_world = translation_matrix(self->pos + self->cam_pos_offset + view_vec(self)) * rotation_matrix(self->yaw, self->pitch, 0.0f);
+        self->cam.world_to_view = inv_rotation_matrix(self->yaw, self->pitch, 0.0f) * translation_matrix((self->pos + self->cam_pos_offset + view_vec(self)) * -1.0f);
     }
 
     if (self->rot_dirty) {
@@ -314,7 +345,7 @@ void update_camera(Controller *self) {
 #define GRAVITY EARTH_GRAV
 
 void player::update(Player self, float dt) {
-    auto update = [](Controller *self, float dt) {
+    auto update = [](Controller *self, float dt, bool no_clip) {
         self->prev_cam = self->cam;
         float const speed = (self->move_sprint ? (self->is_flying ? 10.0f : 3.0f) : 1.0f) * self->speed;
         float height = standing_height;
@@ -404,61 +435,83 @@ void player::update(Player self, float dt) {
         bool inside_terrain = false;
         int32_t voxel_height = height * VOXEL_SCL + 1;
 
-        for (int32_t xi = -2; xi <= 2; ++xi) {
-            for (int32_t yi = -2; yi <= 2; ++yi) {
-                for (int32_t zi = 0; zi <= voxel_height; ++zi) {
-                    auto p = self->pos - glm::vec3(0, 0, height) + glm::vec3(xi * VOXEL_SIZE, yi * VOXEL_SIZE, zi * VOXEL_SIZE);
-                    auto in_voxel = voxel_world::is_solid(&p.x);
-                    if (in_voxel) {
-                        inside_terrain = true;
-                        break;
+        glm::vec3 avg_pos = glm::vec3(0);
+        int32_t in_voxel_n = 0;
+
+        if (!no_clip) {
+            for (int32_t xi = -2; xi <= 2; ++xi) {
+                for (int32_t yi = -2; yi <= 2; ++yi) {
+                    for (int32_t zi = 0; zi <= voxel_height; ++zi) {
+                        auto p = self->pos - glm::vec3(0, 0, height) + glm::vec3(xi * VOXEL_SIZE, yi * VOXEL_SIZE, zi * VOXEL_SIZE);
+                        auto in_voxel = voxel_world::is_solid(&p.x);
+                        if (in_voxel) {
+                            inside_terrain = true;
+                            avg_pos += p;
+                            ++in_voxel_n;
+                            // break;
+
+                            if (self->is_third_person) {
+                                auto cube = Box{
+                                    floor(p * VOXEL_SCL + 0.0f) * VOXEL_SIZE,
+                                    floor(p * VOXEL_SCL + 1.0f) * VOXEL_SIZE,
+                                    {1.0f, 0.0f, 0.0f},
+                                };
+                                renderer::submit_debug_box_lines((renderer::Box const *)&cube, 1);
+                            }
+                        }
                     }
                 }
             }
-        }
 
-        if (inside_terrain) {
-            bool space_above = false;
-            int32_t first_height = -1;
-            for (int32_t zi = 0; zi < voxel_height + voxel_height / 2; ++zi) {
-                bool found_voxel = false;
-                for (int32_t xi = -2; xi <= 2; ++xi) {
-                    if (found_voxel) {
-                        break;
-                    }
-                    for (int32_t yi = -2; yi <= 2; ++yi) {
+            if (inside_terrain) {
+                bool space_above = false;
+                int32_t first_height = -1;
+                for (int32_t zi = 0; zi < voxel_height + voxel_height / 2; ++zi) {
+                    bool found_voxel = false;
+                    for (int32_t xi = -2; xi <= 2; ++xi) {
                         if (found_voxel) {
                             break;
                         }
-                        auto p = self->pos - glm::vec3(0, 0, height) + glm::vec3(xi * VOXEL_SIZE, yi * VOXEL_SIZE, zi * VOXEL_SIZE);
-                        auto solid = voxel_world::is_solid(&p.x);
-                        if (solid) {
-                            found_voxel = true;
+                        for (int32_t yi = -2; yi <= 2; ++yi) {
+                            if (found_voxel) {
+                                break;
+                            }
+                            auto p = self->pos - glm::vec3(0, 0, height) + glm::vec3(xi * VOXEL_SIZE, yi * VOXEL_SIZE, zi * VOXEL_SIZE);
+                            auto solid = voxel_world::is_solid(&p.x);
+                            if (solid) {
+                                found_voxel = true;
+                            }
                         }
                     }
+                    if (zi - first_height >= voxel_height) {
+                        break;
+                    }
+                    if (found_voxel) {
+                        first_height = -1;
+                        space_above = false;
+                    }
+                    if (!found_voxel && zi < voxel_height / 2 && first_height == -1) {
+                        first_height = zi;
+                        space_above = true;
+                    }
                 }
-                if (zi - first_height >= voxel_height) {
-                    break;
+                if (space_above) {
+                    float current_z = self->pos.z;
+                    self->pos = self->pos + glm::vec3(0, 0, VOXEL_SIZE * first_height);
+                    self->pos.z = floor(self->pos.z * VOXEL_SCL) * VOXEL_SIZE;
+                    float new_z = self->pos.z;
+                    self->cam_pos_offset.z += current_z - new_z;
+                    self->on_ground = true;
+                    self->vel.z = 0;
+                } else {
+                    avg_pos *= 1.0f / float(in_voxel_n);
+                    auto nrm = normalize(glm::vec3{self->pos.x, self->pos.y, avg_pos.z} - avg_pos);
+
+                    // float c = dot(vel, nrm);
+                    // self->vel -= c * nrm;
+
+                    self->pos -= vel * dt;
                 }
-                if (found_voxel) {
-                    first_height = -1;
-                    space_above = false;
-                }
-                if (!found_voxel && zi < voxel_height / 2 && first_height == -1) {
-                    first_height = zi;
-                    space_above = true;
-                }
-            }
-            if (space_above) {
-                float current_z = self->pos.z;
-                self->pos = self->pos + glm::vec3(0, 0, VOXEL_SIZE * first_height);
-                self->pos.z = floor(self->pos.z * VOXEL_SCL) * VOXEL_SIZE;
-                float new_z = self->pos.z;
-                self->cam_pos_offset.z += current_z - new_z;
-                self->on_ground = true;
-                self->vel.z = 0;
-            } else {
-                self->pos -= vel * dt;
             }
         }
 
@@ -475,15 +528,29 @@ void player::update(Player self, float dt) {
             self->cam_pos_offset.z = 0.0f;
 
         update_camera(self);
+
+        if (self->is_third_person) {
+            float const height = self->is_crouched ? crouch_height : standing_height;
+            auto p = self->pos - glm::vec3(0, 0, height) + glm::vec3(-2 * VOXEL_SIZE, -2 * VOXEL_SIZE, 0);
+            int32_t voxel_height = height * VOXEL_SCL + 1;
+            auto cube = Box{p, p + glm::vec3(4, 4, voxel_height) * VOXEL_SIZE, {1.0f, 1.0f, 1.0f}};
+            renderer::submit_debug_box_lines((renderer::Box const *)&cube, 1);
+
+            if (in_voxel_n != 0) {
+                avg_pos *= 1.0f / float(in_voxel_n);
+
+                auto pt = Point{avg_pos, {1.0f, 0.2f, 0.0f}, {0.125f, 0.125f, 1.0f}};
+                renderer::submit_debug_points((renderer::Point const *)&pt, 1);
+
+                auto line = Line{avg_pos, {self->pos.x, self->pos.y, avg_pos.z}, {1.0f, 0.2f, 0.0f}};
+                renderer::submit_debug_lines((renderer::Line const *)&line, 1);
+            }
+        }
     };
-    update(&self->observer, dt);
-    update(&self->main, dt);
-    using Box = std::array<glm::vec3, 3>;
+    update(&self->observer, dt, true);
+    update(&self->main, dt, false);
 
     if (self->viewing_observer) {
-        using Line = std::array<glm::vec3, 3>;
-        using Point = std::array<glm::vec3, 3>;
-
         // Draw main camera frustum outline:
         auto points = std::array<glm::vec3, 8>{
             glm::vec3{0, 0, 1},
@@ -526,25 +593,41 @@ void player::update(Player self, float dt) {
             // auto pt = Point{points[pi0], {0.0f, 1.0f, 1.0f}, {0.125f, 0.125f, 1.0f}};
             // renderer::submit_debug_points((renderer::Point const *)&pt, 1);
         }
-
-        {
-            float const height = self->main.is_crouched ? crouch_height : standing_height;
-            auto p = self->main.pos - glm::vec3(0, 0, height) + glm::vec3(-2 * VOXEL_SIZE, -2 * VOXEL_SIZE, -2 * VOXEL_SIZE);
-            int32_t voxel_height = height * VOXEL_SCL + 1;
-            auto cube = Box{p, p + glm::vec3(5, 5, voxel_height) * VOXEL_SIZE, {1.0f, 1.0f, 1.0f}};
-            renderer::submit_debug_box_lines((renderer::Box const *)&cube, 1);
-        }
     }
 
-    auto ray_pos = self->main.pos + self->main.cam_pos_offset + eye_offset;
-    auto ray_cast = voxel_world::ray_cast(&ray_pos.x, &self->main.forward.x);
-    if (ray_cast.distance != -1.0f && ray_cast.distance / 16.0f < 10.0f) {
+    auto ray_pos = self->main.pos + self->main.cam_pos_offset + view_vec(&self->main);
+    self->ray_cast = voxel_world::ray_cast(&ray_pos.x, &self->main.forward.x);
+    if (self->ray_cast.distance != -1.0f && self->ray_cast.distance / 16.0f < 10.0f) {
         auto cube = Box{
-            glm::vec3(ray_cast.voxel_x, ray_cast.voxel_y, ray_cast.voxel_z) / 16.0f,
-            glm::vec3(ray_cast.voxel_x + 1, ray_cast.voxel_y + 1, ray_cast.voxel_z + 1) / 16.0f,
+            glm::vec3(self->ray_cast.voxel_x, self->ray_cast.voxel_y, self->ray_cast.voxel_z) / 16.0f,
+            glm::vec3(self->ray_cast.voxel_x + 1, self->ray_cast.voxel_y + 1, self->ray_cast.voxel_z + 1) / 16.0f,
             {1.0f, 1.0f, 1.0f},
         };
         renderer::submit_debug_box_lines((renderer::Box const *)&cube, 1);
+
+        if (self->main.brush_a) {
+            glm::ivec3 pos = {self->ray_cast.voxel_x, self->ray_cast.voxel_y, self->ray_cast.voxel_z};
+            voxel_world::apply_brush_a(&pos.x);
+        }
+        if (self->main.brush_b) {
+            auto ap0 = cube[0] - glm::vec3(2.0f * VOXEL_SIZE);
+            auto ap1 = cube[1] + glm::vec3(2.0f * VOXEL_SIZE);
+
+            float const height = self->main.is_crouched ? crouch_height : standing_height;
+            auto p = self->main.pos - glm::vec3(0, 0, height) + glm::vec3(-3 * VOXEL_SIZE, -3 * VOXEL_SIZE, 0);
+            int32_t voxel_height = height * VOXEL_SCL + 1;
+            cube = Box{p, p + glm::vec3(6, 6, voxel_height) * VOXEL_SIZE, {1.0f, 1.0f, 1.0f}};
+
+            auto bp0 = cube[0];
+            auto bp1 = cube[1];
+
+            if (any(lessThan(ap1, bp0)) || any(greaterThan(ap0, bp1))) {
+                glm::ivec3 pos = {self->ray_cast.voxel_x, self->ray_cast.voxel_y, self->ray_cast.voxel_z};
+                glm::ivec3 nrm = {self->ray_cast.nrm_x, self->ray_cast.nrm_y, self->ray_cast.nrm_z};
+                pos += nrm;
+                voxel_world::apply_brush_b(&pos.x);
+            }
+        }
     }
 }
 

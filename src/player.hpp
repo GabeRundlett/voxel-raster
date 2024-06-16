@@ -13,6 +13,7 @@ namespace player {
 
     void on_mouse_move(Player self, float x, float y);
     void on_mouse_scroll(Player self, float x, float y);
+    void on_mouse_button(Player self, int button_id, int action);
     void on_key(Player self, int key_id, int action);
     void on_resize(Player self, int size_x, int size_y);
 

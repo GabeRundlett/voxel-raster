@@ -15,8 +15,12 @@ namespace voxel_world {
 
     struct RayCastHit {
         int voxel_x, voxel_y, voxel_z;
+        int nrm_x, nrm_y, nrm_z;
         float distance;
     };
     auto ray_cast(float const *ray_o, float const *ray_d) -> RayCastHit;
     auto is_solid(float const *pos) -> bool;
+
+    void apply_brush_a(int const *pos);
+    void apply_brush_b(int const *pos);
 } // namespace voxel_world

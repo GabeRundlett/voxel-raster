@@ -1,6 +1,7 @@
 #include "shared.inl"
 #include "renderer.hpp"
 #include "../player.hpp"
+#include "voxels/defs.inl"
 #include <daxa/c/core.h>
 #include <daxa/command_recorder.hpp>
 #include <daxa/gpu_resources.hpp>
@@ -363,6 +364,10 @@ struct DebugLinesTask : DebugLinesH::Task {
     bool const *draw_from_observer;
 
     void callback(daxa::TaskInterface ti) {
+        if (debug_lines->empty()) {
+            return;
+        }
+
         auto const &image_attach_info = ti.get(AT.render_target);
         auto image_info = ti.device.info_image(image_attach_info.ids[0]).value();
         auto render_recorder = std::move(ti.recorder).begin_renderpass({
@@ -397,6 +402,9 @@ struct DebugPointsTask : DebugLinesH::Task {
     bool const *draw_from_observer;
 
     void callback(daxa::TaskInterface ti) {
+        if (debug_points->empty()) {
+            return;
+        }
         auto const &image_attach_info = ti.get(AT.render_target);
         auto image_info = ti.device.info_image(image_attach_info.ids[0]).value();
         auto render_recorder = std::move(ti.recorder).begin_renderpass({
@@ -876,7 +884,7 @@ void renderer::init(Renderer &self, void *glfw_window_ptr) {
             .mesh_shader_bit = true,
             .image_atomic64 = true,
         },
-        .max_allowed_buffers = 1 << 16,
+        .max_allowed_buffers = MAX_CHUNK_COUNT + 1000,
         .name = "my device",
     });
 
