@@ -597,7 +597,7 @@ void player::update(Player self, float dt) {
 
     auto ray_pos = self->main.pos + self->main.cam_pos_offset + view_vec(&self->main);
     self->ray_cast = voxel_world::ray_cast(&ray_pos.x, &self->main.forward.x);
-    if (self->ray_cast.distance != -1.0f && self->ray_cast.distance / 16.0f < 10.0f) {
+    if (self->ray_cast.distance != -1.0f && self->ray_cast.distance < 4.0f) {
         auto cube = Box{
             glm::vec3(self->ray_cast.voxel_x, self->ray_cast.voxel_y, self->ray_cast.voxel_z) / 16.0f,
             glm::vec3(self->ray_cast.voxel_x + 1, self->ray_cast.voxel_y + 1, self->ray_cast.voxel_z + 1) / 16.0f,
@@ -608,10 +608,11 @@ void player::update(Player self, float dt) {
         if (self->main.brush_a) {
             glm::ivec3 pos = {self->ray_cast.voxel_x, self->ray_cast.voxel_y, self->ray_cast.voxel_z};
             voxel_world::apply_brush_a(&pos.x);
+            self->main.brush_a = false;
         }
         if (self->main.brush_b) {
-            auto ap0 = cube[0] - glm::vec3(2.0f * VOXEL_SIZE);
-            auto ap1 = cube[1] + glm::vec3(2.0f * VOXEL_SIZE);
+            auto ap0 = cube[0] - glm::vec3(5.0f * VOXEL_SIZE);
+            auto ap1 = cube[1] + glm::vec3(5.0f * VOXEL_SIZE);
 
             float const height = self->main.is_crouched ? crouch_height : standing_height;
             auto p = self->main.pos - glm::vec3(0, 0, height) + glm::vec3(-3 * VOXEL_SIZE, -3 * VOXEL_SIZE, 0);
@@ -626,6 +627,7 @@ void player::update(Player self, float dt) {
                 glm::ivec3 nrm = {self->ray_cast.nrm_x, self->ray_cast.nrm_y, self->ray_cast.nrm_z};
                 pos += nrm;
                 voxel_world::apply_brush_b(&pos.x);
+                self->main.brush_b = false;
             }
         }
     }

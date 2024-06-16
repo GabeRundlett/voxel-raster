@@ -614,9 +614,11 @@ void set_voxel_bit(voxel_world::VoxelWorld self, ivec3 p, bool value) {
     auto chunk_index = chunk_i.x + chunk_i.y * CHUNK_NX + chunk_i.z * CHUNK_NX * CHUNK_NY;
     auto brick_index = brick_i.x + brick_i.y * BRICK_CHUNK_SIZE + brick_i.z * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
     auto voxel_index = voxel_i.x + voxel_i.y * VOXEL_BRICK_SIZE + voxel_i.z * VOXEL_BRICK_SIZE * VOXEL_BRICK_SIZE;
+
     auto &chunk = self->chunks[chunk_index];
     if (!chunk) {
-        return;
+        chunk = std::make_unique<Chunk>();
+        chunk->pos = chunk_i;
     }
     auto &brick_bitmask = chunk->voxel_brick_bitmasks[brick_index];
     uint voxel_word_index = voxel_index / 32;
@@ -628,11 +630,44 @@ void set_voxel_bit(voxel_world::VoxelWorld self, ivec3 p, bool value) {
 
     if (prev_value != value) {
         chunk->bricks_changed = true;
+
+        auto notify_neighbor_chunk = [self](glm::ivec3 n_chunk_i) {
+            if (any(lessThan(n_chunk_i, ivec3(0))) || any(greaterThanEqual(n_chunk_i, ivec3(CHUNK_NX, CHUNK_NY, CHUNK_NZ)))) {
+                return;
+            }
+            auto n_chunk_index = n_chunk_i.x + n_chunk_i.y * CHUNK_NX + n_chunk_i.z * CHUNK_NX * CHUNK_NY;
+            auto &n_chunk = self->chunks[n_chunk_index];
+            if (!n_chunk) {
+                return;
+            }
+            n_chunk->bricks_changed = true;
+        };
+
+        if (voxel_i.x == 0 && brick_i.x == 0) {
+            notify_neighbor_chunk(chunk_i - glm::ivec3(1, 0, 0));
+        } else if (voxel_i.x == VOXEL_BRICK_SIZE - 1 && brick_i.x == BRICK_CHUNK_SIZE - 1) {
+            notify_neighbor_chunk(chunk_i + glm::ivec3(1, 0, 0));
+        }
+        if (voxel_i.y == 0 && brick_i.y == 0) {
+            notify_neighbor_chunk(chunk_i - glm::ivec3(0, 1, 0));
+        } else if (voxel_i.y == VOXEL_BRICK_SIZE - 1 && brick_i.y == BRICK_CHUNK_SIZE - 1) {
+            notify_neighbor_chunk(chunk_i + glm::ivec3(0, 1, 0));
+        }
+        if (voxel_i.z == 0 && brick_i.z == 0) {
+            notify_neighbor_chunk(chunk_i - glm::ivec3(0, 0, 1));
+        } else if (voxel_i.z == VOXEL_BRICK_SIZE - 1 && brick_i.z == BRICK_CHUNK_SIZE - 1) {
+            notify_neighbor_chunk(chunk_i + glm::ivec3(0, 0, 1));
+        }
     }
 
     if (value) {
         brick_bitmask.bits[voxel_word_index] |= 1 << voxel_in_word_index;
         brick_metadata.has_voxel = true;
+        auto &attrib_brick = chunk->voxel_brick_attribs[brick_index];
+        if (!attrib_brick) {
+            attrib_brick = std::make_unique<VoxelAttribBrick>();
+            generate_attributes(brick_i.x, brick_i.y, brick_i.z, chunk_i.x, chunk_i.y, chunk_i.z, 0, (uint32_t *)attrib_brick->packed_voxels, &noise_settings, RANDOM_VALUES.data());
+        }
     } else {
         brick_bitmask.bits[voxel_word_index] &= ~(1 << voxel_in_word_index);
         brick_metadata.has_air_px = brick_metadata.has_air_px || voxel_i.x == VOXEL_BRICK_SIZE - 1;
@@ -796,6 +831,7 @@ void voxel_world::update(VoxelWorld self) {
             int yi = (chunk_index / CHUNK_NX) % CHUNK_NY;
             int zi = (chunk_index / CHUNK_NY) / CHUNK_NZ;
             generate_chunk2(self, xi, yi, zi, 0);
+            brick_count = chunk->surface_brick_indices.size();
             if (chunk->render_chunk == nullptr) {
                 renderer::init(chunk->render_chunk);
             }
@@ -919,9 +955,9 @@ auto voxel_world::is_solid(float const *pos) -> bool {
 }
 
 void voxel_world::apply_brush_a(int const *pos) {
-    for (int zi = -2; zi <= 2; ++zi) {
-        for (int yi = -2; yi <= 2; ++yi) {
-            for (int xi = -2; xi <= 2; ++xi) {
+    for (int zi = -5; zi <= 5; ++zi) {
+        for (int yi = -5; yi <= 5; ++yi) {
+            for (int xi = -5; xi <= 5; ++xi) {
                 auto p = glm::ivec3(pos[0], pos[1], pos[2]) + glm::ivec3(xi, yi, zi);
                 set_voxel_bit(s_instance, p, false);
             }
@@ -930,9 +966,9 @@ void voxel_world::apply_brush_a(int const *pos) {
 }
 
 void voxel_world::apply_brush_b(int const *pos) {
-    for (int zi = -2; zi <= 2; ++zi) {
-        for (int yi = -2; yi <= 2; ++yi) {
-            for (int xi = -2; xi <= 2; ++xi) {
+    for (int zi = -5; zi <= 5; ++zi) {
+        for (int yi = -5; yi <= 5; ++yi) {
+            for (int xi = -5; xi <= 5; ++xi) {
                 auto p = glm::ivec3(pos[0], pos[1], pos[2]) + glm::ivec3(xi, yi, zi);
                 set_voxel_bit(s_instance, p, true);
                 set_voxel_attrib(s_instance, p, Voxel{.col = {1, 0.5f, 0}, .nrm = {0, 0, 1}});
