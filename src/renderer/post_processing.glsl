@@ -88,6 +88,17 @@ vec3 color_correct(vec3 x) {
 void main() {
     vec3 color = texelFetch(daxa_texture2D(push.uses.color), ivec2(gl_FragCoord.xy), 0).rgb;
     color = color_correct(color);
+
+    {
+        ivec2 center_offset_uv = ivec2(gl_FragCoord.xy) - ivec2(deref(push.uses.gpu_input).render_size.xy) / 2;
+        if ((abs(center_offset_uv.x) <= 1 || abs(center_offset_uv.y) <= 1) && abs(center_offset_uv.x) + abs(center_offset_uv.y) < 6) {
+            color *= vec3(0.1);
+        }
+        if ((abs(center_offset_uv.x) <= 0 || abs(center_offset_uv.y) <= 0) && abs(center_offset_uv.x) + abs(center_offset_uv.y) < 5) {
+            color += vec3(2.0);
+        }
+    }
+
     f_out = vec4(color, 1);
 }
 

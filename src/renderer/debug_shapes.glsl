@@ -8,7 +8,14 @@ DAXA_DECL_PUSH_CONSTANT(DebugLinesPush, push)
 layout(location = 0) out vec3 f_col;
 
 void main() {
-    mat4 world_to_clip = deref(push.uses.gpu_input).observer_cam.view_to_clip * deref(push.uses.gpu_input).observer_cam.world_to_view;
+    mat4 world_to_clip;
+
+    if (push.flags != 0) {
+        world_to_clip = deref(push.uses.gpu_input).observer_cam.view_to_clip * deref(push.uses.gpu_input).observer_cam.world_to_view;
+    } else {
+        world_to_clip = deref(push.uses.gpu_input).cam.view_to_clip * deref(push.uses.gpu_input).cam.world_to_view;
+    }
+
     uint shape_index = gl_VertexIndex / 2;
     uint vertex_index = gl_VertexIndex % 2;
 
@@ -53,17 +60,28 @@ void main() {
 
     vec2 pos_offset = uv - 0.5;
 
+    mat4 world_to_view;
+    mat4 view_to_clip;
+
+    if (push.flags != 0) {
+        world_to_view = deref(push.uses.gpu_input).observer_cam.world_to_view;
+        view_to_clip = deref(push.uses.gpu_input).observer_cam.view_to_clip;
+    } else {
+        world_to_view = deref(push.uses.gpu_input).cam.world_to_view;
+        view_to_clip = deref(push.uses.gpu_input).cam.view_to_clip;
+    }
+
     switch (int(vertex_meta.z)) {
     case 0: {
-        vec4 pos_vs = deref(push.uses.gpu_input).observer_cam.world_to_view * vec4(vertex_pos, 1);
-        pos_cs = deref(push.uses.gpu_input).observer_cam.view_to_clip * pos_vs;
+        vec4 pos_vs = world_to_view * vec4(vertex_pos, 1);
+        pos_cs = view_to_clip * pos_vs;
         pos_cs = pos_cs / pos_cs.w;
         pos_cs.xy += pos_offset * vertex_meta.xy * 2.0 / deref(push.uses.gpu_input).render_size;
     } break;
     case 1: {
-        vec4 pos_vs = deref(push.uses.gpu_input).observer_cam.world_to_view * vec4(vertex_pos, 1);
+        vec4 pos_vs = world_to_view * vec4(vertex_pos, 1);
         pos_vs.xy += pos_offset * vertex_meta.xy;
-        pos_cs = deref(push.uses.gpu_input).observer_cam.view_to_clip * pos_vs;
+        pos_cs = view_to_clip * pos_vs;
     } break;
     }
 

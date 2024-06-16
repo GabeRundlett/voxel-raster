@@ -1,4 +1,5 @@
 #include "voxel_world.hpp"
+#include "voxels/defs.inl"
 #include "voxels/voxel_mesh.inl"
 
 #include <chrono>
@@ -78,6 +79,8 @@ struct voxel_world::State {
     std::atomic_uint64_t generate_chunk1s_total_n;
     std::atomic_uint64_t generate_chunk2s_total_n;
 };
+
+voxel_world::VoxelWorld s_instance = nullptr;
 
 struct DensityNrm {
     float val;
@@ -547,8 +550,104 @@ auto generate_all_chunks(voxel_world::VoxelWorld self) {
     ISPCPrintInstrument();
 }
 
+using namespace glm;
+
+struct Ray {
+    vec3 origin;
+    vec3 direction;
+};
+
+struct Aabb {
+    vec3 minimum;
+    vec3 maximum;
+};
+
+float hitAabb(const Aabb aabb, const Ray r) {
+    if (all(greaterThanEqual(r.origin, aabb.minimum)) && all(lessThanEqual(r.origin, aabb.maximum))) {
+        return 0.0f;
+    }
+    vec3 invDir = 1.0f / r.direction;
+    vec3 tbot = invDir * (aabb.minimum - r.origin);
+    vec3 ttop = invDir * (aabb.maximum - r.origin);
+    vec3 tmin = min(ttop, tbot);
+    vec3 tmax = max(ttop, tbot);
+    float t0 = max(tmin.x, max(tmin.y, tmin.z));
+    float t1 = min(tmax.x, min(tmax.y, tmax.z));
+    return t1 > max(t0, 0.0f) ? t0 : -1.0f;
+}
+
+auto dda_voxels(voxel_world::VoxelWorld self, Ray ray) -> std::pair<ivec3, float> {
+    using Line = std::array<vec3, 3>;
+    using Point = std::array<vec3, 3>;
+    using Box = std::array<vec3, 3>;
+
+    float tHit = -1;
+    Aabb aabb = {{0, 0, 0}, glm::vec3(CHUNK_NX, CHUNK_NY, CHUNK_NZ) * float(VOXEL_CHUNK_SIZE)};
+    tHit = hitAabb(aabb, ray);
+    const float BIAS = uintBitsToFloat(0x3f800040); // uintBitsToFloat(0x3f800040) == 1.00000762939453125
+    ray.origin += ray.direction * tHit * BIAS;
+
+    if (tHit < 0) {
+        return {ivec3{0, 0, 0}, -1.0f};
+    }
+
+    auto getVoxel = [&](ivec3 p) {
+        ivec3 chunk_i = p / int(VOXEL_CHUNK_SIZE);
+        ivec3 brick_i = (p / int(VOXEL_BRICK_SIZE)) % int(BRICK_CHUNK_SIZE);
+        ivec3 voxel_i = p % int(VOXEL_BRICK_SIZE);
+        auto chunk_index = chunk_i.x + chunk_i.y * CHUNK_NX + chunk_i.z * CHUNK_NX * CHUNK_NY;
+        auto brick_index = brick_i.x + brick_i.y * BRICK_CHUNK_SIZE + brick_i.z * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
+        auto voxel_index = voxel_i.x + voxel_i.y * VOXEL_BRICK_SIZE + voxel_i.z * VOXEL_BRICK_SIZE * VOXEL_BRICK_SIZE;
+        auto &chunk = self->chunks[chunk_index];
+        if (!chunk) {
+            return false;
+        }
+        auto &brick_bitmask = chunk->voxel_brick_bitmasks[brick_index];
+        uint voxel_word_index = voxel_index / 32;
+        uint voxel_in_word_index = voxel_index % 32;
+        return ((brick_bitmask.bits[voxel_word_index] >> voxel_in_word_index) & 1) != 0;
+    };
+
+    ivec3 bmin = ivec3(floor(aabb.minimum));
+    ivec3 mapPos = clamp(ivec3(floor(ray.origin * 16.0f)) - bmin, ivec3(aabb.minimum), ivec3(aabb.maximum));
+    vec3 deltaDist = abs(vec3(length(ray.direction)) / ray.direction);
+    vec3 sideDist = (sign(ray.direction) * (vec3(mapPos + bmin) - ray.origin * 16.0f) + (sign(ray.direction) * 0.5f) + 0.5f) * deltaDist;
+    ivec3 rayStep = ivec3(sign(ray.direction));
+    bvec3 mask = lessThanEqual(sideDist, min(vec3(sideDist.y, sideDist.z, sideDist.x), vec3(sideDist.z, sideDist.x, sideDist.y)));
+
+    vec3 prev_pos = (vec3(mapPos) + 0.5f) / 16.0f;
+    const int max_steps = min(500, int(aabb.maximum.x + aabb.maximum.y + aabb.maximum.z));
+
+    for (int i = 0; i < max_steps; i++) {
+        if (getVoxel(mapPos) == true) {
+            aabb.minimum += vec3(mapPos) * (1.0f / 16.0f);
+            aabb.maximum = aabb.minimum + (1.0f / 16.0f);
+            tHit += hitAabb(aabb, ray);
+            return {mapPos, tHit};
+        }
+        mask = lessThanEqual(sideDist, min(vec3(sideDist.y, sideDist.z, sideDist.x), vec3(sideDist.z, sideDist.x, sideDist.y)));
+        sideDist += vec3(mask) * deltaDist;
+        mapPos += ivec3(vec3(mask)) * rayStep;
+        bool outside_l = any(lessThan(mapPos, ivec3(aabb.minimum)));
+        bool outside_g = any(greaterThanEqual(mapPos, ivec3(aabb.maximum)));
+        if ((int(outside_l) | int(outside_g)) != 0) {
+            break;
+        }
+
+        // vec3 next_pos = (vec3(mapPos) + 0.5f) / 16.0f;
+        // auto line = Line{prev_pos, next_pos, {1.0f, 1.0f, 1.0f}};
+        // renderer::submit_debug_lines((renderer::Line const *)&line, 1);
+        // auto pt = Point{next_pos, {0.0f, 1.0f, 1.0f}, glm::vec3(0.25f / 16.0f, 0.25f / 16.0f, 1.0f)};
+        // renderer::submit_debug_points((renderer::Point const *)&pt, 1);
+        // prev_pos = next_pos;
+    }
+
+    return {ivec3{0, 0, 0}, -1.0f};
+}
+
 void voxel_world::init(VoxelWorld &self) {
     self = new State{};
+    s_instance = self;
     self->start_time = Clock::now();
     self->prev_time = self->start_time;
     generate_all_chunks(self);
@@ -713,4 +812,9 @@ void voxel_world::load_model(char const *path) {
     gvox_destroy_iterator(input_iterator);
     gvox_destroy_input_stream(file_input);
     gvox_destroy_parser(file_parser);
+}
+
+auto voxel_world::ray_cast(float const *ray_o, float const *ray_d) -> RayCastHit {
+    auto [pos, dist] = dda_voxels(s_instance, Ray{{ray_o[0], ray_o[1], ray_o[2]}, {ray_d[0], ray_d[1], ray_d[2]}});
+    return RayCastHit{.voxel_x = pos.x, .voxel_y = pos.y, .voxel_z = pos.z, .distance = dist};
 }

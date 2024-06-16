@@ -27,8 +27,25 @@ namespace renderer {
     void draw(Renderer self, player::Player player, voxel_world::VoxelWorld voxel_world);
     void toggle_fsr2(Renderer self);
 
-    void submit_debug_lines(float const *lines, int line_n);
-    void submit_debug_points(float const *points, int point_n);
+    struct Line {
+        float p0_x, p0_y, p0_z;
+        float p1_x, p1_y, p1_z;
+        float r, g, b;
+    };
+    struct Point {
+        float p0_x, p0_y, p0_z;
+        float r, g, b;
+        float s_x, s_y, type;
+    };
+    struct Box {
+        float p0_x, p0_y, p0_z;
+        float p1_x, p1_y, p1_z;
+        float r, g, b;
+    };
+
+    void submit_debug_lines(Line const *lines, int line_n);
+    void submit_debug_points(Point const *points, int point_n);
+    void submit_debug_box_lines(Box const *cubes, int cube_n);
 
     void init(Chunk &self);
     void deinit(Chunk self);

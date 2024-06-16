@@ -1,6 +1,7 @@
 #include "shared.inl"
 #include "renderer.hpp"
 #include "../player.hpp"
+#include <daxa/c/core.h>
 #include <daxa/command_recorder.hpp>
 #include <daxa/gpu_resources.hpp>
 #include <daxa/types.hpp>
@@ -97,8 +98,8 @@ struct renderer::State {
     Clock::time_point start_time;
     Clock::time_point prev_time;
 
-    std::vector<std::array<daxa_f32vec3, 3>> debug_lines;
-    std::vector<std::array<daxa_f32vec3, 3>> debug_points;
+    std::vector<Line> debug_lines;
+    std::vector<Point> debug_points;
 
     bool use_fsr2 = false;
     bool draw_from_observer = false;
@@ -358,7 +359,8 @@ struct ClearDrawFlagsTask : ClearDrawFlagsH::Task {
 struct DebugLinesTask : DebugLinesH::Task {
     AttachmentViews views = {};
     daxa::RasterPipeline *pipeline = {};
-    std::vector<std::array<daxa_f32vec3, 3>> *debug_lines = {};
+    std::vector<renderer::Line> *debug_lines = {};
+    bool const *draw_from_observer;
 
     void callback(daxa::TaskInterface ti) {
         auto const &image_attach_info = ti.get(AT.render_target);
@@ -376,10 +378,11 @@ struct DebugLinesTask : DebugLinesH::Task {
         DebugLinesPush push = {};
         ti.assign_attachment_shader_blob(push.uses.value);
 
-        auto size = debug_lines->size() * sizeof(std::array<daxa_f32vec3, 3>);
+        auto size = debug_lines->size() * sizeof(renderer::Line);
         auto alloc = ti.allocator->allocate(size).value();
         memcpy(alloc.host_address, debug_lines->data(), size);
         push.vertex_data = alloc.device_address;
+        push.flags = *draw_from_observer;
 
         render_recorder.push_constant(push);
         render_recorder.draw({.vertex_count = uint32_t(2 * debug_lines->size())});
@@ -390,7 +393,8 @@ struct DebugLinesTask : DebugLinesH::Task {
 struct DebugPointsTask : DebugLinesH::Task {
     AttachmentViews views = {};
     daxa::RasterPipeline *pipeline = {};
-    std::vector<std::array<daxa_f32vec3, 3>> *debug_points = {};
+    std::vector<renderer::Point> *debug_points = {};
+    bool const *draw_from_observer;
 
     void callback(daxa::TaskInterface ti) {
         auto const &image_attach_info = ti.get(AT.render_target);
@@ -408,10 +412,11 @@ struct DebugPointsTask : DebugLinesH::Task {
         DebugLinesPush push = {};
         ti.assign_attachment_shader_blob(push.uses.value);
 
-        auto size = debug_points->size() * sizeof(std::array<daxa_f32vec3, 3>);
+        auto size = debug_points->size() * sizeof(renderer::Point);
         auto alloc = ti.allocator->allocate(size).value();
         memcpy(alloc.host_address, debug_points->data(), size);
         push.vertex_data = alloc.device_address;
+        push.flags = *draw_from_observer;
 
         render_recorder.push_constant(push);
         render_recorder.draw({.vertex_count = uint32_t(6 * debug_points->size())});
@@ -798,6 +803,7 @@ void record_tasks(renderer::Renderer self) {
 
     self->loop_task_graph.add_task(PostProcessingTask{
         .views = std::array{
+            daxa::attachment_view(PostProcessingH::AT.gpu_input, task_input_buffer),
             daxa::attachment_view(PostProcessingH::AT.render_target, self->task_swapchain_image),
             daxa::attachment_view(PostProcessingH::AT.color, upscaled_image),
         },
@@ -811,6 +817,7 @@ void record_tasks(renderer::Renderer self) {
         },
         .pipeline = self->debug_lines_pipeline.get(),
         .debug_lines = &self->debug_lines,
+        .draw_from_observer = &self->draw_from_observer,
     });
 
     self->loop_task_graph.add_task(DebugPointsTask{
@@ -820,6 +827,7 @@ void record_tasks(renderer::Renderer self) {
         },
         .pipeline = self->debug_points_pipeline.get(),
         .debug_points = &self->debug_points,
+        .draw_from_observer = &self->draw_from_observer,
     });
 
     self->loop_task_graph.add_task({
@@ -1584,55 +1592,72 @@ void renderer::toggle_fsr2(Renderer self) {
     self->needs_record = true;
 }
 
-void renderer::submit_debug_lines(float const *lines, int line_n) {
+void renderer::submit_debug_lines(Line const *lines, int line_n) {
     Renderer self = s_instance;
 
     self->debug_lines.reserve(self->debug_lines.size() + line_n);
     for (int i = 0; i < line_n; ++i) {
-        auto point = std::array{
-            daxa_f32vec3{
-                lines[i * 9 + 0],
-                lines[i * 9 + 1],
-                lines[i * 9 + 2],
-            },
-            daxa_f32vec3{
-                lines[i * 9 + 3],
-                lines[i * 9 + 4],
-                lines[i * 9 + 5],
-            },
-            daxa_f32vec3{
-                lines[i * 9 + 6],
-                lines[i * 9 + 7],
-                lines[i * 9 + 8],
-            },
-        };
-        self->debug_lines.push_back(point);
+        self->debug_lines.push_back(lines[i]);
     }
 }
 
-void renderer::submit_debug_points(float const *points, int point_n) {
+void renderer::submit_debug_points(Point const *points, int point_n) {
     Renderer self = s_instance;
 
     self->debug_points.reserve(self->debug_points.size() + point_n);
     for (int i = 0; i < point_n; ++i) {
-        auto point = std::array{
-            daxa_f32vec3{
-                points[i * 9 + 0],
-                points[i * 9 + 1],
-                points[i * 9 + 2],
-            },
-            daxa_f32vec3{
-                points[i * 9 + 3],
-                points[i * 9 + 4],
-                points[i * 9 + 5],
-            },
-            daxa_f32vec3{
-                points[i * 9 + 6],
-                points[i * 9 + 7],
-                points[i * 9 + 8],
-            },
+        self->debug_points.push_back(points[i]);
+    }
+}
+
+void renderer::submit_debug_box_lines(Box const *cubes, int cube_n) {
+    for (int i = 0; i < cube_n; ++i) {
+        auto const &cube = cubes[i];
+
+        auto lines = std::array{
+            // clang-format off
+            Line{.p0_x = cube.p0_x, .p0_y = cube.p0_y, .p0_z = cube.p0_z,
+                .p1_x = cube.p1_x, .p1_y = cube.p0_y, .p1_z = cube.p0_z,
+                .r = cube.r, .g = cube.g, .b = cube.b},
+            Line{.p0_x = cube.p1_x, .p0_y = cube.p0_y, .p0_z = cube.p0_z,
+                .p1_x = cube.p1_x, .p1_y = cube.p1_y, .p1_z = cube.p0_z,
+                .r = cube.r, .g = cube.g, .b = cube.b},
+            Line{.p0_x = cube.p1_x, .p0_y = cube.p1_y, .p0_z = cube.p0_z,
+                .p1_x = cube.p0_x, .p1_y = cube.p1_y, .p1_z = cube.p0_z,
+                .r = cube.r, .g = cube.g, .b = cube.b},
+            Line{.p0_x = cube.p0_x, .p0_y = cube.p1_y, .p0_z = cube.p0_z,
+                .p1_x = cube.p0_x, .p1_y = cube.p0_y, .p1_z = cube.p0_z,
+                .r = cube.r, .g = cube.g, .b = cube.b},
+
+            Line{.p0_x = cube.p0_x, .p0_y = cube.p0_y, .p0_z = cube.p1_z,
+                .p1_x = cube.p1_x, .p1_y = cube.p0_y, .p1_z = cube.p1_z,
+                .r = cube.r, .g = cube.g, .b = cube.b},
+            Line{.p0_x = cube.p1_x, .p0_y = cube.p0_y, .p0_z = cube.p1_z,
+                .p1_x = cube.p1_x, .p1_y = cube.p1_y, .p1_z = cube.p1_z,
+                .r = cube.r, .g = cube.g, .b = cube.b},
+            Line{.p0_x = cube.p1_x, .p0_y = cube.p1_y, .p0_z = cube.p1_z,
+                .p1_x = cube.p0_x, .p1_y = cube.p1_y, .p1_z = cube.p1_z,
+                .r = cube.r, .g = cube.g, .b = cube.b},
+            Line{.p0_x = cube.p0_x, .p0_y = cube.p1_y, .p0_z = cube.p1_z,
+                .p1_x = cube.p0_x, .p1_y = cube.p0_y, .p1_z = cube.p1_z,
+                .r = cube.r, .g = cube.g, .b = cube.b},
+
+            Line{.p0_x = cube.p0_x, .p0_y = cube.p0_y, .p0_z = cube.p0_z,
+                .p1_x = cube.p0_x, .p1_y = cube.p0_y, .p1_z = cube.p1_z,
+                .r = cube.r, .g = cube.g, .b = cube.b},
+            Line{.p0_x = cube.p1_x, .p0_y = cube.p0_y, .p0_z = cube.p0_z,
+                .p1_x = cube.p1_x, .p1_y = cube.p0_y, .p1_z = cube.p1_z,
+                .r = cube.r, .g = cube.g, .b = cube.b},
+            Line{.p0_x = cube.p0_x, .p0_y = cube.p1_y, .p0_z = cube.p0_z,
+                .p1_x = cube.p0_x, .p1_y = cube.p1_y, .p1_z = cube.p1_z,
+                .r = cube.r, .g = cube.g, .b = cube.b},
+            Line{.p0_x = cube.p1_x, .p0_y = cube.p1_y, .p0_z = cube.p0_z,
+                .p1_x = cube.p1_x, .p1_y = cube.p1_y, .p1_z = cube.p1_z,
+                .r = cube.r, .g = cube.g, .b = cube.b},
+            // clang-format on
         };
-        self->debug_points.push_back(point);
+
+        submit_debug_lines(lines.data(), lines.size());
     }
 }
 

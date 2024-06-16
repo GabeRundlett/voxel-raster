@@ -144,6 +144,7 @@ struct ShadeVisbufferPush {
 };
 
 DAXA_DECL_TASK_HEAD_BEGIN(PostProcessingH)
+DAXA_TH_BUFFER_PTR(FRAGMENT_SHADER_READ, daxa_BufferPtr(GpuInput), gpu_input)
 DAXA_TH_IMAGE(COLOR_ATTACHMENT, REGULAR_2D, render_target)
 DAXA_TH_IMAGE_INDEX(FRAGMENT_SHADER_SAMPLED, REGULAR_2D, color)
 DAXA_DECL_TASK_HEAD_END
@@ -195,6 +196,7 @@ DAXA_DECL_TASK_HEAD_END
 struct DebugLinesPush {
     DAXA_TH_BLOB(DebugLinesH, uses)
     daxa_BufferPtr(daxa_f32vec3) vertex_data;
+    daxa_u32 flags;
 };
 
 DAXA_DECL_TASK_HEAD_BEGIN(DebugPointsH)
@@ -205,4 +207,5 @@ DAXA_DECL_TASK_HEAD_END
 struct DebugPointsPush {
     DAXA_TH_BLOB(DebugPointsH, uses)
     daxa_BufferPtr(daxa_f32vec3) vertex_data;
+    daxa_u32 flags;
 };

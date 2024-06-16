@@ -2,6 +2,7 @@
 #include "camera.inl"
 
 #include <renderer/renderer.hpp>
+#include <voxels/voxel_world.hpp>
 #include <renderer/shared.inl>
 
 #include <glm/glm.hpp>
@@ -334,6 +335,9 @@ void player::update(Player self, float dt) {
     update(&self->main_cam, &self->prev_main_cam, dt);
 
     if (self->viewing_observer) {
+        using Line = std::array<glm::vec3, 3>;
+        using Point = std::array<glm::vec3, 3>;
+
         // Draw main camera frustum outline:
         auto points = std::array<glm::vec3, 8>{
             glm::vec3{0, 0, 1},
@@ -370,15 +374,23 @@ void player::update(Player self, float dt) {
         };
 
         for (auto const &[pi0, pi1] : line_point_pairs) {
-            using Line = std::array<glm::vec3, 3>;
-            using Point = std::array<glm::vec3, 3>;
-
             auto line = Line{points[pi0], points[pi1], {1.0f, 1.0f, 1.0f}};
-            renderer::submit_debug_lines((float const *)&line, 1);
+            renderer::submit_debug_lines((renderer::Line const *)&line, 1);
 
             // auto pt = Point{points[pi0], {0.0f, 1.0f, 1.0f}, {0.125f, 0.125f, 1.0f}};
-            // renderer::submit_debug_points((float const *)&pt, 1);
+            // renderer::submit_debug_points((renderer::Point const *)&pt, 1);
         }
+    }
+
+    auto ray_cast = voxel_world::ray_cast(&self->main_cam.pos.x, &self->main_cam.forward.x);
+    if (ray_cast.distance != -1.0f && ray_cast.distance / 16.0f < 10.0f) {
+        using Box = std::array<glm::vec3, 3>;
+        auto cube = Box{
+            glm::vec3(ray_cast.voxel_x, ray_cast.voxel_y, ray_cast.voxel_z) / 16.0f,
+            glm::vec3(ray_cast.voxel_x + 1, ray_cast.voxel_y + 1, ray_cast.voxel_z + 1) / 16.0f,
+            {1.0f, 1.0f, 1.0f},
+        };
+        renderer::submit_debug_box_lines((renderer::Box const *)&cube, 1);
     }
 }
 
