@@ -334,6 +334,7 @@ void player::update(Player self, float dt) {
     update(&self->main_cam, &self->prev_main_cam, dt);
 
     if (self->viewing_observer) {
+        // Draw main camera frustum outline:
         auto points = std::array<glm::vec3, 8>{
             glm::vec3{0, 0, 1},
             glm::vec3{1, 0, 1},
@@ -369,9 +370,14 @@ void player::update(Player self, float dt) {
         };
 
         for (auto const &[pi0, pi1] : line_point_pairs) {
-            using Line = std::array<glm::vec3, 2>;
-            auto line = Line{points[pi0], points[pi1]};
+            using Line = std::array<glm::vec3, 3>;
+            using Point = std::array<glm::vec3, 3>;
+
+            auto line = Line{points[pi0], points[pi1], {1.0f, 1.0f, 1.0f}};
             renderer::submit_debug_lines((float const *)&line, 1);
+
+            // auto pt = Point{points[pi0], {0.0f, 1.0f, 1.0f}, {0.125f, 0.125f, 1.0f}};
+            // renderer::submit_debug_points((float const *)&pt, 1);
         }
     }
 }

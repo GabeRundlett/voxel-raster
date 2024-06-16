@@ -66,6 +66,7 @@ struct renderer::State {
     std::shared_ptr<daxa::ComputePipeline> analyze_visbuffer_pipeline;
     std::shared_ptr<daxa::ComputePipeline> gen_hiz_pipeline;
     std::shared_ptr<daxa::RasterPipeline> debug_lines_pipeline;
+    std::shared_ptr<daxa::RasterPipeline> debug_points_pipeline;
     daxa::TaskImage task_swapchain_image;
     daxa::TaskGraph loop_task_graph;
     daxa::TaskGraph loop_empty_task_graph;
@@ -96,7 +97,8 @@ struct renderer::State {
     Clock::time_point start_time;
     Clock::time_point prev_time;
 
-    std::vector<std::array<daxa_f32vec3, 2>> debug_lines;
+    std::vector<std::array<daxa_f32vec3, 3>> debug_lines;
+    std::vector<std::array<daxa_f32vec3, 3>> debug_points;
 
     bool use_fsr2 = false;
     bool draw_from_observer = false;
@@ -356,7 +358,7 @@ struct ClearDrawFlagsTask : ClearDrawFlagsH::Task {
 struct DebugLinesTask : DebugLinesH::Task {
     AttachmentViews views = {};
     daxa::RasterPipeline *pipeline = {};
-    std::vector<std::array<daxa_f32vec3, 2>> *debug_lines = {};
+    std::vector<std::array<daxa_f32vec3, 3>> *debug_lines = {};
 
     void callback(daxa::TaskInterface ti) {
         auto const &image_attach_info = ti.get(AT.render_target);
@@ -374,13 +376,45 @@ struct DebugLinesTask : DebugLinesH::Task {
         DebugLinesPush push = {};
         ti.assign_attachment_shader_blob(push.uses.value);
 
-        auto size = debug_lines->size() * sizeof(std::array<daxa_f32vec3, 2>);
+        auto size = debug_lines->size() * sizeof(std::array<daxa_f32vec3, 3>);
         auto alloc = ti.allocator->allocate(size).value();
         memcpy(alloc.host_address, debug_lines->data(), size);
-        push.line_points = alloc.device_address;
+        push.vertex_data = alloc.device_address;
 
         render_recorder.push_constant(push);
         render_recorder.draw({.vertex_count = uint32_t(2 * debug_lines->size())});
+        ti.recorder = std::move(render_recorder).end_renderpass();
+    }
+};
+
+struct DebugPointsTask : DebugLinesH::Task {
+    AttachmentViews views = {};
+    daxa::RasterPipeline *pipeline = {};
+    std::vector<std::array<daxa_f32vec3, 3>> *debug_points = {};
+
+    void callback(daxa::TaskInterface ti) {
+        auto const &image_attach_info = ti.get(AT.render_target);
+        auto image_info = ti.device.info_image(image_attach_info.ids[0]).value();
+        auto render_recorder = std::move(ti.recorder).begin_renderpass({
+            .color_attachments = std::array{
+                daxa::RenderAttachmentInfo{
+                    .image_view = image_attach_info.view_ids[0],
+                    .load_op = daxa::AttachmentLoadOp::LOAD,
+                },
+            },
+            .render_area = {.width = image_info.size.x, .height = image_info.size.y},
+        });
+        render_recorder.set_pipeline(*pipeline);
+        DebugLinesPush push = {};
+        ti.assign_attachment_shader_blob(push.uses.value);
+
+        auto size = debug_points->size() * sizeof(std::array<daxa_f32vec3, 3>);
+        auto alloc = ti.allocator->allocate(size).value();
+        memcpy(alloc.host_address, debug_points->data(), size);
+        push.vertex_data = alloc.device_address;
+
+        render_recorder.push_constant(push);
+        render_recorder.draw({.vertex_count = uint32_t(6 * debug_points->size())});
         ti.recorder = std::move(render_recorder).end_renderpass();
     }
 };
@@ -779,6 +813,15 @@ void record_tasks(renderer::Renderer self) {
         .debug_lines = &self->debug_lines,
     });
 
+    self->loop_task_graph.add_task(DebugPointsTask{
+        .views = std::array{
+            daxa::attachment_view(DebugLinesH::AT.render_target, self->task_swapchain_image),
+            daxa::attachment_view(DebugLinesH::AT.gpu_input, task_input_buffer),
+        },
+        .pipeline = self->debug_points_pipeline.get(),
+        .debug_points = &self->debug_points,
+    });
+
     self->loop_task_graph.add_task({
         .attachments = {
             daxa::inl_attachment(daxa::TaskImageAccess::COLOR_ATTACHMENT, daxa::ImageViewType::REGULAR_2D, self->task_swapchain_image),
@@ -840,7 +883,7 @@ void renderer::init(Renderer &self, void *glfw_window_ptr) {
             default: return daxa::default_format_score(format);
             }
         },
-        .present_mode = daxa::PresentMode::MAILBOX,
+        .present_mode = daxa::PresentMode::IMMEDIATE,
         .image_usage = daxa::ImageUsageFlagBits::TRANSFER_DST,
         .name = "my swapchain",
     });
@@ -1119,8 +1162,8 @@ void renderer::init(Renderer &self, void *glfw_window_ptr) {
 
     {
         auto result = self->pipeline_manager.add_raster_pipeline({
-            .vertex_shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"debug_lines.glsl"}},
-            .fragment_shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"debug_lines.glsl"}},
+            .vertex_shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"debug_shapes.glsl"}, .compile_options = {.defines = {{"DEBUG_LINES", "1"}}}},
+            .fragment_shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"debug_shapes.glsl"}, .compile_options = {.defines = {{"DEBUG_LINES", "1"}}}},
             .color_attachments = {{.format = self->swapchain.get_format()}},
             .raster = {.primitive_topology = daxa::PrimitiveTopology::LINE_LIST},
             .push_constant_size = sizeof(DebugLinesPush),
@@ -1131,6 +1174,22 @@ void renderer::init(Renderer &self, void *glfw_window_ptr) {
             std::terminate();
         }
         self->debug_lines_pipeline = result.value();
+    }
+
+    {
+        auto result = self->pipeline_manager.add_raster_pipeline({
+            .vertex_shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"debug_shapes.glsl"}, .compile_options = {.defines = {{"DEBUG_POINTS", "1"}}}},
+            .fragment_shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"debug_shapes.glsl"}, .compile_options = {.defines = {{"DEBUG_POINTS", "1"}}}},
+            .color_attachments = {{.format = self->swapchain.get_format()}},
+            .raster = {.primitive_topology = daxa::PrimitiveTopology::TRIANGLE_LIST},
+            .push_constant_size = sizeof(DebugPointsPush),
+            .name = "debug_points",
+        });
+        if (result.is_err()) {
+            std::cerr << result.message() << std::endl;
+            std::terminate();
+        }
+        self->debug_points_pipeline = result.value();
     }
 
     self->task_swapchain_image = daxa::TaskImage{{.swapchain_image = true, .name = "swapchain image"}};
@@ -1513,6 +1572,7 @@ void renderer::draw(Renderer self, player::Player player, voxel_world::VoxelWorl
     self->device.collect_garbage();
 
     self->debug_lines.clear();
+    self->debug_points.clear();
     self->tracked_brick_data.clear();
     self->chunks_to_update.clear();
 
@@ -1531,17 +1591,48 @@ void renderer::submit_debug_lines(float const *lines, int line_n) {
     for (int i = 0; i < line_n; ++i) {
         auto point = std::array{
             daxa_f32vec3{
-                lines[i * 6 + 0],
-                lines[i * 6 + 1],
-                lines[i * 6 + 2],
+                lines[i * 9 + 0],
+                lines[i * 9 + 1],
+                lines[i * 9 + 2],
             },
             daxa_f32vec3{
-                lines[i * 6 + 3],
-                lines[i * 6 + 4],
-                lines[i * 6 + 5],
+                lines[i * 9 + 3],
+                lines[i * 9 + 4],
+                lines[i * 9 + 5],
+            },
+            daxa_f32vec3{
+                lines[i * 9 + 6],
+                lines[i * 9 + 7],
+                lines[i * 9 + 8],
             },
         };
         self->debug_lines.push_back(point);
+    }
+}
+
+void renderer::submit_debug_points(float const *points, int point_n) {
+    Renderer self = s_instance;
+
+    self->debug_points.reserve(self->debug_points.size() + point_n);
+    for (int i = 0; i < point_n; ++i) {
+        auto point = std::array{
+            daxa_f32vec3{
+                points[i * 9 + 0],
+                points[i * 9 + 1],
+                points[i * 9 + 2],
+            },
+            daxa_f32vec3{
+                points[i * 9 + 3],
+                points[i * 9 + 4],
+                points[i * 9 + 5],
+            },
+            daxa_f32vec3{
+                points[i * 9 + 6],
+                points[i * 9 + 7],
+                points[i * 9 + 8],
+            },
+        };
+        self->debug_points.push_back(point);
     }
 }
 
