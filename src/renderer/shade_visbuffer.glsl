@@ -98,13 +98,13 @@ void shade() {
         BrickInstance brick_instance = deref(push.uses.brick_instance_allocator[metadata.brick_instance_index]);
         Voxel voxel = load_voxel(push.uses.gpu_input, push.uses.chunks[brick_instance.chunk_index], brick_instance.brick_index, face.pos);
 
-        // vec3 face_nrm = vec3(0, 0, 0);
-        // switch (face.axis / 2) {
-        // case 0: face_nrm.x = float(face.axis % 2) * 2.0 - 1.0; break;
-        // case 1: face_nrm.y = float(face.axis % 2) * 2.0 - 1.0; break;
-        // case 2: face_nrm.z = float(face.axis % 2) * 2.0 - 1.0; break;
-        // }
-        // voxel.nrm = normalize(face_nrm * 0.25 + voxel.nrm);
+        vec3 face_nrm = vec3(0, 0, 0);
+        switch (face.axis / 2) {
+        case 0: face_nrm.x = float(face.axis % 2) * 2.0 - 1.0; break;
+        case 1: face_nrm.y = float(face.axis % 2) * 2.0 - 1.0; break;
+        case 2: face_nrm.z = float(face.axis % 2) * 2.0 - 1.0; break;
+        }
+        voxel.nrm = normalize(face_nrm * 0.75 + voxel.nrm);
 
         const vec3 voxel_center = (vec3(face.pos) + 0.5);
 

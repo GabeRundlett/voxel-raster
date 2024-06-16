@@ -672,10 +672,10 @@ void set_voxel_bit(voxel_world::VoxelWorld self, ivec3 p, bool value) {
         brick_bitmask.bits[voxel_word_index] &= ~(1 << voxel_in_word_index);
         brick_metadata.has_air_px = brick_metadata.has_air_px || voxel_i.x == VOXEL_BRICK_SIZE - 1;
         brick_metadata.has_air_nx = brick_metadata.has_air_nx || voxel_i.x == 0;
-        brick_metadata.has_air_py = brick_metadata.has_air_py || voxel_i.x == VOXEL_BRICK_SIZE - 1;
-        brick_metadata.has_air_ny = brick_metadata.has_air_ny || voxel_i.x == 0;
-        brick_metadata.has_air_pz = brick_metadata.has_air_pz || voxel_i.x == VOXEL_BRICK_SIZE - 1;
-        brick_metadata.has_air_nz = brick_metadata.has_air_nz || voxel_i.x == 0;
+        brick_metadata.has_air_py = brick_metadata.has_air_py || voxel_i.y == VOXEL_BRICK_SIZE - 1;
+        brick_metadata.has_air_ny = brick_metadata.has_air_ny || voxel_i.y == 0;
+        brick_metadata.has_air_pz = brick_metadata.has_air_pz || voxel_i.z == VOXEL_BRICK_SIZE - 1;
+        brick_metadata.has_air_nz = brick_metadata.has_air_nz || voxel_i.z == 0;
     }
 }
 
