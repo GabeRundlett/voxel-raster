@@ -25,6 +25,7 @@ find_package(gvox CONFIG REQUIRED)
 find_package(glfw3 CONFIG REQUIRED)
 find_package(glm CONFIG REQUIRED)
 find_package(RtAudio CONFIG REQUIRED)
+find_package(AudioFile CONFIG REQUIRED)
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
     daxa::daxa
@@ -32,6 +33,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     glfw
     glm::glm
     RtAudio::rtaudio
+    AudioFile
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE

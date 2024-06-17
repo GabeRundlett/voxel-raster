@@ -24,7 +24,8 @@
       ]
     },
     "glm",
-    "rtaudio"
+    "rtaudio",
+    "audiofile"
   ],
   "vcpkg-configuration": {
     "overlay-ports": [

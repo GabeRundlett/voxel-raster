@@ -971,7 +971,8 @@ void voxel_world::apply_brush_b(int const *pos) {
             for (int xi = -5; xi <= 5; ++xi) {
                 auto p = glm::ivec3(pos[0], pos[1], pos[2]) + glm::ivec3(xi, yi, zi);
                 set_voxel_bit(s_instance, p, true);
-                set_voxel_attrib(s_instance, p, Voxel{.col = {1, 0.5f, 0}, .nrm = {0, 0, 1}});
+                auto nrm = glm::normalize(glm::vec3({(xi == 5) - (xi == -5), (yi == 5) - (yi == -5), (zi == 5) - (zi == -5)}));
+                set_voxel_attrib(s_instance, p, Voxel{.col = {1, 0.5f, 0}, .nrm = {nrm.x, nrm.y, nrm.z}});
             }
         }
     }

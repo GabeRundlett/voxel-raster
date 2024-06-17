@@ -4,20 +4,41 @@
 #include <atomic>
 #include <thread>
 #include <shared_mutex>
-#include <chrono>
 
 #include <rtaudio/RtAudio.h>
 #include "audio.hpp"
+#include "AudioFile.h"
 
 struct Sound {
     std::filesystem::path path;
+    AudioFile<double> audioFile;
+
+    [[nodiscard]] auto sample(float time) const -> float;
 };
+
+auto sounds = []() {
+    auto result = std::array{
+        Sound{.path = "assets/footstep0.wav"},
+        Sound{.path = "assets/footstep1.wav"},
+        Sound{.path = "assets/footstep2.wav"},
+        Sound{.path = "assets/landing0.wav"},
+        Sound{.path = "assets/landing1.wav"},
+        Sound{.path = "assets/jump0.wav"},
+    };
+
+    for (auto &sound : result) {
+        sound.audioFile.load(sound.path.string());
+    }
+
+    return result;
+}();
 
 static const float PI = 3.1415926535f;
 float const float_sample_rate = 44100.0f;
 
 struct SoundInstance {
     int index;
+    int seed;
     float duration;
     float playback_head = 0.0f;
     [[nodiscard]] auto sample(float time) const -> float;
@@ -51,27 +72,47 @@ auto square_wave(float t) -> float {
     return smoothstep(-0.5f, 0.5f, triangle_wave(t)) * 2.0f - 1.0f;
 }
 
+[[nodiscard]] auto Sound::sample(float time) const -> float {
+    int channel = 0;
+    int sample_index = int(time * float(audioFile.getSampleRate()));
+    if (sample_index > audioFile.getNumSamplesPerChannel()) {
+        return 0;
+    }
+    return audioFile.samples[channel][sample_index];
+}
+
 [[nodiscard]] auto SoundInstance::sample(float time) const -> float {
     float t = time / duration;
-    float volume = smoothstep(0.0f, 0.1f, t) * smoothstep(1.0f, 0.9f, t) * 0.05f;
+    float volume = smoothstep(0.0f, 0.1f, t) * smoothstep(1.0f, 0.4f, t);
 
     if (index == 0) {
-        return sine_wave(time * 440.0f) * volume;
+        return sounds[0 + seed % 3].sample(time) * volume;
+        // return sine_wave(time * 440.0f) * volume * 0.05f;
     }
     if (index == 1) {
-        return sine_wave(time * 554.37f) * volume;
+        return sounds[5].sample(time) * volume;
+        // return sine_wave(time * 554.37f) * volume * 0.05f;
     }
     if (index == 2) {
-        return sine_wave(time * 659.25f) * volume;
+        return sine_wave(time * 659.25f) * volume * 0.05f;
     }
     if (index == 3) {
-        return sine_wave(time * 880.0f) * volume;
+        return sine_wave(time * 880.0f) * volume * 0.05f;
     }
     if (index == 4) {
-        return sine_wave(time * 220.25f) * volume;
+        return sine_wave(time * 220.25f) * volume * 0.05f;
     }
     if (index == 5) {
-        return sine_wave(time * 277.185f) * volume;
+        return sine_wave(time * 277.185f) * volume * 0.05f;
+    }
+    if (index == 6) {
+        float result = sounds[3 + 0].sample(time) * volume;
+        if (seed % 50 < 30) {
+            result += sounds[3 + 1].sample(time) * volume;
+        }
+        return result;
+
+        // return triangle_wave(time * 329.625f) * volume * 0.05f;
     }
     return 0;
 }
@@ -154,5 +195,5 @@ void audio::deinit() {
 
 void audio::play_sound(int sound_index) {
     auto lock = std::unique_lock{sounds_mutex};
-    sound_instances.push_back({.index = sound_index % 6, .duration = 0.2f});
+    sound_instances.push_back({.index = sound_index % 7, .seed = rand(), .duration = 0.4f});
 }

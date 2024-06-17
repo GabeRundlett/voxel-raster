@@ -515,6 +515,12 @@ void player::update(Player self, float dt) {
                     self->pos.z = floor(self->pos.z * VOXEL_SCL) * VOXEL_SIZE;
                     float new_z = self->pos.z;
                     self->cam_pos_offset.z += current_z - new_z;
+                    if (!self->on_ground) {
+                        // was previously falling
+                        if (self->vel.z < -4.0f) {
+                            audio::play_sound(6);
+                        }
+                    }
                     self->on_ground = true;
                     self->vel.z = 0;
                 } else {
