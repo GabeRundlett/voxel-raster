@@ -4,6 +4,7 @@
 #include <imgui.h>
 
 #include "player.hpp"
+#include "audio.hpp"
 #include "renderer/renderer.hpp"
 #include "voxels/voxel_world.hpp"
 #include "camera.inl"
@@ -39,6 +40,7 @@ void init(AppState &self) {
     self.paused = true;
     init(self.player);
     init(self.voxel_world);
+    audio::init();
     glfwInit();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     self.glfw_window_ptr = glfwCreateWindow(
@@ -113,6 +115,7 @@ void deinit(AppState &self) {
     deinit(self.player);
     deinit(self.voxel_world);
     deinit(self.renderer);
+    audio::deinit();
 }
 
 auto update(AppState &self) -> bool {

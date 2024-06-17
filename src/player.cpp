@@ -1,4 +1,5 @@
 #include "player.hpp"
+#include "audio.hpp"
 #include "camera.inl"
 
 #include <glm/fwd.hpp>
@@ -8,6 +9,9 @@
 
 #include <glm/glm.hpp>
 #include <GLFW/glfw3.h>
+#include <chrono>
+
+using Clock = std::chrono::steady_clock;
 
 struct CameraState {
     glm::mat4 view_to_world;
@@ -33,6 +37,8 @@ struct Controller {
     glm::vec3 lateral;
     glm::vec2 lateral_flat;
     glm::vec3 upwards;
+
+    Clock::time_point prev_footstep_time;
 
     bool move_f : 1;
     bool move_b : 1;
@@ -99,7 +105,8 @@ void player::init(Player &self) {
     self->main.rot_dirty = true;
     self->main.prj_dirty = true;
     self->main.is_flying = true;
-    self->main.on_ground = false;
+
+    self->main.prev_footstep_time = Clock::now();
 
     self->main.aspect = 1.0f;
     self->main.vertical_fov_degrees = 74.0f;
@@ -408,6 +415,7 @@ void player::update(Player self, float dt) {
 
             if (self->on_ground && self->move_u) {
                 self->vel.z = EARTH_GRAV * sqrt(jump_strength * 2.0 / EARTH_GRAV);
+                audio::play_sound(1);
             } else {
                 acc.z -= GRAVITY;
             }
@@ -416,6 +424,7 @@ void player::update(Player self, float dt) {
                 if (!self->is_crouched) {
                     self->pos.z -= height - crouch_height;
                     self->cam_pos_offset.z += height - crouch_height;
+                    audio::play_sound(2);
                 }
                 self->is_crouched = true;
                 height = crouch_height;
@@ -423,6 +432,7 @@ void player::update(Player self, float dt) {
                 if (self->is_crouched) {
                     self->pos.z += height - crouch_height;
                     self->cam_pos_offset.z -= height - crouch_height;
+                    audio::play_sound(3);
                 }
                 self->is_crouched = false;
             }
@@ -531,6 +541,14 @@ void player::update(Player self, float dt) {
         if (new_cam_pos_offset_sign.z != cam_pos_offset_sign.z)
             self->cam_pos_offset.z = 0.0f;
 
+        auto now = Clock::now();
+        using namespace std::chrono_literals;
+
+        if (self->on_ground && dot(move_vec, move_vec) > 0.0f && (now - self->prev_footstep_time) > std::chrono::duration<float>(0.85f / speed)) {
+            audio::play_sound(0);
+            self->prev_footstep_time = now;
+        }
+
         update_camera(self);
 
         if (self->is_third_person) {
@@ -612,6 +630,7 @@ void player::update(Player self, float dt) {
         if (self->main.brush_a) {
             glm::ivec3 pos = {self->ray_cast.voxel_x, self->ray_cast.voxel_y, self->ray_cast.voxel_z};
             voxel_world::apply_brush_a(&pos.x);
+            audio::play_sound(4);
             if (!self->main.fast_placement) {
                 self->main.brush_a = false;
             }
@@ -633,6 +652,7 @@ void player::update(Player self, float dt) {
                 glm::ivec3 nrm = {self->ray_cast.nrm_x, self->ray_cast.nrm_y, self->ray_cast.nrm_z};
                 pos += nrm;
                 voxel_world::apply_brush_b(&pos.x);
+                audio::play_sound(5);
                 if (!self->main.fast_placement) {
                     self->main.brush_b = false;
                 }

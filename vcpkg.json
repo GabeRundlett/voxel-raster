@@ -23,7 +23,8 @@
         "docking-experimental"
       ]
     },
-    "glm"
+    "glm",
+    "rtaudio"
   ],
   "vcpkg-configuration": {
     "overlay-ports": [
