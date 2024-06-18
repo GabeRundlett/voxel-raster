@@ -457,7 +457,7 @@ void player::update(Player self, float dt) {
                 for (int32_t yi = -2; yi <= 2; ++yi) {
                     for (int32_t zi = 0; zi <= voxel_height; ++zi) {
                         auto p = self->pos - glm::vec3(0, 0, height) + glm::vec3(xi * VOXEL_SIZE, yi * VOXEL_SIZE, zi * VOXEL_SIZE);
-                        auto in_voxel = voxel_world::is_solid(&p.x);
+                        auto in_voxel = is_solid(g_voxel_world, &p.x);
                         if (in_voxel) {
                             inside_terrain = true;
                             avg_pos += p;
@@ -470,7 +470,7 @@ void player::update(Player self, float dt) {
                                     floor(p * VOXEL_SCL + 1.0f) * VOXEL_SIZE,
                                     {1.0f, 0.0f, 0.0f},
                                 };
-                                renderer::submit_debug_box_lines((renderer::Box const *)&cube, 1);
+                                submit_debug_box_lines(g_renderer, (renderer::Box const *)&cube, 1);
                             }
                         }
                     }
@@ -491,7 +491,7 @@ void player::update(Player self, float dt) {
                                 break;
                             }
                             auto p = self->pos - glm::vec3(0, 0, height) + glm::vec3(xi * VOXEL_SIZE, yi * VOXEL_SIZE, zi * VOXEL_SIZE);
-                            auto solid = voxel_world::is_solid(&p.x);
+                            auto solid = is_solid(g_voxel_world, &p.x);
                             if (solid) {
                                 found_voxel = true;
                             }
@@ -562,16 +562,16 @@ void player::update(Player self, float dt) {
             auto p = self->pos - glm::vec3(0, 0, height) + glm::vec3(-2 * VOXEL_SIZE, -2 * VOXEL_SIZE, 0);
             int32_t voxel_height = height * VOXEL_SCL + 1;
             auto cube = Box{p, p + glm::vec3(4, 4, voxel_height) * VOXEL_SIZE, {1.0f, 1.0f, 1.0f}};
-            renderer::submit_debug_box_lines((renderer::Box const *)&cube, 1);
+            submit_debug_box_lines(g_renderer, (renderer::Box const *)&cube, 1);
 
             if (in_voxel_n != 0) {
                 avg_pos *= 1.0f / float(in_voxel_n);
 
                 auto pt = Point{avg_pos, {1.0f, 0.2f, 0.0f}, {0.125f, 0.125f, 1.0f}};
-                renderer::submit_debug_points((renderer::Point const *)&pt, 1);
+                submit_debug_points(g_renderer, (renderer::Point const *)&pt, 1);
 
                 auto line = Line{avg_pos, {self->pos.x, self->pos.y, avg_pos.z}, {1.0f, 0.2f, 0.0f}};
-                renderer::submit_debug_lines((renderer::Line const *)&line, 1);
+                submit_debug_lines(g_renderer, (renderer::Line const *)&line, 1);
             }
         }
     };
@@ -616,26 +616,26 @@ void player::update(Player self, float dt) {
 
         for (auto const &[pi0, pi1] : line_point_pairs) {
             auto line = Line{points[pi0], points[pi1], {1.0f, 1.0f, 1.0f}};
-            renderer::submit_debug_lines((renderer::Line const *)&line, 1);
+            submit_debug_lines(g_renderer, (renderer::Line const *)&line, 1);
 
             // auto pt = Point{points[pi0], {0.0f, 1.0f, 1.0f}, {0.125f, 0.125f, 1.0f}};
-            // renderer::submit_debug_points((renderer::Point const *)&pt, 1);
+            // submit_debug_points(g_renderer, (renderer::Point const *)&pt, 1);
         }
     }
 
     auto ray_pos = self->main.pos + self->main.cam_pos_offset + view_vec(&self->main);
-    self->ray_cast = voxel_world::ray_cast(&ray_pos.x, &self->main.forward.x);
+    self->ray_cast = ray_cast(g_voxel_world, &ray_pos.x, &self->main.forward.x);
     if (self->ray_cast.distance != -1.0f && self->ray_cast.distance < 8.0f) {
         auto cube = Box{
             glm::vec3(self->ray_cast.voxel_x, self->ray_cast.voxel_y, self->ray_cast.voxel_z) / 16.0f,
             glm::vec3(self->ray_cast.voxel_x + 1, self->ray_cast.voxel_y + 1, self->ray_cast.voxel_z + 1) / 16.0f,
             {1.0f, 1.0f, 1.0f},
         };
-        renderer::submit_debug_box_lines((renderer::Box const *)&cube, 1);
+        submit_debug_box_lines(g_renderer, (renderer::Box const *)&cube, 1);
 
         if (self->main.brush_a) {
             glm::ivec3 pos = {self->ray_cast.voxel_x, self->ray_cast.voxel_y, self->ray_cast.voxel_z};
-            voxel_world::apply_brush_a(&pos.x);
+            apply_brush_a(g_voxel_world, &pos.x);
             audio::play_sound(4);
             if (!self->main.fast_placement) {
                 self->main.brush_a = false;
@@ -657,7 +657,7 @@ void player::update(Player self, float dt) {
                 glm::ivec3 pos = {self->ray_cast.voxel_x, self->ray_cast.voxel_y, self->ray_cast.voxel_z};
                 glm::ivec3 nrm = {self->ray_cast.nrm_x, self->ray_cast.nrm_y, self->ray_cast.nrm_z};
                 pos += nrm;
-                voxel_world::apply_brush_b(&pos.x);
+                apply_brush_b(g_voxel_world, &pos.x);
                 audio::play_sound(5);
                 if (!self->main.fast_placement) {
                     self->main.brush_b = false;

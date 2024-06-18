@@ -43,12 +43,14 @@ namespace renderer {
         float r, g, b;
     };
 
-    void submit_debug_lines(Line const *lines, int line_n);
-    void submit_debug_points(Point const *points, int point_n);
-    void submit_debug_box_lines(Box const *cubes, int cube_n);
+    void submit_debug_lines(Renderer self, Line const *lines, int line_n);
+    void submit_debug_points(Renderer self, Point const *points, int point_n);
+    void submit_debug_box_lines(Renderer self, Box const *cubes, int cube_n);
 
-    void init(Chunk &self);
-    void deinit(Chunk self);
+    auto create_chunk(Renderer self) -> Chunk;
+    void destroy_chunk(Renderer self, Chunk chunk);
     void update(Chunk self, int brick_count, int const *surface_brick_indices, VoxelBrickBitmask const *bitmasks, VoxelAttribBrick const *const *attribs, int const *positions);
-    void render_chunk(Chunk self, float const *pos);
+    void render_chunk(Renderer self, Chunk chunk, float const *pos);
 } // namespace renderer
+
+extern renderer::Renderer g_renderer;

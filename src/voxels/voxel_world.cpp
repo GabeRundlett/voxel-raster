@@ -54,11 +54,11 @@ struct Chunk {
     bool bricks_changed;
 
     Chunk() {
-        renderer::init(render_chunk);
+        render_chunk = create_chunk(g_renderer);
     }
     ~Chunk() {
         if (render_chunk != nullptr) {
-            renderer::deinit(render_chunk);
+            destroy_chunk(g_renderer, render_chunk);
         }
     }
 };
@@ -79,8 +79,6 @@ struct voxel_world::State {
     std::atomic_uint64_t generate_chunk1s_total_n;
     std::atomic_uint64_t generate_chunk2s_total_n;
 };
-
-voxel_world::VoxelWorld s_instance = nullptr;
 
 struct DensityNrm {
     float val;
@@ -761,9 +759,9 @@ auto dda_voxels(voxel_world::VoxelWorld self, Ray ray) -> std::tuple<ivec3, ivec
 
         // vec3 next_pos = (vec3(mapPos) + 0.5f) / 16.0f;
         // auto line = Line{prev_pos, next_pos, {1.0f, 1.0f, 1.0f}};
-        // renderer::submit_debug_lines((renderer::Line const *)&line, 1);
+        // submit_debug_lines(g_renderer, (renderer::Line const *)&line, 1);
         // auto pt = Point{next_pos, {0.0f, 1.0f, 1.0f}, glm::vec3(0.25f / 16.0f, 0.25f / 16.0f, 1.0f)};
-        // renderer::submit_debug_points((renderer::Point const *)&pt, 1);
+        // submit_debug_points(g_renderer, (renderer::Point const *)&pt, 1);
         // prev_pos = next_pos;
     }
 
@@ -772,7 +770,6 @@ auto dda_voxels(voxel_world::VoxelWorld self, Ray ray) -> std::tuple<ivec3, ivec
 
 void voxel_world::init(VoxelWorld &self) {
     self = new State{};
-    s_instance = self;
     self->start_time = Clock::now();
     self->prev_time = self->start_time;
     generate_all_chunks(self);
@@ -833,14 +830,14 @@ void voxel_world::update(VoxelWorld self) {
             generate_chunk2(self, xi, yi, zi, 0);
             brick_count = chunk->surface_brick_indices.size();
             if (chunk->render_chunk == nullptr) {
-                renderer::init(chunk->render_chunk);
+                chunk->render_chunk = create_chunk(g_renderer);
             }
-            renderer::update(chunk->render_chunk, brick_count, chunk->surface_brick_indices.data(), chunk->voxel_brick_bitmasks.data(), reinterpret_cast<VoxelAttribBrick const *const *>(chunk->voxel_brick_attribs.data()), (int const *)chunk->voxel_brick_positions.data());
+            update(chunk->render_chunk, brick_count, chunk->surface_brick_indices.data(), chunk->voxel_brick_bitmasks.data(), reinterpret_cast<VoxelAttribBrick const *const *>(chunk->voxel_brick_attribs.data()), (int const *)chunk->voxel_brick_positions.data());
             chunk->bricks_changed = false;
         }
 
         if (brick_count > 0) {
-            renderer::render_chunk(chunk->render_chunk, (float const *)&chunk->pos);
+            render_chunk(g_renderer, chunk->render_chunk, (float const *)&chunk->pos);
         }
     }
 }
@@ -850,7 +847,7 @@ void voxel_world::update(VoxelWorld self) {
         return;                \
     }
 
-void voxel_world::load_model(char const *path) {
+void voxel_world::load_model(VoxelWorld self, char const *path) {
     auto *file_input = GvoxInputStream{};
     {
         auto file = std::ifstream{path, std::ios::binary};
@@ -944,35 +941,35 @@ void voxel_world::load_model(char const *path) {
     gvox_destroy_parser(file_parser);
 }
 
-auto voxel_world::ray_cast(float const *ray_o, float const *ray_d) -> RayCastHit {
-    auto [pos, face, dist] = dda_voxels(s_instance, Ray{{ray_o[0], ray_o[1], ray_o[2]}, {ray_d[0], ray_d[1], ray_d[2]}});
+auto voxel_world::ray_cast(VoxelWorld self, float const *ray_o, float const *ray_d) -> RayCastHit {
+    auto [pos, face, dist] = dda_voxels(self, Ray{{ray_o[0], ray_o[1], ray_o[2]}, {ray_d[0], ray_d[1], ray_d[2]}});
     return RayCastHit{.voxel_x = pos.x, .voxel_y = pos.y, .voxel_z = pos.z, .nrm_x = face.x, .nrm_y = face.y, .nrm_z = face.z, .distance = dist};
 }
 
-auto voxel_world::is_solid(float const *pos) -> bool {
+auto voxel_world::is_solid(VoxelWorld self, float const *pos) -> bool {
     auto p = glm::ivec3(glm::vec3(pos[0], pos[1], pos[2]) * 16.0f);
-    return get_voxel_is_solid(s_instance, p);
+    return get_voxel_is_solid(self, p);
 }
 
-void voxel_world::apply_brush_a(int const *pos) {
+void voxel_world::apply_brush_a(VoxelWorld self, int const *pos) {
     for (int zi = -5; zi <= 5; ++zi) {
         for (int yi = -5; yi <= 5; ++yi) {
             for (int xi = -5; xi <= 5; ++xi) {
                 auto p = glm::ivec3(pos[0], pos[1], pos[2]) + glm::ivec3(xi, yi, zi);
-                set_voxel_bit(s_instance, p, false);
+                set_voxel_bit(self, p, false);
             }
         }
     }
 }
 
-void voxel_world::apply_brush_b(int const *pos) {
+void voxel_world::apply_brush_b(VoxelWorld self, int const *pos) {
     for (int zi = -5; zi <= 5; ++zi) {
         for (int yi = -5; yi <= 5; ++yi) {
             for (int xi = -5; xi <= 5; ++xi) {
                 auto p = glm::ivec3(pos[0], pos[1], pos[2]) + glm::ivec3(xi, yi, zi);
-                set_voxel_bit(s_instance, p, true);
+                set_voxel_bit(self, p, true);
                 auto nrm = glm::normalize(glm::vec3({(xi == 5) - (xi == -5), (yi == 5) - (yi == -5), (zi == 5) - (zi == -5)}));
-                set_voxel_attrib(s_instance, p, Voxel{.col = {1, 0.5f, 0}, .nrm = {nrm.x, nrm.y, nrm.z}});
+                set_voxel_attrib(self, p, Voxel{.col = {1, 0.5f, 0}, .nrm = {nrm.x, nrm.y, nrm.z}});
             }
         }
     }

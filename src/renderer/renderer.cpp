@@ -876,11 +876,8 @@ auto get_native_platform(void * /*unused*/) -> daxa::NativeWindowPlatform {
 #endif
 }
 
-static renderer::Renderer s_instance;
-
 void renderer::init(Renderer &self, void *glfw_window_ptr) {
     self = new State{};
-    s_instance = self;
 
     self->instance = daxa::create_instance({});
     self->device = self->instance.create_device({
@@ -1353,7 +1350,7 @@ void renderer::draw(Renderer self, player::Player player, voxel_world::VoxelWorl
     if (self->needs_update) {
         {
             auto temp_task_graph = daxa::TaskGraph({
-                .device = s_instance->device,
+                .device = self->device,
                 .name = "update_task_graph",
             });
             temp_task_graph.use_persistent_buffer(self->task_brick_data);
@@ -1414,7 +1411,7 @@ void renderer::draw(Renderer self, player::Player player, voxel_world::VoxelWorl
         self->gpu_input.chunk_n = new_chunk_n;
 
         auto temp_task_graph = daxa::TaskGraph({
-            .device = s_instance->device,
+            .device = self->device,
             .name = "update_task_graph",
         });
         temp_task_graph.use_persistent_buffer(self->task_brick_data);
@@ -1512,7 +1509,7 @@ void renderer::draw(Renderer self, player::Player player, voxel_world::VoxelWorl
     }
 
     {
-        auto new_draw_from_observer = player::should_draw_from_observer(player);
+        auto new_draw_from_observer = should_draw_from_observer(player);
         if (self->draw_from_observer != new_draw_from_observer) {
             self->draw_from_observer = new_draw_from_observer;
             self->needs_record = true;
@@ -1597,8 +1594,8 @@ void renderer::draw(Renderer self, player::Player player, voxel_world::VoxelWorl
     } else {
         self->gpu_input.jitter = {0, 0};
     }
-    player::get_camera(player, &self->gpu_input.cam, &self->gpu_input);
-    player::get_observer_camera(player, &self->gpu_input.observer_cam, &self->gpu_input);
+    get_camera(player, &self->gpu_input.cam, &self->gpu_input);
+    get_observer_camera(player, &self->gpu_input.observer_cam, &self->gpu_input);
 
     if (self->tracked_brick_data.empty()) {
         self->loop_empty_task_graph.execute({});
@@ -1620,25 +1617,21 @@ void renderer::toggle_fsr2(Renderer self) {
     self->needs_record = true;
 }
 
-void renderer::submit_debug_lines(Line const *lines, int line_n) {
-    Renderer self = s_instance;
-
+void renderer::submit_debug_lines(Renderer self, Line const *lines, int line_n) {
     self->debug_lines.reserve(self->debug_lines.size() + line_n);
     for (int i = 0; i < line_n; ++i) {
         self->debug_lines.push_back(lines[i]);
     }
 }
 
-void renderer::submit_debug_points(Point const *points, int point_n) {
-    Renderer self = s_instance;
-
+void renderer::submit_debug_points(Renderer self, Point const *points, int point_n) {
     self->debug_points.reserve(self->debug_points.size() + point_n);
     for (int i = 0; i < point_n; ++i) {
         self->debug_points.push_back(points[i]);
     }
 }
 
-void renderer::submit_debug_box_lines(Box const *cubes, int cube_n) {
+void renderer::submit_debug_box_lines(Renderer self, Box const *cubes, int cube_n) {
     for (int i = 0; i < cube_n; ++i) {
         auto const &cube = cubes[i];
 
@@ -1685,17 +1678,17 @@ void renderer::submit_debug_box_lines(Box const *cubes, int cube_n) {
             // clang-format on
         };
 
-        submit_debug_lines(lines.data(), lines.size());
+        submit_debug_lines(self, lines.data(), lines.size());
     }
 }
 
-void renderer::init(Chunk &self) {
-    self = new ChunkState{};
+auto renderer::create_chunk(Renderer self) -> Chunk {
+    return new ChunkState{};
 }
 
-void renderer::deinit(Chunk self) {
-    if (!self->brick_data.is_empty()) {
-        s_instance->device.destroy_buffer(self->brick_data);
+void renderer::destroy_chunk(Renderer self, Chunk chunk) {
+    if (!chunk->brick_data.is_empty()) {
+        self->device.destroy_buffer(chunk->brick_data);
     }
 }
 
@@ -1728,8 +1721,8 @@ void renderer::update(Chunk self, int brick_count, int const *surface_brick_indi
     }
 }
 
-void renderer::render_chunk(Chunk self, float const *pos) {
-    auto brick_count = self->brick_count;
+void renderer::render_chunk(Renderer self, Chunk chunk, float const *pos) {
+    auto brick_count = chunk->brick_count;
 
     auto meshes_size = round_up_div((sizeof(VoxelBrickMesh) * brick_count), 128) * 128;
     auto bitmasks_size = round_up_div((sizeof(VoxelBrickBitmask) * brick_count), 128) * 128;
@@ -1744,42 +1737,42 @@ void renderer::render_chunk(Chunk self, float const *pos) {
     auto flags_offset = attribs_offset + attribs_size;
     auto total_size = flags_offset + flags_size;
 
-    if (self->needs_update) {
-        if (!self->brick_data.is_empty()) {
-            s_instance->device.destroy_buffer(self->brick_data);
+    if (chunk->needs_update) {
+        if (!chunk->brick_data.is_empty()) {
+            self->device.destroy_buffer(chunk->brick_data);
         }
-        self->brick_data = s_instance->device.create_buffer({
+        chunk->brick_data = self->device.create_buffer({
             .size = total_size,
             .name = "brick_data",
         });
     }
 
     // The buffer will be at the current size of tracked buffers.
-    auto tracked_chunk_index = s_instance->tracked_brick_data.size();
-    s_instance->tracked_brick_data.push_back(self->brick_data);
+    auto tracked_chunk_index = self->tracked_brick_data.size();
+    self->tracked_brick_data.push_back(chunk->brick_data);
 
-    if (tracked_chunk_index != self->tracked_index) {
-        self->tracked_index = tracked_chunk_index;
-        s_instance->needs_update = true;
+    if (tracked_chunk_index != chunk->tracked_index) {
+        chunk->tracked_index = tracked_chunk_index;
+        self->needs_update = true;
 
-        if (tracked_chunk_index >= s_instance->chunks.size()) {
-            s_instance->chunks.resize(tracked_chunk_index + 1);
+        if (tracked_chunk_index >= self->chunks.size()) {
+            self->chunks.resize(tracked_chunk_index + 1);
         }
     }
 
-    s_instance->chunks[tracked_chunk_index] = VoxelChunk{
-        .bitmasks = s_instance->device.get_device_address(self->brick_data).value() + bitmasks_offset,
-        .meshes = s_instance->device.get_device_address(self->brick_data).value() + meshes_offset,
-        .pos_scl = s_instance->device.get_device_address(self->brick_data).value() + pos_scl_offset,
-        .attribs = s_instance->device.get_device_address(self->brick_data).value() + attribs_offset,
-        .flags = s_instance->device.get_device_address(self->brick_data).value() + flags_offset,
+    self->chunks[tracked_chunk_index] = VoxelChunk{
+        .bitmasks = self->device.get_device_address(chunk->brick_data).value() + bitmasks_offset,
+        .meshes = self->device.get_device_address(chunk->brick_data).value() + meshes_offset,
+        .pos_scl = self->device.get_device_address(chunk->brick_data).value() + pos_scl_offset,
+        .attribs = self->device.get_device_address(chunk->brick_data).value() + attribs_offset,
+        .flags = self->device.get_device_address(chunk->brick_data).value() + flags_offset,
         .brick_n = uint32_t(brick_count),
         .pos = {pos[0], pos[1], pos[2]},
     };
 
-    if (self->needs_update) {
-        s_instance->needs_update = true;
-        self->needs_update = false;
-        s_instance->chunks_to_update.push_back(self);
+    if (chunk->needs_update) {
+        self->needs_update = true;
+        chunk->needs_update = false;
+        self->chunks_to_update.push_back(chunk);
     }
 }
