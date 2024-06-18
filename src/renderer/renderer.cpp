@@ -106,6 +106,10 @@ struct renderer::State {
     bool draw_from_observer = false;
     bool needs_record = false;
     bool needs_update = false;
+
+    std::array<float, 100> delta_times;
+    int delta_times_offset = 0;
+    int delta_times_count = 0;
 };
 
 template <typename T>
@@ -1526,6 +1530,16 @@ void renderer::draw(Renderer self, player::Player player, voxel_world::VoxelWorl
     self->gpu_input.delta_time = delta_time;
     self->prev_time = now;
 
+    self->delta_times_offset = (self->delta_times_offset + 1) % self->delta_times.size();
+    self->delta_times[self->delta_times_offset] = delta_time;
+    self->delta_times_count = std::min<int>(self->delta_times_count + 1, self->delta_times.size());
+
+    float avg_delta_time = 0.0f;
+    for (int i = 0; i < self->delta_times_count; ++i) {
+        avg_delta_time += self->delta_times[i];
+    }
+    avg_delta_time *= 1.0f / self->delta_times_count;
+
     auto swapchain_image = self->swapchain.acquire_next_image();
     if (swapchain_image.is_empty()) {
         return;
@@ -1539,7 +1553,7 @@ void renderer::draw(Renderer self, player::Player player, voxel_world::VoxelWorl
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
         ImGui::Begin("Debug");
-        ImGui::Text("%.3f ms (%.3f fps)", delta_time * 1000.0f, 1.0f / delta_time);
+        ImGui::Text("%.3f ms (%.3f fps)", avg_delta_time * 1000.0f, 1.0f / avg_delta_time);
         ImGui::Text("m pos = %.3f %.3f %.3f", self->gpu_input.cam.view_to_world.w.x, self->gpu_input.cam.view_to_world.w.y, self->gpu_input.cam.view_to_world.w.z);
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip("Main camera position");
