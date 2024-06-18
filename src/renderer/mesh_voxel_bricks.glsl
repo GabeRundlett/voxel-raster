@@ -6,7 +6,7 @@ DAXA_DECL_PUSH_CONSTANT(MeshVoxelBricksPush, push)
 
 shared VoxelBrickMesh result_mesh;
 // TODO: How can I remove this?
-shared uint face_ids[MAX_OUTER_FACES_PER_BRICK];
+shared uint face_ids[MAX_OUTER_FACES_PER_BRICK * 9 / 16];
 
 layout(local_size_x = VOXEL_BRICK_SIZE, local_size_y = VOXEL_BRICK_SIZE, local_size_z = 3) in;
 void main() {
@@ -18,6 +18,21 @@ void main() {
 
     BrickInstance brick_instance = deref(push.uses.brick_instance_allocator[brick_instance_index]);
     daxa_BufferPtr(VoxelChunk) chunk = push.uses.chunks[brick_instance.chunk_index];
+    ivec4 pos_scl = deref(deref(chunk).pos_scl[brick_instance.brick_index]);
+
+    vec3 p0 = ivec3(deref(chunk).pos) * int(VOXEL_CHUNK_SIZE) + pos_scl.xyz * int(VOXEL_BRICK_SIZE) + ivec3(0);
+    vec3 p1 = ivec3(deref(chunk).pos) * int(VOXEL_CHUNK_SIZE) + pos_scl.xyz * int(VOXEL_BRICK_SIZE) + ivec3(VOXEL_BRICK_SIZE);
+    int scl = pos_scl.w + 8;
+#define SCL (float(1 << scl) / float(1 << 8))
+    p0 *= SCL;
+    p1 *= SCL;
+
+    vec3 cam_pos = vec3(
+        deref(push.uses.gpu_input).cam.view_to_world[3][0],
+        deref(push.uses.gpu_input).cam.view_to_world[3][1],
+        deref(push.uses.gpu_input).cam.view_to_world[3][2]);
+    p0 -= cam_pos;
+    p1 -= cam_pos;
 
     uint xi = gl_LocalInvocationID.x;
     uint yi = gl_LocalInvocationID.y;
@@ -36,6 +51,43 @@ void main() {
     uint bit_index = strip_index * VOXEL_BRICK_SIZE;
     uint word_index = bit_index / 32;
 
+    if (fi == 0) {
+        if (p1.x < 0) {
+            b_edge_mask = 0x0;
+        } else if (p0.x > 0) {
+            t_edge_mask = 0x0;
+        } else {
+            int cam_voxel_pos = int(cam_pos.x * 16.0) % int(VOXEL_BRICK_SIZE);
+            int mask = (1 << cam_voxel_pos) - 1;
+            b_edge_mask &= ~mask;
+            t_edge_mask &= mask;
+        }
+    }
+    if (fi == 1) {
+        if (p1.y < 0) {
+            b_edge_mask = 0x0;
+        } else if (p0.y > 0) {
+            t_edge_mask = 0x0;
+        } else {
+            int cam_voxel_pos = int(cam_pos.y * 16.0) % int(VOXEL_BRICK_SIZE);
+            int mask = (1 << cam_voxel_pos) - 1;
+            b_edge_mask &= ~mask;
+            t_edge_mask &= mask;
+        }
+    }
+    if (fi == 2) {
+        if (p1.z < 0) {
+            b_edge_mask = 0x0;
+        } else if (p0.z > 0) {
+            t_edge_mask = 0x0;
+        } else {
+            int cam_voxel_pos = int(cam_pos.z * 16.0) % int(VOXEL_BRICK_SIZE);
+            int mask = (1 << cam_voxel_pos) - 1;
+            b_edge_mask &= ~mask;
+            t_edge_mask &= mask;
+        }
+    }
+
     uint in_word_index = bit_index % 32;
     uint b_edge_count = bitCount(b_edge_mask);
     uint t_edge_count = bitCount(t_edge_mask);
@@ -50,7 +102,7 @@ void main() {
     uint face_offset = atomicAdd(result_mesh.face_count, b_edge_count + t_edge_count);
 
     uint shift = 0;
-    for (uint i = 0; i < b_edge_count; ++i) {
+    [[loop]] for (uint i = 0; i < b_edge_count; ++i) {
         uint lsb = findLSB(b_edge_mask >> shift);
         shift += lsb + 1;
         uint in_strip_index = shift - 1;
@@ -58,7 +110,7 @@ void main() {
     }
 
     shift = 0;
-    for (uint i = 0; i < t_edge_count; ++i) {
+    [[loop]] for (uint i = 0; i < t_edge_count; ++i) {
         uint lsb = findLSB(t_edge_mask >> shift);
         shift += lsb + 1;
         uint in_strip_index = shift - 1;
