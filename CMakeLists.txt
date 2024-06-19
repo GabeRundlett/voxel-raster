@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 
-set(USE_ISPC 0)
+set(USE_ISPC 1)
 
 include("${CMAKE_CURRENT_LIST_DIR}/cmake/deps.cmake")
 if (USE_ISPC)
