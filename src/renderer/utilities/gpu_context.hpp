@@ -73,7 +73,7 @@ struct GpuContext {
                     std::make_shared<AsyncManagedComputePipeline>(pipeline_manager->add_compute_pipeline({
                         .shader_info = {
                             .source = task.source,
-                            .compile_options = {.required_subgroup_size = task.required_subgroup_size, .defines = task.extra_defines},
+                            .compile_options = {.defines = task.extra_defines, .required_subgroup_size = task.required_subgroup_size},
                         },
                         .push_constant_size = push_constant_size,
                         .name = std::string{TaskHeadT::name()},
@@ -141,7 +141,7 @@ struct GpuContext {
                                                 ? daxa::Optional<daxa::ShaderCompileInfo>{}
                                                 : daxa::Optional<daxa::ShaderCompileInfo>{daxa::ShaderCompileInfo{
                                                       .source = task.mesh_source,
-                                                      .compile_options = {.required_subgroup_size = task.required_subgroup_size, .defines = task.extra_defines},
+                                                      .compile_options = {.defines = task.extra_defines, .required_subgroup_size = task.required_subgroup_size},
                                                   }},
                         .vertex_shader_info = daxa::holds_alternative<daxa::Monostate>(task.vert_source)
                                                   ? daxa::Optional<daxa::ShaderCompileInfo>{}
