@@ -151,176 +151,102 @@ struct GenHizPush {
 #include <renderer/utilities/gpu_context.hpp>
 #include <renderer/utilities/common.hpp>
 
-struct AllocateBrickInstancesTask : AllocateBrickInstances::Task {
-    AttachmentViews views = {};
-    daxa::ComputePipeline *pipeline = {};
-    uint32_t *chunk_n;
-    void callback(daxa::TaskInterface ti) {
-        ti.recorder.set_pipeline(*pipeline);
-        AllocateBrickInstancesPush push = {};
-        ti.assign_attachment_shader_blob(push.uses.value);
-        ti.recorder.push_constant(push);
-        ti.recorder.dispatch({*chunk_n, 1, 1});
-    }
-};
-
-struct SetIndirectInfosTask : SetIndirectInfos::Task {
-    AttachmentViews views = {};
-    daxa::ComputePipeline *pipeline = {};
-    uint32_t *chunk_n;
-    void callback(daxa::TaskInterface ti) {
-        ti.recorder.set_pipeline(*pipeline);
-        SetIndirectInfosPush push = {};
-        ti.assign_attachment_shader_blob(push.uses.value);
-        ti.recorder.push_constant(push);
-        ti.recorder.dispatch({1, 1, 1});
-    }
-};
-
-struct MeshVoxelBricksTask : MeshVoxelBricks::Task {
-    AttachmentViews views = {};
-    daxa::ComputePipeline *pipeline = {};
+struct DrawInput {
+    daxa::TaskImageView task_visbuffer64;
+    daxa::TaskImageView task_debug_overdraw;
+    daxa::TaskImageView hiz;
+    daxa::TaskBufferView task_indirect_infos;
+    daxa::TaskBufferView task_chunks;
+    daxa::TaskBufferView task_brick_data;
+    daxa::TaskBufferView task_brick_instance_allocator;
+    daxa::TaskBufferView task_brick_meshlet_allocator;
+    daxa::TaskBufferView task_brick_meshlet_metadata;
     uint32_t indirect_offset;
-    void callback(daxa::TaskInterface ti) {
-        ti.recorder.set_pipeline(*pipeline);
-        MeshVoxelBricksPush push = {};
-        ti.assign_attachment_shader_blob(push.uses.value);
-        ti.recorder.push_constant(push);
-        ti.recorder.dispatch_indirect({.indirect_buffer = ti.get(AT.indirect_info).ids[0], .offset = indirect_offset});
-    }
+    bool draw_from_observer = false;
 };
 
-struct DrawVisbufferTask : DrawVisbuffer::Task {
-    AttachmentViews views = {};
-    daxa::RasterPipeline *pipeline = {};
-    uint32_t indirect_offset;
-    bool first = false;
-    void callback(daxa::TaskInterface ti) {
-        auto const &image_attach_info = ti.get(AT.visbuffer64);
-        auto image_info = ti.device.info_image(image_attach_info.ids[0]).value();
-        auto render_recorder = std::move(ti.recorder).begin_renderpass({
-            // .color_attachments = std::array{
-            //     daxa::RenderAttachmentInfo{
-            //         .image_view = image_attach_info.view_ids[0],
-            //         .load_op = first ? daxa::AttachmentLoadOp::CLEAR : daxa::AttachmentLoadOp::LOAD,
-            //         .clear_value = std::array<daxa::u32, 4>{0, 0, 0, 0},
-            //     },
-            // },
-            // .depth_attachment = daxa::RenderAttachmentInfo{
-            //     .image_view = ti.get(AT.depth_target).view_ids[0],
-            //     .load_op = first ? daxa::AttachmentLoadOp::CLEAR : daxa::AttachmentLoadOp::LOAD,
-            //     .clear_value = daxa::DepthValue{.depth = 0.0f},
-            // },
-            .render_area = {.width = image_info.size.x, .height = image_info.size.y},
-        });
-        render_recorder.set_pipeline(*pipeline);
-        DrawVisbufferPush push = {};
-        ti.assign_attachment_shader_blob(push.uses.value);
-        render_recorder.push_constant(push);
-        render_recorder.draw_mesh_tasks_indirect({.indirect_buffer = ti.get(AT.indirect_info).ids[0], .offset = indirect_offset, .draw_count = 1, .stride = {}});
-        ti.recorder = std::move(render_recorder).end_renderpass();
+void draw_visbuffer(GpuContext &gpu_context, daxa::TaskGraph &task_graph, DrawInput const &input) {
+    auto extra_defines = std::vector<daxa::ShaderDefine>{};
+    if (input.hiz != daxa::NullTaskImage) {
+        extra_defines.push_back({"DO_DEPTH_CULL", "1"});
     }
-};
-
-struct ComputeRasterizeTask : ComputeRasterize::Task {
-    AttachmentViews views = {};
-    daxa::ComputePipeline *pipeline = {};
-    uint32_t indirect_offset;
-    void callback(daxa::TaskInterface ti) {
-        ti.recorder.set_pipeline(*pipeline);
-        ComputeRasterizePush push = {};
-        ti.assign_attachment_shader_blob(push.uses.value);
-        ti.recorder.push_constant(push);
-        ti.recorder.dispatch_indirect({.indirect_buffer = ti.get(AT.indirect_info).ids[0], .offset = indirect_offset});
+    if (input.draw_from_observer) {
+        extra_defines.push_back({"DRAW_FROM_OBSERVER", "1"});
     }
-};
 
-struct ShadeVisbufferTask : ShadeVisbuffer::Task {
-    AttachmentViews views = {};
-    daxa::ComputePipeline *pipeline = {};
-    void callback(daxa::TaskInterface ti) {
-        auto const &image_attach_info = ti.get(AT.color);
-        auto image_info = ti.device.info_image(image_attach_info.ids[0]).value();
-        ti.recorder.set_pipeline(*pipeline);
-        ShadeVisbufferPush push = {};
-        ti.assign_attachment_shader_blob(push.uses.value);
-        ti.recorder.push_constant(push);
-        ti.recorder.dispatch({round_up_div(image_info.size.x, 16), round_up_div(image_info.size.y, 16), 1});
+    gpu_context.add(RasterTask<DrawVisbuffer::Task, DrawVisbufferPush, uint32_t>{
+        .mesh_source = daxa::ShaderFile{"voxel_rasterizer/draw_visbuffer.glsl"},
+        .frag_source = daxa::ShaderFile{"voxel_rasterizer/draw_visbuffer.glsl"},
+        .raster = {.primitive_topology = daxa::PrimitiveTopology::TRIANGLE_LIST},
+        .required_subgroup_size = 32,
+        .extra_defines = extra_defines,
+        .views = std::array{
+            daxa::attachment_view(DrawVisbuffer::AT.visbuffer64, input.task_visbuffer64),
+            daxa::attachment_view(DrawVisbuffer::AT.gpu_input, gpu_context.task_input_buffer),
+            daxa::attachment_view(DrawVisbuffer::AT.chunks, input.task_chunks),
+            daxa::attachment_view(DrawVisbuffer::AT.brick_data, input.task_brick_data),
+            daxa::attachment_view(DrawVisbuffer::AT.brick_instance_allocator, input.task_brick_instance_allocator),
+            daxa::attachment_view(DrawVisbuffer::AT.meshlet_allocator, input.task_brick_meshlet_allocator),
+            daxa::attachment_view(DrawVisbuffer::AT.meshlet_metadata, input.task_brick_meshlet_metadata),
+#if ENABLE_DEBUG_VIS
+            daxa::attachment_view(DrawVisbuffer::AT.debug_overdraw, input.task_debug_overdraw),
+#endif
+            daxa::attachment_view(DrawVisbuffer::AT.indirect_info, input.task_indirect_infos),
+            daxa::attachment_view(DrawVisbuffer::AT.hiz, input.hiz),
+        },
+        .callback_ = [](daxa::TaskInterface const &ti, daxa::RasterPipeline &pipeline, DrawVisbufferPush &push, uint32_t const &indirect_offset) {
+            auto const &image_attach_info = ti.get(DrawVisbuffer::AT.visbuffer64);
+            auto image_info = ti.device.info_image(image_attach_info.ids[0]).value();
+            auto render_recorder = std::move(ti.recorder).begin_renderpass({.render_area = {.width = image_info.size.x, .height = image_info.size.y}});
+            render_recorder.set_pipeline(pipeline);
+            set_push_constant(ti, render_recorder, push);
+            render_recorder.draw_mesh_tasks_indirect({.indirect_buffer = ti.get(DrawVisbuffer::AT.indirect_info).ids[0], .offset = indirect_offset, .draw_count = 1, .stride = {}});
+            ti.recorder = std::move(render_recorder).end_renderpass();
+        },
+        .info = input.indirect_offset,
+        .task_graph = &task_graph,
+    });
+}
+
+void compute_rasterize(GpuContext &gpu_context, daxa::TaskGraph &task_graph, DrawInput const &input) {
+    auto extra_defines = std::vector<daxa::ShaderDefine>{};
+    if (input.hiz != daxa::NullTaskImage) {
+        extra_defines.push_back({"DO_DEPTH_CULL", "1"});
     }
-};
-
-struct PostProcessingTask : PostProcessing::Task {
-    AttachmentViews views = {};
-    daxa::RasterPipeline *pipeline = {};
-    void callback(daxa::TaskInterface ti) {
-        auto const &image_attach_info = ti.get(AT.render_target);
-        auto image_info = ti.device.info_image(image_attach_info.ids[0]).value();
-        auto render_recorder = std::move(ti.recorder).begin_renderpass({
-            .color_attachments = std::array{
-                daxa::RenderAttachmentInfo{
-                    .image_view = image_attach_info.view_ids[0],
-                    .load_op = daxa::AttachmentLoadOp::LOAD,
-                },
-            },
-            .render_area = {.width = image_info.size.x, .height = image_info.size.y},
-        });
-        render_recorder.set_pipeline(*pipeline);
-        PostProcessingPush push = {};
-        ti.assign_attachment_shader_blob(push.uses.value);
-        render_recorder.push_constant(push);
-        render_recorder.draw({.vertex_count = 3});
-        ti.recorder = std::move(render_recorder).end_renderpass();
+    if (input.draw_from_observer) {
+        extra_defines.push_back({"DRAW_FROM_OBSERVER", "1"});
     }
-};
 
-struct AnalyzeVisbufferTask : AnalyzeVisbuffer::Task {
-    AttachmentViews views = {};
-    daxa::ComputePipeline *pipeline = {};
-    void callback(daxa::TaskInterface ti) {
-        auto const &image_attach_info = ti.get(AT.visbuffer64);
-        auto image_info = ti.device.info_image(image_attach_info.ids[0]).value();
-        ti.recorder.set_pipeline(*pipeline);
-        AnalyzeVisbufferPush push = {};
-        ti.assign_attachment_shader_blob(push.uses.value);
-        ti.recorder.push_constant(push);
-        ti.recorder.dispatch({round_up_div(image_info.size.x, 16), round_up_div(image_info.size.y, 16), 1});
-    }
-};
+    gpu_context.add(ComputeTask<ComputeRasterize::Task, ComputeRasterizePush, uint32_t>{
+        .source = daxa::ShaderFile{"voxel_rasterizer/compute_rasterize.glsl"},
+        .required_subgroup_size = 32,
+        .extra_defines = extra_defines,
+        .views = std::array{
+            daxa::attachment_view(ComputeRasterize::AT.visbuffer64, input.task_visbuffer64),
+            daxa::attachment_view(ComputeRasterize::AT.gpu_input, gpu_context.task_input_buffer),
+            daxa::attachment_view(ComputeRasterize::AT.chunks, input.task_chunks),
+            daxa::attachment_view(ComputeRasterize::AT.brick_data, input.task_brick_data),
+            daxa::attachment_view(ComputeRasterize::AT.brick_instance_allocator, input.task_brick_instance_allocator),
+            daxa::attachment_view(ComputeRasterize::AT.meshlet_allocator, input.task_brick_meshlet_allocator),
+            daxa::attachment_view(ComputeRasterize::AT.meshlet_metadata, input.task_brick_meshlet_metadata),
+            daxa::attachment_view(ComputeRasterize::AT.indirect_info, input.task_indirect_infos),
+#if ENABLE_DEBUG_VIS
+            daxa::attachment_view(ComputeRasterize::AT.debug_overdraw, input.task_debug_overdraw),
+#endif
+            daxa::attachment_view(ComputeRasterize::AT.hiz, input.hiz),
 
-struct GenHizTask : GenHiz::Task {
-    AttachmentViews views = {};
-    daxa::ComputePipeline *pipeline = {};
-    void callback(daxa::TaskInterface ti) {
-        ti.recorder.set_pipeline(*pipeline);
-        auto const &image_attach_info = ti.get(AT.src);
-        auto image_info = ti.device.info_image(image_attach_info.ids[0]).value();
-        auto const dispatch_x = round_up_div(find_next_lower_po2(image_info.size.x) * 2, GEN_HIZ_WINDOW_X);
-        auto const dispatch_y = round_up_div(find_next_lower_po2(image_info.size.y) * 2, GEN_HIZ_WINDOW_Y);
-        GenHizPush push = {
-            .counter = ti.allocator->allocate_fill(0u).value().device_address,
-            .mip_count = ti.get(AT.mips).view.slice.level_count,
-            .total_workgroup_count = dispatch_x * dispatch_y,
-        };
-        ti.assign_attachment_shader_blob(push.uses.value);
-        ti.recorder.push_constant(push);
-        ti.recorder.dispatch({dispatch_x, dispatch_y, 1});
-    }
-};
+        },
+        .callback_ = [](daxa::TaskInterface const &ti, daxa::ComputePipeline &pipeline, ComputeRasterizePush &push, uint32_t const &indirect_offset) {
+            ti.recorder.set_pipeline(pipeline);
+            set_push_constant(ti, push);
+            ti.recorder.dispatch_indirect({.indirect_buffer = ti.get(ComputeRasterize::AT.indirect_info).ids[0], .offset = indirect_offset});
+        },
+        .info = input.indirect_offset,
+        .task_graph = &task_graph,
+    });
+}
 
-struct ClearDrawFlagsTask : ClearDrawFlags::Task {
-    AttachmentViews views = {};
-    daxa::ComputePipeline *pipeline = {};
-    uint32_t indirect_offset;
-    void callback(daxa::TaskInterface ti) {
-        ti.recorder.set_pipeline(*pipeline);
-        ClearDrawFlagsPush push = {};
-        ti.assign_attachment_shader_blob(push.uses.value);
-        ti.recorder.push_constant(push);
-        ti.recorder.dispatch_indirect({.indirect_buffer = ti.get(AT.indirect_info).ids[0], .offset = indirect_offset});
-    }
-};
-
-auto task_gen_hiz_single_pass(GpuContext &gpu_context, daxa::TaskGraph &task_graph, daxa::TaskBufferView gpu_input, daxa::TaskImageView task_visbuffer64, std::shared_ptr<daxa::ComputePipeline> &gen_hiz_pipeline) -> daxa::TaskImageView {
+auto task_gen_hiz_single_pass(GpuContext &gpu_context, daxa::TaskGraph &task_graph, daxa::TaskImageView task_visbuffer64) -> daxa::TaskImageView {
     auto const x_ = gpu_context.next_lower_po2_render_size.x;
     auto const y_ = gpu_context.next_lower_po2_render_size.y;
     auto mip_count = static_cast<uint32_t>(std::ceil(std::log2(std::max(x_, y_))));
@@ -333,37 +259,36 @@ auto task_gen_hiz_single_pass(GpuContext &gpu_context, daxa::TaskGraph &task_gra
         .sample_count = 1,
         .name = "hiz",
     });
-    task_graph.add_task(GenHizTask{
+
+    gpu_context.add(ComputeTask<GenHiz::Task, GenHizPush, NoTaskInfo>{
+        .source = daxa::ShaderFile{"voxel_rasterizer/gen_hiz.glsl"},
         .views = std::array{
-            daxa::attachment_view(GenHiz::AT.gpu_input, gpu_input),
+            daxa::attachment_view(GenHiz::AT.gpu_input, gpu_context.task_input_buffer),
             daxa::attachment_view(GenHiz::AT.src, task_visbuffer64),
             daxa::attachment_view(GenHiz::AT.mips, task_hiz),
         },
-        .pipeline = gen_hiz_pipeline.get(),
+        .callback_ = [](daxa::TaskInterface const &ti, daxa::ComputePipeline &pipeline, GenHizPush &push, NoTaskInfo const &) {
+            ti.recorder.set_pipeline(pipeline);
+            auto const &image_attach_info = ti.get(GenHiz::AT.src);
+            auto image_info = ti.device.info_image(image_attach_info.ids[0]).value();
+            auto const dispatch_x = round_up_div(find_next_lower_po2(image_info.size.x) * 2, GEN_HIZ_WINDOW_X);
+            auto const dispatch_y = round_up_div(find_next_lower_po2(image_info.size.y) * 2, GEN_HIZ_WINDOW_Y);
+            push = {
+                .counter = ti.allocator->allocate_fill(0u).value().device_address,
+                .mip_count = ti.get(GenHiz::AT.mips).view.slice.level_count,
+                .total_workgroup_count = dispatch_x * dispatch_y,
+            };
+            set_push_constant(ti, push);
+            ti.recorder.dispatch({dispatch_x, dispatch_y, 1});
+        },
+        .task_graph = &task_graph,
     });
+
     return task_hiz;
 }
 
 namespace renderer {
     struct VoxelRasterizer {
-        std::shared_ptr<daxa::ComputePipeline> clear_draw_flags_pipeline;
-        std::shared_ptr<daxa::ComputePipeline> allocate_brick_instances_pipeline;
-        std::shared_ptr<daxa::ComputePipeline> set_indirect_infos0;
-        std::shared_ptr<daxa::ComputePipeline> set_indirect_infos1;
-        std::shared_ptr<daxa::ComputePipeline> set_indirect_infos2;
-        std::shared_ptr<daxa::ComputePipeline> mesh_voxel_bricks_pipeline;
-        std::shared_ptr<daxa::RasterPipeline> draw_visbuffer_pipeline;
-        std::shared_ptr<daxa::RasterPipeline> draw_visbuffer_depth_cull_pipeline;
-        std::shared_ptr<daxa::RasterPipeline> draw_visbuffer_observer_pipeline;
-        std::shared_ptr<daxa::RasterPipeline> draw_visbuffer_observer_depth_cull_pipeline;
-        std::shared_ptr<daxa::ComputePipeline> compute_rasterize_pipeline;
-        std::shared_ptr<daxa::ComputePipeline> compute_rasterize_depth_cull_pipeline;
-        std::shared_ptr<daxa::ComputePipeline> compute_rasterize_observer_pipeline;
-        std::shared_ptr<daxa::ComputePipeline> compute_rasterize_observer_depth_cull_pipeline;
-        std::shared_ptr<daxa::ComputePipeline> shade_visbuffer_pipeline;
-        std::shared_ptr<daxa::ComputePipeline> analyze_visbuffer_pipeline;
-        std::shared_ptr<daxa::ComputePipeline> gen_hiz_pipeline;
-
         daxa::BufferId brick_meshlet_allocator;
         daxa::BufferId brick_meshlet_metadata;
         daxa::BufferId brick_instance_allocator;
@@ -379,230 +304,7 @@ namespace renderer {
         daxa::TaskBuffer task_visible_brick_instance_allocator;
     };
 
-    void init(VoxelRasterizer *self, daxa::Device &device, daxa::PipelineManager &pipeline_manager) {
-        {
-            auto result = pipeline_manager.add_compute_pipeline({
-                .shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"voxel_rasterizer/clear_draw_flags.glsl"}},
-                .push_constant_size = sizeof(ClearDrawFlagsPush),
-                .name = "clear_draw_flags",
-            });
-            if (result.is_err()) {
-                std::cerr << result.message() << std::endl;
-                std::terminate();
-            }
-            self->clear_draw_flags_pipeline = result.value();
-        }
-
-        {
-            auto result = pipeline_manager.add_compute_pipeline({
-                .shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"voxel_rasterizer/allocate_brick_instances.glsl"}},
-                .push_constant_size = sizeof(AllocateBrickInstancesPush),
-                .name = "allocate_brick_instances",
-            });
-            if (result.is_err()) {
-                std::cerr << result.message() << std::endl;
-                std::terminate();
-            }
-            self->allocate_brick_instances_pipeline = result.value();
-        }
-
-        {
-            auto result = pipeline_manager.add_compute_pipeline({
-                .shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"voxel_rasterizer/set_indirect_infos.glsl"}, .compile_options = {.defines = {{"SET_TYPE", "0"}}}},
-                .push_constant_size = sizeof(SetIndirectInfosPush),
-                .name = "set_indirect_infos0",
-            });
-            if (result.is_err()) {
-                std::cerr << result.message() << std::endl;
-                std::terminate();
-            }
-            self->set_indirect_infos0 = result.value();
-        }
-
-        {
-            auto result = pipeline_manager.add_compute_pipeline({
-                .shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"voxel_rasterizer/set_indirect_infos.glsl"}, .compile_options = {.defines = {{"SET_TYPE", "1"}}}},
-                .push_constant_size = sizeof(SetIndirectInfosPush),
-                .name = "set_indirect_infos1",
-            });
-            if (result.is_err()) {
-                std::cerr << result.message() << std::endl;
-                std::terminate();
-            }
-            self->set_indirect_infos1 = result.value();
-        }
-
-        {
-            auto result = pipeline_manager.add_compute_pipeline({
-                .shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"voxel_rasterizer/set_indirect_infos.glsl"}, .compile_options = {.defines = {{"SET_TYPE", "2"}}}},
-                .push_constant_size = sizeof(SetIndirectInfosPush),
-                .name = "set_indirect_infos2",
-            });
-            if (result.is_err()) {
-                std::cerr << result.message() << std::endl;
-                std::terminate();
-            }
-            self->set_indirect_infos2 = result.value();
-        }
-
-        {
-            auto result = pipeline_manager.add_compute_pipeline({
-                .shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"voxel_rasterizer/mesh_voxel_bricks.glsl"}},
-                .push_constant_size = sizeof(MeshVoxelBricksPush),
-                .name = "mesh_voxel_bricks",
-            });
-            if (result.is_err()) {
-                std::cerr << result.message() << std::endl;
-                std::terminate();
-            }
-            self->mesh_voxel_bricks_pipeline = result.value();
-        }
-
-        {
-            auto result = pipeline_manager.add_raster_pipeline({
-                .mesh_shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"voxel_rasterizer/draw_visbuffer.glsl"}, .compile_options = {.required_subgroup_size = 32}},
-                .fragment_shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"voxel_rasterizer/draw_visbuffer.glsl"}},
-                .raster = {.polygon_mode = daxa::PolygonMode::FILL},
-                .push_constant_size = sizeof(DrawVisbufferPush),
-                .name = "draw_visbuffer",
-            });
-            if (result.is_err()) {
-                std::cerr << result.message() << std::endl;
-                std::terminate();
-            }
-            self->draw_visbuffer_pipeline = result.value();
-        }
-        {
-            auto result = pipeline_manager.add_raster_pipeline({
-                .mesh_shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"voxel_rasterizer/draw_visbuffer.glsl"}, .compile_options = {.defines = {{"DO_DEPTH_CULL", "1"}}, .required_subgroup_size = 32}},
-                .fragment_shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"voxel_rasterizer/draw_visbuffer.glsl"}},
-                .raster = {.polygon_mode = daxa::PolygonMode::FILL},
-                .push_constant_size = sizeof(DrawVisbufferPush),
-                .name = "draw_visbuffer_depth_cull",
-            });
-            if (result.is_err()) {
-                std::cerr << result.message() << std::endl;
-                std::terminate();
-            }
-            self->draw_visbuffer_depth_cull_pipeline = result.value();
-        }
-        {
-            auto result = pipeline_manager.add_raster_pipeline({
-                .mesh_shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"voxel_rasterizer/draw_visbuffer.glsl"}, .compile_options = {.defines = {{"DRAW_FROM_OBSERVER", "1"}}, .required_subgroup_size = 32}},
-                .fragment_shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"voxel_rasterizer/draw_visbuffer.glsl"}},
-                .raster = {.polygon_mode = daxa::PolygonMode::FILL},
-                .push_constant_size = sizeof(DrawVisbufferPush),
-                .name = "draw_visbuffer_observer",
-            });
-            if (result.is_err()) {
-                std::cerr << result.message() << std::endl;
-                std::terminate();
-            }
-            self->draw_visbuffer_observer_pipeline = result.value();
-        }
-        {
-            auto result = pipeline_manager.add_raster_pipeline({
-                .mesh_shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"voxel_rasterizer/draw_visbuffer.glsl"}, .compile_options = {.defines = {{"DRAW_FROM_OBSERVER", "1"}, {"DO_DEPTH_CULL", "1"}}, .required_subgroup_size = 32}},
-                .fragment_shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"voxel_rasterizer/draw_visbuffer.glsl"}},
-                .raster = {.polygon_mode = daxa::PolygonMode::FILL},
-                .push_constant_size = sizeof(DrawVisbufferPush),
-                .name = "draw_visbuffer_observer",
-            });
-            if (result.is_err()) {
-                std::cerr << result.message() << std::endl;
-                std::terminate();
-            }
-            self->draw_visbuffer_observer_depth_cull_pipeline = result.value();
-        }
-
-        {
-            auto result = pipeline_manager.add_compute_pipeline({
-                .shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"voxel_rasterizer/compute_rasterize.glsl"}},
-                .push_constant_size = sizeof(ComputeRasterizePush),
-                .name = "compute_rasterize",
-            });
-            if (result.is_err()) {
-                std::cerr << result.message() << std::endl;
-                std::terminate();
-            }
-            self->compute_rasterize_pipeline = result.value();
-        }
-        {
-            auto result = pipeline_manager.add_compute_pipeline({
-                .shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"voxel_rasterizer/compute_rasterize.glsl"}, .compile_options = {.defines = {{"DO_DEPTH_CULL", "1"}}}},
-                .push_constant_size = sizeof(ComputeRasterizePush),
-                .name = "compute_rasterize_depth_cull",
-            });
-            if (result.is_err()) {
-                std::cerr << result.message() << std::endl;
-                std::terminate();
-            }
-            self->compute_rasterize_depth_cull_pipeline = result.value();
-        }
-        {
-            auto result = pipeline_manager.add_compute_pipeline({
-                .shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"voxel_rasterizer/compute_rasterize.glsl"}, .compile_options = {.defines = {{"DRAW_FROM_OBSERVER", "1"}}}},
-                .push_constant_size = sizeof(ComputeRasterizePush),
-                .name = "compute_rasterize_observer",
-            });
-            if (result.is_err()) {
-                std::cerr << result.message() << std::endl;
-                std::terminate();
-            }
-            self->compute_rasterize_observer_pipeline = result.value();
-        }
-        {
-            auto result = pipeline_manager.add_compute_pipeline({
-                .shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"voxel_rasterizer/compute_rasterize.glsl"}, .compile_options = {.defines = {{"DRAW_FROM_OBSERVER", "1"}, {"DO_DEPTH_CULL", "1"}}}},
-                .push_constant_size = sizeof(ComputeRasterizePush),
-                .name = "compute_rasterize_observer",
-            });
-            if (result.is_err()) {
-                std::cerr << result.message() << std::endl;
-                std::terminate();
-            }
-            self->compute_rasterize_observer_depth_cull_pipeline = result.value();
-        }
-
-        {
-            auto result = pipeline_manager.add_compute_pipeline({
-                .shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"voxel_rasterizer/shade_visbuffer.glsl"}},
-                .push_constant_size = sizeof(ShadeVisbufferPush),
-                .name = "shade_visbuffer",
-            });
-            if (result.is_err()) {
-                std::cerr << result.message() << std::endl;
-                std::terminate();
-            }
-            self->shade_visbuffer_pipeline = result.value();
-        }
-
-        {
-            auto result = pipeline_manager.add_compute_pipeline({
-                .shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"voxel_rasterizer/analyze_visbuffer.glsl"}},
-                .push_constant_size = sizeof(AnalyzeVisbufferPush),
-                .name = "analyze_visbuffer",
-            });
-            if (result.is_err()) {
-                std::cerr << result.message() << std::endl;
-                std::terminate();
-            }
-            self->analyze_visbuffer_pipeline = result.value();
-        }
-
-        {
-            auto result = pipeline_manager.add_compute_pipeline({
-                .shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"voxel_rasterizer/gen_hiz.glsl"}},
-                .push_constant_size = sizeof(GenHizPush),
-                .name = "gen_hiz",
-            });
-            if (result.is_err()) {
-                std::cerr << result.message() << std::endl;
-                std::terminate();
-            }
-            self->gen_hiz_pipeline = result.value();
-        }
-
+    void init(VoxelRasterizer *self, daxa::Device &device) {
         self->task_brick_meshlet_allocator = daxa::TaskBuffer({.name = "task_brick_meshlet_allocator"});
         self->task_brick_meshlet_metadata = daxa::TaskBuffer({.name = "task_brick_meshlet_metadata"});
         self->task_brick_instance_allocator = daxa::TaskBuffer({.name = "task_brick_instance_allocator"});
@@ -677,9 +379,9 @@ namespace renderer {
         temp_task_graph.execute({});
     }
 
-    void update(VoxelRasterizer *self, daxa::Device &device, daxa::TaskBuffer &task_chunks, daxa::TaskBuffer &task_brick_data) {
+    void update(VoxelRasterizer *self, GpuContext &gpu_context, daxa::TaskBuffer &task_chunks, daxa::TaskBuffer &task_brick_data) {
         auto temp_task_graph = daxa::TaskGraph({
-            .device = device,
+            .device = gpu_context.device,
             .name = "update_task_graph",
         });
         temp_task_graph.use_persistent_buffer(task_brick_data);
@@ -697,23 +399,38 @@ namespace renderer {
             .size = sizeof(DispatchIndirectStruct) * 4,
             .name = "indirect_infos",
         });
-        temp_task_graph.add_task(SetIndirectInfosTask{
+
+        gpu_context.add(ComputeTask<SetIndirectInfos::Task, SetIndirectInfosPush, NoTaskInfo>{
+            .source = daxa::ShaderFile{"voxel_rasterizer/set_indirect_infos.glsl"},
+            .extra_defines = {{"SET_TYPE", "0"}},
             .views = std::array{
                 daxa::attachment_view(SetIndirectInfos::AT.gpu_input, task_input_buffer),
                 daxa::attachment_view(SetIndirectInfos::AT.brick_instance_allocator, self->task_brick_instance_allocator),
                 daxa::attachment_view(SetIndirectInfos::AT.meshlet_allocator, self->task_brick_meshlet_allocator),
                 daxa::attachment_view(SetIndirectInfos::AT.indirect_info, task_indirect_infos),
             },
-            .pipeline = self->set_indirect_infos0.get(),
+            .callback_ = [](daxa::TaskInterface const &ti, daxa::ComputePipeline &pipeline, SetIndirectInfosPush &push, NoTaskInfo const &) {
+                ti.recorder.set_pipeline(pipeline);
+                set_push_constant(ti, push);
+                ti.recorder.dispatch({1, 1, 1});
+            },
+            .task_graph = &temp_task_graph,
         });
-        temp_task_graph.add_task(ClearDrawFlagsTask{
+
+        gpu_context.add(ComputeTask<ClearDrawFlags::Task, ClearDrawFlagsPush, NoTaskInfo>{
+            .source = daxa::ShaderFile{"voxel_rasterizer/clear_draw_flags.glsl"},
             .views = std::array{
                 daxa::attachment_view(ClearDrawFlags::AT.chunks, task_chunks),
                 daxa::attachment_view(ClearDrawFlags::AT.brick_data, task_brick_data),
                 daxa::attachment_view(ClearDrawFlags::AT.brick_instance_allocator, self->task_brick_instance_allocator),
                 daxa::attachment_view(ClearDrawFlags::AT.indirect_info, task_indirect_infos),
             },
-            .pipeline = self->clear_draw_flags_pipeline.get(),
+            .callback_ = [](daxa::TaskInterface const &ti, daxa::ComputePipeline &pipeline, ClearDrawFlagsPush &push, NoTaskInfo const &) {
+                ti.recorder.set_pipeline(pipeline);
+                set_push_constant(ti, push);
+                ti.recorder.dispatch_indirect({.indirect_buffer = ti.get(ClearDrawFlags::AT.indirect_info).ids[0]});
+            },
+            .task_graph = &temp_task_graph,
         });
 
         task_fill_buffer(temp_task_graph, self->task_brick_meshlet_allocator, daxa_u32vec2{});
@@ -768,17 +485,25 @@ namespace renderer {
                 task_fill_buffer(task_graph, self->task_brick_meshlet_allocator, daxa_u32vec2{});
             }
 
-            task_graph.add_task(SetIndirectInfosTask{
+            gpu_context.add(ComputeTask<SetIndirectInfos::Task, SetIndirectInfosPush, NoTaskInfo>{
+                .source = daxa::ShaderFile{"voxel_rasterizer/set_indirect_infos.glsl"},
+                .extra_defines = {{"SET_TYPE", first_draw ? "0" : "1"}},
                 .views = std::array{
                     daxa::attachment_view(SetIndirectInfos::AT.gpu_input, gpu_context.task_input_buffer),
                     daxa::attachment_view(SetIndirectInfos::AT.brick_instance_allocator, task_brick_instance_allocator),
                     daxa::attachment_view(SetIndirectInfos::AT.meshlet_allocator, self->task_brick_meshlet_allocator),
                     daxa::attachment_view(SetIndirectInfos::AT.indirect_info, task_indirect_infos),
                 },
-                .pipeline = first_draw ? self->set_indirect_infos0.get() : self->set_indirect_infos1.get(),
+                .callback_ = [](daxa::TaskInterface const &ti, daxa::ComputePipeline &pipeline, SetIndirectInfosPush &push, NoTaskInfo const &) {
+                    ti.recorder.set_pipeline(pipeline);
+                    set_push_constant(ti, push);
+                    ti.recorder.dispatch({1, 1, 1});
+                },
+                .task_graph = &task_graph,
             });
 
-            task_graph.add_task(MeshVoxelBricksTask{
+            gpu_context.add(ComputeTask<MeshVoxelBricks::Task, MeshVoxelBricksPush, size_t>{
+                .source = daxa::ShaderFile{"voxel_rasterizer/mesh_voxel_bricks.glsl"},
                 .views = std::array{
                     daxa::attachment_view(MeshVoxelBricks::AT.gpu_input, gpu_context.task_input_buffer),
                     daxa::attachment_view(MeshVoxelBricks::AT.chunks, task_chunks),
@@ -788,98 +513,104 @@ namespace renderer {
                     daxa::attachment_view(MeshVoxelBricks::AT.meshlet_metadata, self->task_brick_meshlet_metadata),
                     daxa::attachment_view(MeshVoxelBricks::AT.indirect_info, task_indirect_infos),
                 },
-                .pipeline = self->mesh_voxel_bricks_pipeline.get(),
-                .indirect_offset = sizeof(DispatchIndirectStruct) * 0,
+                .callback_ = [](daxa::TaskInterface const &ti, daxa::ComputePipeline &pipeline, MeshVoxelBricksPush &push, size_t const &indirect_offset) {
+                    ti.recorder.set_pipeline(pipeline);
+                    set_push_constant(ti, push);
+                    ti.recorder.dispatch_indirect({.indirect_buffer = ti.get(MeshVoxelBricks::AT.indirect_info).ids[0], .offset = indirect_offset});
+                },
+                .info = sizeof(DispatchIndirectStruct) * 0,
+                .task_graph = &task_graph,
             });
 
-            task_graph.add_task(SetIndirectInfosTask{
+            gpu_context.add(ComputeTask<SetIndirectInfos::Task, SetIndirectInfosPush, NoTaskInfo>{
+                .source = daxa::ShaderFile{"voxel_rasterizer/set_indirect_infos.glsl"},
+                .extra_defines = {{"SET_TYPE", "2"}},
                 .views = std::array{
                     daxa::attachment_view(SetIndirectInfos::AT.gpu_input, gpu_context.task_input_buffer),
                     daxa::attachment_view(SetIndirectInfos::AT.brick_instance_allocator, task_brick_instance_allocator),
                     daxa::attachment_view(SetIndirectInfos::AT.meshlet_allocator, self->task_brick_meshlet_allocator),
                     daxa::attachment_view(SetIndirectInfos::AT.indirect_info, task_indirect_infos),
                 },
-                .pipeline = self->set_indirect_infos2.get(),
+                .callback_ = [](daxa::TaskInterface const &ti, daxa::ComputePipeline &pipeline, SetIndirectInfosPush &push, NoTaskInfo const &) {
+                    ti.recorder.set_pipeline(pipeline);
+                    set_push_constant(ti, push);
+                    ti.recorder.dispatch({1, 1, 1});
+                },
+                .task_graph = &task_graph,
             });
 
-            task_graph.add_task(DrawVisbufferTask{
-                .views = std::array{
-                    daxa::attachment_view(DrawVisbuffer::AT.visbuffer64, task_visbuffer64),
-                    daxa::attachment_view(DrawVisbuffer::AT.gpu_input, gpu_context.task_input_buffer),
-                    daxa::attachment_view(DrawVisbuffer::AT.chunks, task_chunks),
-                    daxa::attachment_view(DrawVisbuffer::AT.brick_data, task_brick_data),
-                    daxa::attachment_view(DrawVisbuffer::AT.brick_instance_allocator, task_brick_instance_allocator),
-                    daxa::attachment_view(DrawVisbuffer::AT.meshlet_allocator, self->task_brick_meshlet_allocator),
-                    daxa::attachment_view(DrawVisbuffer::AT.meshlet_metadata, self->task_brick_meshlet_metadata),
+            draw_visbuffer(
+                gpu_context, task_graph,
+                {
+                    .task_visbuffer64 = task_visbuffer64,
 #if ENABLE_DEBUG_VIS
-                    daxa::attachment_view(DrawVisbuffer::AT.debug_overdraw, task_debug_overdraw),
+                    .task_debug_overdraw = task_debug_overdraw,
 #endif
-                    daxa::attachment_view(DrawVisbuffer::AT.indirect_info, task_indirect_infos),
-                    daxa::attachment_view(DrawVisbuffer::AT.hiz, hiz),
-                },
-                .pipeline = hiz == daxa::NullTaskImage ? self->draw_visbuffer_pipeline.get() : self->draw_visbuffer_depth_cull_pipeline.get(),
-                .indirect_offset = sizeof(DispatchIndirectStruct) * 3,
-                .first = first_draw,
-            });
+                    .hiz = hiz,
+                    .task_indirect_infos = task_indirect_infos,
+                    .task_chunks = task_chunks,
+                    .task_brick_data = task_brick_data,
+                    .task_brick_instance_allocator = task_brick_instance_allocator,
+                    .task_brick_meshlet_allocator = self->task_brick_meshlet_allocator,
+                    .task_brick_meshlet_metadata = self->task_brick_meshlet_metadata,
+                    .indirect_offset = sizeof(DispatchIndirectStruct) * 3,
+                    .draw_from_observer = false,
+                });
 
-            task_graph.add_task(ComputeRasterizeTask{
-                .views = std::array{
-                    daxa::attachment_view(ComputeRasterize::AT.visbuffer64, task_visbuffer64),
-                    daxa::attachment_view(ComputeRasterize::AT.gpu_input, gpu_context.task_input_buffer),
-                    daxa::attachment_view(ComputeRasterize::AT.chunks, task_chunks),
-                    daxa::attachment_view(ComputeRasterize::AT.brick_data, task_brick_data),
-                    daxa::attachment_view(ComputeRasterize::AT.brick_instance_allocator, task_brick_instance_allocator),
-                    daxa::attachment_view(ComputeRasterize::AT.meshlet_allocator, self->task_brick_meshlet_allocator),
-                    daxa::attachment_view(ComputeRasterize::AT.meshlet_metadata, self->task_brick_meshlet_metadata),
-                    daxa::attachment_view(ComputeRasterize::AT.indirect_info, task_indirect_infos),
+            compute_rasterize(
+                gpu_context, task_graph,
+                {
+                    .task_visbuffer64 = task_visbuffer64,
 #if ENABLE_DEBUG_VIS
-                    daxa::attachment_view(ComputeRasterize::AT.debug_overdraw, task_debug_overdraw),
+                    .task_debug_overdraw = task_debug_overdraw,
 #endif
-                    daxa::attachment_view(ComputeRasterize::AT.hiz, hiz),
-                },
-                .pipeline = hiz == daxa::NullTaskImage ? self->compute_rasterize_pipeline.get() : self->compute_rasterize_depth_cull_pipeline.get(),
-                .indirect_offset = sizeof(DispatchIndirectStruct) * 1,
-            });
+                    .hiz = hiz,
+                    .task_indirect_infos = task_indirect_infos,
+                    .task_chunks = task_chunks,
+                    .task_brick_data = task_brick_data,
+                    .task_brick_instance_allocator = task_brick_instance_allocator,
+                    .task_brick_meshlet_allocator = self->task_brick_meshlet_allocator,
+                    .task_brick_meshlet_metadata = self->task_brick_meshlet_metadata,
+                    .indirect_offset = sizeof(DispatchIndirectStruct) * 1,
+                    .draw_from_observer = false,
+                });
 
             if (draw_from_observer) {
-                task_graph.add_task(DrawVisbufferTask{
-                    .views = std::array{
-                        daxa::attachment_view(DrawVisbuffer::AT.visbuffer64, task_observer_visbuffer64),
-                        daxa::attachment_view(DrawVisbuffer::AT.gpu_input, gpu_context.task_input_buffer),
-                        daxa::attachment_view(DrawVisbuffer::AT.chunks, task_chunks),
-                        daxa::attachment_view(DrawVisbuffer::AT.brick_data, task_brick_data),
-                        daxa::attachment_view(DrawVisbuffer::AT.brick_instance_allocator, task_brick_instance_allocator),
-                        daxa::attachment_view(DrawVisbuffer::AT.meshlet_allocator, self->task_brick_meshlet_allocator),
-                        daxa::attachment_view(DrawVisbuffer::AT.meshlet_metadata, self->task_brick_meshlet_metadata),
+                draw_visbuffer(
+                    gpu_context, task_graph,
+                    {
+                        .task_visbuffer64 = task_observer_visbuffer64,
 #if ENABLE_DEBUG_VIS
-                        daxa::attachment_view(DrawVisbuffer::AT.debug_overdraw, task_debug_overdraw),
+                        .task_debug_overdraw = task_debug_overdraw,
 #endif
-                        daxa::attachment_view(DrawVisbuffer::AT.indirect_info, task_indirect_infos),
-                        daxa::attachment_view(DrawVisbuffer::AT.hiz, hiz),
-                    },
-                    .pipeline = hiz == daxa::NullTaskImage ? self->draw_visbuffer_observer_pipeline.get() : self->draw_visbuffer_observer_depth_cull_pipeline.get(),
-                    .indirect_offset = sizeof(DispatchIndirectStruct) * 3,
-                    .first = first_draw,
-                });
+                        .hiz = hiz,
+                        .task_indirect_infos = task_indirect_infos,
+                        .task_chunks = task_chunks,
+                        .task_brick_data = task_brick_data,
+                        .task_brick_instance_allocator = task_brick_instance_allocator,
+                        .task_brick_meshlet_allocator = self->task_brick_meshlet_allocator,
+                        .task_brick_meshlet_metadata = self->task_brick_meshlet_metadata,
+                        .indirect_offset = sizeof(DispatchIndirectStruct) * 3,
+                        .draw_from_observer = true,
+                    });
 
-                task_graph.add_task(ComputeRasterizeTask{
-                    .views = std::array{
-                        daxa::attachment_view(ComputeRasterize::AT.visbuffer64, task_observer_visbuffer64),
-                        daxa::attachment_view(ComputeRasterize::AT.gpu_input, gpu_context.task_input_buffer),
-                        daxa::attachment_view(ComputeRasterize::AT.chunks, task_chunks),
-                        daxa::attachment_view(ComputeRasterize::AT.brick_data, task_brick_data),
-                        daxa::attachment_view(ComputeRasterize::AT.brick_instance_allocator, task_brick_instance_allocator),
-                        daxa::attachment_view(ComputeRasterize::AT.meshlet_allocator, self->task_brick_meshlet_allocator),
-                        daxa::attachment_view(ComputeRasterize::AT.meshlet_metadata, self->task_brick_meshlet_metadata),
-                        daxa::attachment_view(ComputeRasterize::AT.indirect_info, task_indirect_infos),
+                compute_rasterize(
+                    gpu_context, task_graph,
+                    {
+                        .task_visbuffer64 = task_observer_visbuffer64,
 #if ENABLE_DEBUG_VIS
-                        daxa::attachment_view(ComputeRasterize::AT.debug_overdraw, task_debug_overdraw),
+                        .task_debug_overdraw = task_debug_overdraw,
 #endif
-                        daxa::attachment_view(ComputeRasterize::AT.hiz, hiz),
-                    },
-                    .pipeline = hiz == daxa::NullTaskImage ? self->compute_rasterize_observer_pipeline.get() : self->compute_rasterize_observer_depth_cull_pipeline.get(),
-                    .indirect_offset = sizeof(DispatchIndirectStruct) * 1,
-                });
+                        .hiz = hiz,
+                        .task_indirect_infos = task_indirect_infos,
+                        .task_chunks = task_chunks,
+                        .task_brick_data = task_brick_data,
+                        .task_brick_instance_allocator = task_brick_instance_allocator,
+                        .task_brick_meshlet_allocator = self->task_brick_meshlet_allocator,
+                        .task_brick_meshlet_metadata = self->task_brick_meshlet_metadata,
+                        .indirect_offset = sizeof(DispatchIndirectStruct) * 1,
+                        .draw_from_observer = true,
+                    });
             }
 
             first_draw = false;
@@ -889,10 +620,11 @@ namespace renderer {
         draw_brick_instances(self->task_brick_instance_allocator, daxa::NullTaskImage);
 
         // build hi-z
-        auto hiz = task_gen_hiz_single_pass(gpu_context, task_graph, gpu_context.task_input_buffer, task_visbuffer64, self->gen_hiz_pipeline);
+        auto hiz = task_gen_hiz_single_pass(gpu_context, task_graph, task_visbuffer64);
 
         // cull and draw the rest
-        task_graph.add_task(AllocateBrickInstancesTask{
+        gpu_context.add(ComputeTask<AllocateBrickInstances::Task, AllocateBrickInstancesPush, uint32_t const *>{
+            .source = daxa::ShaderFile{"voxel_rasterizer/allocate_brick_instances.glsl"},
             .views = std::array{
                 daxa::attachment_view(AllocateBrickInstances::AT.gpu_input, gpu_context.task_input_buffer),
                 daxa::attachment_view(AllocateBrickInstances::AT.chunks, task_chunks),
@@ -900,35 +632,56 @@ namespace renderer {
                 daxa::attachment_view(AllocateBrickInstances::AT.brick_instance_allocator, self->task_brick_instance_allocator),
                 daxa::attachment_view(AllocateBrickInstances::AT.hiz, hiz),
             },
-            .pipeline = self->allocate_brick_instances_pipeline.get(),
-            .chunk_n = &chunk_n,
+            .callback_ = [](daxa::TaskInterface const &ti, daxa::ComputePipeline &pipeline, AllocateBrickInstancesPush &push, uint32_t const *const &chunk_n) {
+                ti.recorder.set_pipeline(pipeline);
+                set_push_constant(ti, push);
+                ti.recorder.dispatch({*chunk_n, 1, 1});
+            },
+            .info = &chunk_n,
+            .task_graph = &task_graph,
         });
+
         draw_brick_instances(self->task_brick_instance_allocator, hiz);
 
         // clear draw flags. This needs to be done before the Analyze visbuffer pass,
         // since AnalyzeVisbuffer populates them again.
-        task_graph.add_task(SetIndirectInfosTask{
+        gpu_context.add(ComputeTask<SetIndirectInfos::Task, SetIndirectInfosPush, NoTaskInfo>{
+            .source = daxa::ShaderFile{"voxel_rasterizer/set_indirect_infos.glsl"},
+            .extra_defines = {{"SET_TYPE", "0"}},
             .views = std::array{
                 daxa::attachment_view(SetIndirectInfos::AT.gpu_input, gpu_context.task_input_buffer),
                 daxa::attachment_view(SetIndirectInfos::AT.brick_instance_allocator, self->task_brick_instance_allocator),
                 daxa::attachment_view(SetIndirectInfos::AT.meshlet_allocator, self->task_brick_meshlet_allocator),
                 daxa::attachment_view(SetIndirectInfos::AT.indirect_info, task_indirect_infos),
             },
-            .pipeline = self->set_indirect_infos0.get(),
+            .callback_ = [](daxa::TaskInterface const &ti, daxa::ComputePipeline &pipeline, SetIndirectInfosPush &push, NoTaskInfo const &) {
+                ti.recorder.set_pipeline(pipeline);
+                set_push_constant(ti, push);
+                ti.recorder.dispatch({1, 1, 1});
+            },
+            .task_graph = &task_graph,
         });
-        task_graph.add_task(ClearDrawFlagsTask{
+
+        gpu_context.add(ComputeTask<ClearDrawFlags::Task, ClearDrawFlagsPush, NoTaskInfo>{
+            .source = daxa::ShaderFile{"voxel_rasterizer/clear_draw_flags.glsl"},
             .views = std::array{
                 daxa::attachment_view(ClearDrawFlags::AT.chunks, task_chunks),
                 daxa::attachment_view(ClearDrawFlags::AT.brick_data, task_brick_data),
                 daxa::attachment_view(ClearDrawFlags::AT.brick_instance_allocator, self->task_brick_instance_allocator),
                 daxa::attachment_view(ClearDrawFlags::AT.indirect_info, task_indirect_infos),
             },
-            .pipeline = self->clear_draw_flags_pipeline.get(),
+            .callback_ = [](daxa::TaskInterface const &ti, daxa::ComputePipeline &pipeline, ClearDrawFlagsPush &push, NoTaskInfo const &) {
+                ti.recorder.set_pipeline(pipeline);
+                set_push_constant(ti, push);
+                ti.recorder.dispatch_indirect({.indirect_buffer = ti.get(ClearDrawFlags::AT.indirect_info).ids[0]});
+            },
+            .task_graph = &task_graph,
         });
 
         task_fill_buffer(task_graph, self->task_visible_brick_instance_allocator, uint32_t{0});
         clear_task_buffers(task_graph, std::array<daxa::TaskBufferView, 1>{self->task_brick_visibility_bits}, std::array{daxa::BufferClearInfo{.size = sizeof(uint32_t) * (MAX_BRICK_INSTANCE_COUNT + 1)}});
-        task_graph.add_task(AnalyzeVisbufferTask{
+        gpu_context.add(ComputeTask<AnalyzeVisbuffer::Task, AnalyzeVisbufferPush, NoTaskInfo>{
+            .source = daxa::ShaderFile{"voxel_rasterizer/analyze_visbuffer.glsl"},
             .views = std::array{
                 daxa::attachment_view(AnalyzeVisbuffer::AT.gpu_input, gpu_context.task_input_buffer),
                 daxa::attachment_view(AnalyzeVisbuffer::AT.chunks, task_chunks),
@@ -940,7 +693,14 @@ namespace renderer {
                 daxa::attachment_view(AnalyzeVisbuffer::AT.visible_brick_instance_allocator, self->task_visible_brick_instance_allocator),
                 daxa::attachment_view(AnalyzeVisbuffer::AT.visbuffer64, task_visbuffer64),
             },
-            .pipeline = self->analyze_visbuffer_pipeline.get(),
+            .callback_ = [](daxa::TaskInterface const &ti, daxa::ComputePipeline &pipeline, AnalyzeVisbufferPush &push, NoTaskInfo const &) {
+                auto const &image_attach_info = ti.get(AnalyzeVisbuffer::AT.visbuffer64);
+                auto image_info = ti.device.info_image(image_attach_info.ids[0]).value();
+                ti.recorder.set_pipeline(pipeline);
+                set_push_constant(ti, push);
+                ti.recorder.dispatch({round_up_div(image_info.size.x, 16), round_up_div(image_info.size.y, 16), 1});
+            },
+            .task_graph = &task_graph,
         });
 
         auto color = task_graph.create_transient_image({
@@ -959,7 +719,8 @@ namespace renderer {
             .name = "motion_vectors",
         });
 
-        task_graph.add_task(ShadeVisbufferTask{
+        gpu_context.add(ComputeTask<ShadeVisbuffer::Task, ShadeVisbufferPush, NoTaskInfo>{
+            .source = daxa::ShaderFile{"voxel_rasterizer/shade_visbuffer.glsl"},
             .views = std::array{
                 daxa::attachment_view(ShadeVisbuffer::AT.gpu_input, gpu_context.task_input_buffer),
                 daxa::attachment_view(ShadeVisbuffer::AT.chunks, task_chunks),
@@ -975,7 +736,14 @@ namespace renderer {
                 daxa::attachment_view(ShadeVisbuffer::AT.depth, depth),
                 daxa::attachment_view(ShadeVisbuffer::AT.motion_vectors, motion_vectors),
             },
-            .pipeline = self->shade_visbuffer_pipeline.get(),
+            .callback_ = [](daxa::TaskInterface const &ti, daxa::ComputePipeline &pipeline, ShadeVisbufferPush &push, NoTaskInfo const &) {
+                auto const &image_attach_info = ti.get(ShadeVisbuffer::AT.color);
+                auto image_info = ti.device.info_image(image_attach_info.ids[0]).value();
+                ti.recorder.set_pipeline(pipeline);
+                set_push_constant(ti, push);
+                ti.recorder.dispatch({round_up_div(image_info.size.x, 16), round_up_div(image_info.size.y, 16), 1});
+            },
+            .task_graph = &task_graph,
         });
 
         task_graph.add_task({

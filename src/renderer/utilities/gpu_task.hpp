@@ -13,6 +13,7 @@ struct NoTaskInfo {
 template <typename TaskHeadT, typename PushT, typename InfoT, typename PipelineT>
 struct Task : TaskHeadT {
     daxa::ShaderSource source;
+    std::optional<uint32_t> required_subgroup_size{};
     std::vector<daxa::ShaderDefine> extra_defines{};
     TaskHeadT::AttachmentViews views{};
     TaskCallback<TaskHeadT, PushT, InfoT, PipelineT> *callback_{};
@@ -25,7 +26,6 @@ struct Task : TaskHeadT {
         if (!pipeline->is_valid()) {
             return;
         }
-        ti.assign_attachment_shader_blob(push.uses.value);
         callback_(ti, pipeline->get(), push, info);
     }
 };
@@ -46,18 +46,19 @@ struct Task<TaskHeadT, PushT, InfoT, AsyncManagedRayTracingPipeline> : TaskHeadT
         if (!pipeline->is_valid()) {
             return;
         }
-        ti.assign_attachment_shader_blob(push.uses.value);
         callback_(ti, pipeline->get(), push, info);
     }
 };
 
 template <typename TaskHeadT, typename PushT, typename InfoT>
 struct Task<TaskHeadT, PushT, InfoT, AsyncManagedRasterPipeline> : TaskHeadT {
-    daxa::ShaderSource vert_source;
-    daxa::ShaderSource frag_source;
+    daxa::ShaderSource vert_source{};
+    daxa::ShaderSource mesh_source{};
+    daxa::ShaderSource frag_source{};
     std::vector<daxa::RenderAttachment> color_attachments{};
     daxa::Optional<daxa::DepthTestInfo> depth_test{};
     daxa::RasterizerInfo raster{};
+    std::optional<uint32_t> required_subgroup_size{};
     std::vector<daxa::ShaderDefine> extra_defines{};
     TaskHeadT::AttachmentViews views{};
     TaskCallback<TaskHeadT, PushT, InfoT, AsyncManagedRasterPipeline> *callback_{};
@@ -70,7 +71,6 @@ struct Task<TaskHeadT, PushT, InfoT, AsyncManagedRasterPipeline> : TaskHeadT {
         if (!pipeline->is_valid()) {
             return;
         }
-        ti.assign_attachment_shader_blob(push.uses.value);
         callback_(ti, pipeline->get(), push, info);
     }
 };

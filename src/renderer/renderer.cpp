@@ -48,10 +48,8 @@ using Clock = std::chrono::steady_clock;
 struct renderer::State {
     GpuContext gpu_context;
     daxa::ImGuiRenderer imgui_renderer;
-    daxa::PipelineManager pipeline_manager;
     daxa::Fsr2Context fsr2_context;
 
-    std::shared_ptr<daxa::RasterPipeline> post_processing_pipeline;
     daxa::TaskGraph loop_task_graph;
     daxa::TaskGraph loop_empty_task_graph;
 
@@ -171,13 +169,28 @@ void record_tasks(renderer::Renderer self) {
 
     draw_debug_shapes(self->gpu_context, self->loop_task_graph, upscaled_image, &self->debug_shapes);
 
-    self->loop_task_graph.add_task(PostProcessingTask{
+    self->gpu_context.add(RasterTask<PostProcessing::Task, PostProcessingPush, NoTaskInfo>{
+        .vert_source = daxa::ShaderFile{"FULL_SCREEN_TRIANGLE_VERTEX_SHADER"},
+        .frag_source = daxa::ShaderFile{"post_processing.glsl"},
+        .color_attachments = {{.format = self->gpu_context.swapchain.get_format()}},
         .views = std::array{
             daxa::attachment_view(PostProcessing::AT.gpu_input, task_input_buffer),
             daxa::attachment_view(PostProcessing::AT.render_target, self->gpu_context.task_swapchain_image),
             daxa::attachment_view(PostProcessing::AT.color, upscaled_image),
         },
-        .pipeline = self->post_processing_pipeline.get(),
+        .callback_ = [](daxa::TaskInterface const &ti, daxa::RasterPipeline &pipeline, PostProcessingPush &push, NoTaskInfo const &) {
+            auto render_image = ti.get(PostProcessing::AT.render_target).ids[0];
+            auto const image_info = ti.device.info_image(render_image).value();
+            auto renderpass_recorder = std::move(ti.recorder).begin_renderpass({
+                .color_attachments = {{.image_view = render_image.default_view(), .load_op = daxa::AttachmentLoadOp::DONT_CARE}},
+                .render_area = {.x = 0, .y = 0, .width = image_info.size.x, .height = image_info.size.y},
+            });
+            renderpass_recorder.set_pipeline(pipeline);
+            set_push_constant(ti, renderpass_recorder, push);
+            renderpass_recorder.draw({.vertex_count = 3});
+            ti.recorder = std::move(renderpass_recorder).end_renderpass();
+        },
+        .task_graph = &self->loop_task_graph,
     });
 
     self->loop_task_graph.add_task({
@@ -252,35 +265,6 @@ void renderer::init(Renderer &self, void *glfw_window_ptr) {
         .color_hdr = true,
     });
     ImGui_ImplGlfw_InitForVulkan((GLFWwindow *)glfw_window_ptr, true);
-    self->pipeline_manager = daxa::PipelineManager({
-        .device = self->gpu_context.device,
-        .shader_compile_options = {
-            .root_paths = {
-                DAXA_SHADER_INCLUDE_DIR,
-                "src",
-                "src/renderer",
-            },
-            .write_out_shader_binary = ".out/spv",
-            .language = daxa::ShaderLanguage::GLSL,
-            .enable_debug_info = false,
-        },
-        .name = "my pipeline manager",
-    });
-
-    {
-        auto result = self->pipeline_manager.add_raster_pipeline({
-            .vertex_shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"post_processing.glsl"}},
-            .fragment_shader_info = daxa::ShaderCompileInfo{.source = daxa::ShaderFile{"post_processing.glsl"}},
-            .color_attachments = {{.format = self->gpu_context.swapchain.get_format()}},
-            .push_constant_size = sizeof(PostProcessingPush),
-            .name = "post_processing",
-        });
-        if (result.is_err()) {
-            std::cerr << result.message() << std::endl;
-            std::terminate();
-        }
-        self->post_processing_pipeline = result.value();
-    }
 
     self->task_chunks = daxa::TaskBuffer({.name = "task_chunks"});
     self->task_brick_data = daxa::TaskBuffer({.name = "task_brick_data"});
@@ -294,7 +278,7 @@ void renderer::init(Renderer &self, void *glfw_window_ptr) {
     self->start_time = Clock::now();
     self->prev_time = Clock::now();
 
-    init(&self->voxel_rasterizer, self->gpu_context.device, self->pipeline_manager);
+    init(&self->voxel_rasterizer, self->gpu_context.device);
 
     self->debug_shapes.draw_from_observer = &self->draw_from_observer;
 }
@@ -340,7 +324,7 @@ void renderer::on_resize(Renderer self, int size_x, int size_y) {
 }
 
 void update(renderer::Renderer self) {
-    update(&self->voxel_rasterizer, self->gpu_context.device, self->task_chunks, self->task_brick_data);
+    update(&self->voxel_rasterizer, self->gpu_context, self->task_chunks, self->task_brick_data);
 
     self->task_brick_data.set_buffers({.buffers = self->tracked_brick_data});
     auto new_chunk_n = self->tracked_brick_data.size();
@@ -539,7 +523,7 @@ void renderer::draw(Renderer self, player::Player player, voxel_world::VoxelWorl
     if (swapchain_image.is_empty()) {
         return;
     }
-    auto reload_result = self->pipeline_manager.reload_all();
+    auto reload_result = self->gpu_context.pipeline_manager->reload_all();
     if (auto *reload_err = daxa::get_if<daxa::PipelineReloadError>(&reload_result)) {
         add_log(g_console, reload_err->message.c_str());
     }

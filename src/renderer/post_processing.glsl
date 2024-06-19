@@ -4,15 +4,6 @@
 
 DAXA_DECL_PUSH_CONSTANT(PostProcessingPush, push)
 
-#if DAXA_SHADER_STAGE == DAXA_SHADER_STAGE_VERTEX
-
-void main() {
-    vec2 uv = vec2(gl_VertexIndex & 1, (gl_VertexIndex >> 1) & 1);
-    gl_Position = vec4(uv * 4 - 1, 0, 1);
-}
-
-#elif DAXA_SHADER_STAGE == DAXA_SHADER_STAGE_FRAGMENT
-
 layout(location = 0) out vec4 f_out;
 
 const mat3 SRGB_2_XYZ_MAT = mat3(
@@ -99,5 +90,3 @@ void main() {
 
     f_out = vec4(color, 1);
 }
-
-#endif

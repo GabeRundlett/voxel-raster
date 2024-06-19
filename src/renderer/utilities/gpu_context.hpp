@@ -1,6 +1,7 @@
 #pragma once
 
 #include <daxa/daxa.hpp>
+#include <daxa/types.hpp>
 #include <daxa/utils/task_graph.hpp>
 #include "async_pipeline_manager.hpp"
 #include "gpu_task.hpp"
@@ -72,7 +73,7 @@ struct GpuContext {
                     std::make_shared<AsyncManagedComputePipeline>(pipeline_manager->add_compute_pipeline({
                         .shader_info = {
                             .source = task.source,
-                            .compile_options = {.defines = task.extra_defines},
+                            .compile_options = {.required_subgroup_size = task.required_subgroup_size, .defines = task.extra_defines},
                         },
                         .push_constant_size = push_constant_size,
                         .name = std::string{TaskHeadT::name()},
@@ -136,10 +137,18 @@ struct GpuContext {
                 auto emplace_result = raster_pipelines.emplace(
                     shader_id,
                     std::make_shared<AsyncManagedRasterPipeline>(pipeline_manager->add_raster_pipeline({
-                        .vertex_shader_info = daxa::ShaderCompileInfo{
-                            .source = task.vert_source,
-                            .compile_options = {.defines = task.extra_defines},
-                        },
+                        .mesh_shader_info = daxa::holds_alternative<daxa::Monostate>(task.mesh_source)
+                                                ? daxa::Optional<daxa::ShaderCompileInfo>{}
+                                                : daxa::Optional<daxa::ShaderCompileInfo>{daxa::ShaderCompileInfo{
+                                                      .source = task.mesh_source,
+                                                      .compile_options = {.required_subgroup_size = task.required_subgroup_size, .defines = task.extra_defines},
+                                                  }},
+                        .vertex_shader_info = daxa::holds_alternative<daxa::Monostate>(task.vert_source)
+                                                  ? daxa::Optional<daxa::ShaderCompileInfo>{}
+                                                  : daxa::Optional<daxa::ShaderCompileInfo>{daxa::ShaderCompileInfo{
+                                                        .source = task.vert_source,
+                                                        .compile_options = {.defines = task.extra_defines},
+                                                    }},
                         .fragment_shader_info = daxa::ShaderCompileInfo{
                             .source = task.frag_source,
                             .compile_options = {.defines = task.extra_defines},
@@ -162,6 +171,16 @@ struct GpuContext {
         for (auto const &define : task.extra_defines) {
             shader_id.append(define.name);
             shader_id.append(define.value);
+        }
+        shader_id.append("_");
+        if constexpr (requires(Task<TaskHeadT, PushT, InfoT, PipelineT> t) { t.required_subgroup_size; }) {
+            if (task.required_subgroup_size.has_value()) {
+                shader_id.append(std::to_string(*task.required_subgroup_size));
+            }
+        }
+        shader_id.append("_");
+        if constexpr (requires(Task<TaskHeadT, PushT, InfoT, PipelineT> t) { t.max_ray_recursion_depth; }) {
+            shader_id.append(std::to_string(*task.max_ray_recursion_depth));
         }
         auto pipe_iter = find_or_add_pipeline<TaskHeadT, PushT, InfoT, PipelineT>(task, shader_id);
         task.pipeline = pipe_iter->second;

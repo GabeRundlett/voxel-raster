@@ -140,7 +140,7 @@ namespace renderer {
                 push.vertex_data = alloc.device_address;
                 push.flags = *state->draw_from_observer;
 
-                render_recorder.push_constant(push);
+                set_push_constant(ti, render_recorder, push);
                 render_recorder.draw({.vertex_count = uint32_t(2 * state->lines.size())});
                 ti.recorder = std::move(render_recorder).end_renderpass();
             },
@@ -180,7 +180,7 @@ namespace renderer {
                 push.vertex_data = alloc.device_address;
                 push.flags = *state->draw_from_observer;
 
-                render_recorder.push_constant(push);
+                set_push_constant(ti, render_recorder, push);
                 render_recorder.draw({.vertex_count = uint32_t(6 * state->points.size())});
                 ti.recorder = std::move(render_recorder).end_renderpass();
             },
