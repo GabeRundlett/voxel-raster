@@ -1,4 +1,4 @@
-#include <shared.inl>
+#include "voxel_rasterizer.inl"
 
 DAXA_DECL_PUSH_CONSTANT(SetIndirectInfosPush, push)
 

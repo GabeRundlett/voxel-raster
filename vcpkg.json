@@ -24,6 +24,7 @@
       ]
     },
     "glm",
+    "fmt",
     "rtaudio",
     "audiofile"
   ],

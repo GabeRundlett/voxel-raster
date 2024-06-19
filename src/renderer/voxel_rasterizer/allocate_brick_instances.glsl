@@ -1,6 +1,6 @@
-#include <shared.inl>
-#include <renderer/allocators.glsl>
-#include <renderer/culling.glsl>
+#include "voxel_rasterizer.inl"
+#include "allocators.glsl"
+#include "culling.glsl"
 
 DAXA_DECL_PUSH_CONSTANT(AllocateBrickInstancesPush, push)
 

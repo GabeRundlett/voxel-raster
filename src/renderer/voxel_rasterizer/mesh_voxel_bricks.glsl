@@ -1,6 +1,6 @@
-#include <shared.inl>
+#include "voxel_rasterizer.inl"
 #include <voxels/voxel_mesh.glsl>
-#include <renderer/allocators.glsl>
+#include "allocators.glsl"
 
 DAXA_DECL_PUSH_CONSTANT(MeshVoxelBricksPush, push)
 

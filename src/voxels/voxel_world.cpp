@@ -13,6 +13,9 @@
 #include <renderer/renderer.hpp>
 #include <utilities/thread_pool.hpp>
 #include <utilities/ispc_instrument.hpp>
+#include <utilities/debug.hpp>
+
+#include <fmt/format.h>
 
 #include <fstream>
 #include <array>
@@ -542,8 +545,18 @@ auto generate_all_chunks(voxel_world::VoxelWorld self) {
     auto generate_chunk1s_main_total = std::chrono::duration<float, std::micro>(std::chrono::duration<uint64_t, std::nano>(generate_chunk1s_main_total_ns)).count();
     auto generate_chunk2s_main_total = std::chrono::duration<float, std::micro>(std::chrono::duration<uint64_t, std::nano>(generate_chunk2s_main_total_ns)).count();
 
-    std::cout << "1: " << generate_chunk1s_main_total / 1'000'000 << " s | " << generate_chunk1s_main_total / self->generate_chunk1s_total_n << " us/brick (" << self->generate_chunk1s_total_n << " total bricks) " << generate_chunk1s_total / self->generate_chunk1s_total_n << " us/brick per thread" << std::endl;
-    std::cout << "2: " << generate_chunk2s_main_total / 1'000'000 << " s | " << generate_chunk2s_main_total / self->generate_chunk2s_total_n << " us/brick (" << self->generate_chunk2s_total_n << " total bricks) " << generate_chunk2s_total / self->generate_chunk2s_total_n << " us/brick per thread" << std::endl;
+    add_log(g_console, fmt::format("1: {} s | {} us/brick ({} total bricks) {} us/brick per thread",
+                                   generate_chunk1s_main_total / 1'000'000,
+                                   generate_chunk1s_main_total / self->generate_chunk1s_total_n,
+                                   self->generate_chunk1s_total_n.load(),
+                                   generate_chunk1s_total / self->generate_chunk1s_total_n)
+                           .c_str());
+    add_log(g_console, fmt::format("2: {} s | {} us/brick ({} total bricks) {} us/brick per thread",
+                                   generate_chunk2s_main_total / 1'000'000,
+                                   generate_chunk2s_main_total / self->generate_chunk2s_total_n,
+                                   self->generate_chunk2s_total_n.load(),
+                                   generate_chunk2s_total / self->generate_chunk2s_total_n)
+                           .c_str());
 
     ISPCPrintInstrument();
 }

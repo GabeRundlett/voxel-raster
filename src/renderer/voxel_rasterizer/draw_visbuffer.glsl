@@ -1,7 +1,7 @@
-#include <shared.inl>
-#include <renderer/visbuffer.glsl>
+#include "voxel_rasterizer.inl"
 #include <voxels/voxel_mesh.glsl>
-#include <renderer/allocators.glsl>
+#include "visbuffer.glsl"
+#include "allocators.glsl"
 
 #define DISCARD_METHOD 0
 
@@ -10,7 +10,7 @@ DAXA_DECL_PUSH_CONSTANT(DrawVisbufferPush, push)
 #if DAXA_SHADER_STAGE == DAXA_SHADER_STAGE_MESH
 #extension GL_EXT_mesh_shader : enable
 
-#include <renderer/culling.glsl>
+#include "culling.glsl"
 
 layout(triangles) out;
 layout(max_vertices = MAX_VERTICES_PER_MESHLET, max_primitives = MAX_TRIANGLES_PER_MESHLET) out;

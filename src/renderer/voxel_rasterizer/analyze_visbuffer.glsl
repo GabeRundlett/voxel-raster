@@ -1,7 +1,7 @@
-#include <shared.inl>
-#include <renderer/visbuffer.glsl>
+#include "voxel_rasterizer.inl"
 #include <voxels/voxel_mesh.glsl>
-#include <renderer/allocators.glsl>
+#include "visbuffer.glsl"
+#include "allocators.glsl"
 
 DAXA_DECL_PUSH_CONSTANT(AnalyzeVisbufferPush, push)
 

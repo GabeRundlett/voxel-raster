@@ -7,7 +7,7 @@
 #include "audio.hpp"
 #include "renderer/renderer.hpp"
 #include "voxels/voxel_world.hpp"
-#include "camera.inl"
+#include "utilities/debug.hpp"
 
 #include <GLFW/glfw3.h>
 
@@ -19,6 +19,7 @@ using Clock = std::chrono::steady_clock;
 
 renderer::Renderer g_renderer;
 voxel_world::VoxelWorld g_voxel_world;
+debug_utils::Console g_console;
 
 struct AppState {
     WindowInfo window_info;
@@ -67,10 +68,12 @@ void init(AppState &self) {
         [](GLFWwindow *glfw_window, double x, double y) {
             auto &self = *reinterpret_cast<AppState *>(glfwGetWindowUserPointer(glfw_window));
             if (!self.paused) {
-                daxa_f32vec2 const center = {float(self.window_info.width / 2), float(self.window_info.height / 2)};
-                auto offset = daxa_f32vec2{float(x) - center.x, float(y) - center.y};
-                on_mouse_move(self.player, offset.x, offset.y);
-                glfwSetCursorPos(glfw_window, double(center.x), double(center.y));
+                auto const center_x = float(self.window_info.width / 2);
+                auto const center_y = float(self.window_info.height / 2);
+                auto const offset_x = float(x) - center_x;
+                auto const offset_y = float(y) - center_y;
+                on_mouse_move(self.player, offset_x, offset_y);
+                glfwSetCursorPos(glfw_window, double(center_x), double(center_y));
             }
         });
     glfwSetScrollCallback(
@@ -142,9 +145,13 @@ auto update(AppState &self) -> bool {
 }
 
 auto main() -> int {
+    init(g_console);
+
     AppState app;
     init(app);
     while (update(app)) {
     }
     deinit(app);
+
+    deinit(g_console);
 }

@@ -1,4 +1,4 @@
-#include <shared.inl>
+#include "voxel_rasterizer.inl"
 
 DAXA_DECL_PUSH_CONSTANT(GenHizPush, push)
 
@@ -33,8 +33,6 @@ void downsample_64x64(
                 uintBitsToFloat(uint(t1 >> uint64_t(32))),
                 uintBitsToFloat(uint(t2 >> uint64_t(32))),
                 uintBitsToFloat(uint(t3 >> uint64_t(32))));
-
-            // fetch = textureGather(daxa_sampler2D(push.uses.src, deref(push.uses.gpu_input).samplers.llc), make_gather_uv(invSize, src_i), 0);
         } else {
             fetch.x = imageLoad(daxa_access(image2DCoherent, push.uses.mips[src_mip]), min(src_i + ivec2(0, 0), ivec2(min_mip_size) - 1)).x;
             fetch.y = imageLoad(daxa_access(image2DCoherent, push.uses.mips[src_mip]), min(src_i + ivec2(0, 1), ivec2(min_mip_size) - 1)).x;

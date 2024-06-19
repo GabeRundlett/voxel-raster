@@ -1,6 +1,6 @@
-#include <shared.inl>
+#include <debug_shapes.inl>
 
-#if DEBUG_LINES
+#if defined(DebugLinesShader)
 DAXA_DECL_PUSH_CONSTANT(DebugLinesPush, push)
 
 #if DAXA_SHADER_STAGE == DAXA_SHADER_STAGE_VERTEX
@@ -38,7 +38,7 @@ void main() {
 #endif
 #endif
 
-#if DEBUG_POINTS
+#if defined(DebugPointsShader)
 DAXA_DECL_PUSH_CONSTANT(DebugPointsPush, push)
 
 #if DAXA_SHADER_STAGE == DAXA_SHADER_STAGE_VERTEX

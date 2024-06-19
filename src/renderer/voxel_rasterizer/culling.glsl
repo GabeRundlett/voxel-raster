@@ -1,4 +1,4 @@
-#include <shared.inl>
+#include "voxel_rasterizer.inl"
 
 bool is_texel_aabb_hiz_depth_occluded(
     vec2 min_texel_i, vec2 max_texel_i,

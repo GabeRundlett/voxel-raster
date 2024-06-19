@@ -9,6 +9,8 @@
 #include "audio.hpp"
 #include "AudioFile.h"
 
+#include <utilities/debug.hpp>
+
 struct Sound {
     std::filesystem::path path;
     AudioFile<double> audioFile;
@@ -120,7 +122,7 @@ auto square_wave(float t) -> float {
 auto write_callback(void *output_buffer, void *inputBuffer, unsigned int frames_left,
                     double streamTime, RtAudioStreamStatus status, void *userData) -> int {
     if (status) {
-        std::cout << "Stream underflow detected!" << std::endl;
+        add_log(g_console, "Stream underflow detected!");
     }
     float seconds_per_frame = 1.0f / float_sample_rate;
     int err = -1;
@@ -160,7 +162,7 @@ auto write_callback(void *output_buffer, void *inputBuffer, unsigned int frames_
 void audio_thread_main() {
     RtAudio dac;
     if (dac.getDeviceCount() < 1) {
-        std::cout << "\nNo audio devices found!\n";
+        add_log(g_console, "No audio devices found!");
         return;
     }
     RtAudio::StreamParameters parameters;

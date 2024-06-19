@@ -1,8 +1,8 @@
-#include <shared.inl>
-#include <renderer/visbuffer.glsl>
+#include "voxel_rasterizer.inl"
 #include <voxels/voxel_mesh.glsl>
-#include <renderer/allocators.glsl>
-#include <renderer/culling.glsl>
+#include "visbuffer.glsl"
+#include "allocators.glsl"
+#include "culling.glsl"
 
 DAXA_DECL_PUSH_CONSTANT(ComputeRasterizePush, push)
 
@@ -26,7 +26,7 @@ void write_pixel(ivec2 p, uint64_t payload, float depth) {
 #endif
 }
 
-#include <renderer/rasterize.glsl>
+#include "rasterize.glsl"
 
 #define WORKGROUP_SIZE 128
 #define MESHLETS_PER_WORKGROUP (WORKGROUP_SIZE / MAX_FACES_PER_MESHLET)

@@ -1,5 +1,5 @@
-#include <shared.inl>
-#include <renderer/allocators.glsl>
+#include "voxel_rasterizer.inl"
+#include "allocators.glsl"
 
 DAXA_DECL_PUSH_CONSTANT(ClearDrawFlagsPush, push)
 
