@@ -50,7 +50,7 @@ void generate_bitmask_cpp(
 void generate_attributes_cpp(
     int brick_xi, int brick_yi, int brick_zi,
     int chunk_xi, int chunk_yi, int chunk_zi,
-    int level_i, uint packed_voxels[],
+    int level_i, uint packed_voxels[], float densities[],
     NoiseSettings const *noise_settings, RandomCtx random_ctx) {
 
     for (uint32_t zi = 0; zi < VOXEL_BRICK_SIZE; ++zi) {
@@ -70,6 +70,7 @@ void generate_attributes_cpp(
                 ivec3 o = {xi, yi, zi};
                 dn.nrm = dither_nrm(random_ctx, dn.nrm, o);
                 packed_voxels[voxel_index] = pack_voxel(Voxel(col, dn.nrm)).data;
+                densities[voxel_index] = dn.val;
             }
         }
     }

@@ -38,7 +38,7 @@ struct renderer::ChunkState {
     uint32_t brick_count;
     uint32_t tracked_index = 0xffffffff;
     std::vector<VoxelBrickBitmask> bitmasks;
-    std::vector<VoxelAttribBrick> attribs;
+    std::vector<VoxelRenderAttribBrick> attribs;
     std::vector<int> positions;
     bool needs_update = false;
 };
@@ -383,7 +383,7 @@ void update(renderer::Renderer self) {
                     auto bitmasks_size = round_up_div((sizeof(VoxelBrickBitmask) * brick_count), 128) * 128;
                     auto pos_scl_size = round_up_div((sizeof(daxa_i32vec4) * brick_count), 128) * 128;
                     auto flags_size = round_up_div((sizeof(daxa_u32) * brick_count), 128) * 128;
-                    auto attribs_size = round_up_div((sizeof(VoxelAttribBrick) * brick_count), 128) * 128;
+                    auto attribs_size = round_up_div((sizeof(VoxelRenderAttribBrick) * brick_count), 128) * 128;
 
                     auto meshes_offset = size_t{0};
                     auto bitmasks_offset = meshes_offset + meshes_size;
@@ -427,7 +427,7 @@ void update(renderer::Renderer self) {
 
                     upload(ti.get(buffer_view).ids[chunk->tracked_index], chunk->bitmasks.data(), sizeof(VoxelBrickBitmask) * brick_count, bitmasks_offset);
                     upload(ti.get(buffer_view).ids[chunk->tracked_index], chunk->positions.data(), sizeof(daxa_i32vec4) * brick_count, pos_scl_offset);
-                    upload(ti.get(buffer_view).ids[chunk->tracked_index], chunk->attribs.data(), sizeof(VoxelAttribBrick) * brick_count, attribs_offset);
+                    upload(ti.get(buffer_view).ids[chunk->tracked_index], chunk->attribs.data(), sizeof(VoxelRenderAttribBrick) * brick_count, attribs_offset);
                     clear(ti.get(buffer_view).ids[chunk->tracked_index], sizeof(daxa_u32) * brick_count, flags_offset);
                 }
             },
@@ -581,7 +581,7 @@ void renderer::destroy_chunk(Renderer self, Chunk chunk) {
     }
 }
 
-void renderer::update(Chunk self, int brick_count, int const *surface_brick_indices, VoxelBrickBitmask const *bitmasks, VoxelAttribBrick const *const *attribs, int const *positions) {
+void renderer::update(Chunk self, int brick_count, int const *surface_brick_indices, VoxelBrickBitmask const *bitmasks, VoxelRenderAttribBrick const *const *attribs, int const *positions) {
     self->needs_update = true;
     self->brick_count = brick_count;
 
@@ -617,7 +617,7 @@ void renderer::render_chunk(Renderer self, Chunk chunk, float const *pos) {
     auto bitmasks_size = round_up_div((sizeof(VoxelBrickBitmask) * brick_count), 128) * 128;
     auto pos_scl_size = round_up_div((sizeof(daxa_i32vec4) * brick_count), 128) * 128;
     auto flags_size = round_up_div((sizeof(daxa_u32) * brick_count), 128) * 128;
-    auto attribs_size = round_up_div((sizeof(VoxelAttribBrick) * brick_count), 128) * 128;
+    auto attribs_size = round_up_div((sizeof(VoxelRenderAttribBrick) * brick_count), 128) * 128;
 
     auto meshes_offset = size_t{0};
     auto bitmasks_offset = meshes_offset + meshes_size;

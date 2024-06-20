@@ -23,10 +23,10 @@ struct VoxelBrickBitmask {
     daxa_u32 bits[VOXELS_PER_BRICK / 32];
 };
 DAXA_DECL_BUFFER_PTR(VoxelBrickBitmask)
-struct VoxelAttribBrick {
+struct VoxelRenderAttribBrick {
     PackedVoxel packed_voxels[VOXELS_PER_BRICK];
 };
-DAXA_DECL_BUFFER_PTR(VoxelAttribBrick)
+DAXA_DECL_BUFFER_PTR(VoxelRenderAttribBrick)
 struct VoxelBrickMesh {
     daxa_u32 face_count;
     daxa_u32 meshlet_start;
@@ -74,7 +74,7 @@ struct VoxelChunk {
     daxa_BufferPtr(VoxelBrickBitmask) bitmasks;
     daxa_BufferPtr(VoxelBrickMesh) meshes;
     daxa_BufferPtr(daxa_i32vec4) pos_scl;
-    daxa_BufferPtr(VoxelAttribBrick) attribs;
+    daxa_BufferPtr(VoxelRenderAttribBrick) attribs;
     daxa_BufferPtr(daxa_u32) flags;
     daxa_u32 brick_n;
     daxa_f32vec3 pos;

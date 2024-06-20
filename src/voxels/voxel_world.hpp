@@ -1,7 +1,7 @@
 #pragma once
 
 struct VoxelBrickBitmask;
-struct VoxelAttribBrick;
+struct VoxelRenderAttribBrick;
 
 namespace voxel_world {
     struct State;
@@ -18,7 +18,13 @@ namespace voxel_world {
         int nrm_x, nrm_y, nrm_z;
         float distance;
     };
-    auto ray_cast(VoxelWorld self, float const *ray_o, float const *ray_d) -> RayCastHit;
+    struct RayCastConfig {
+        float const *ray_o;
+        float const *ray_d;
+        int max_iter = 512;
+        float max_distance = 100.0f;
+    };
+    auto ray_cast(VoxelWorld self, RayCastConfig const &config) -> RayCastHit;
     auto is_solid(VoxelWorld self, float const *pos) -> bool;
 
     void apply_brush_a(VoxelWorld self, int const *pos);

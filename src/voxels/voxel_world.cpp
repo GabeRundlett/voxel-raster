@@ -46,9 +46,14 @@ enum GenerationStage {
     GENERATED_SURFACE_BRICK_ATTRIBS,
 };
 
+struct VoxelSimAttribBrick {
+    float densities[VOXELS_PER_BRICK];
+};
+
 struct Chunk {
     std::array<VoxelBrickBitmask, BRICKS_PER_CHUNK> voxel_brick_bitmasks{};
-    std::array<std::unique_ptr<VoxelAttribBrick>, BRICKS_PER_CHUNK> voxel_brick_attribs{};
+    std::array<std::unique_ptr<VoxelRenderAttribBrick>, BRICKS_PER_CHUNK> voxel_brick_render_attribs{};
+    std::array<std::unique_ptr<VoxelSimAttribBrick>, BRICKS_PER_CHUNK> voxel_brick_sim_attribs{};
     std::array<glm::ivec4, BRICKS_PER_CHUNK> voxel_brick_positions{};
     std::vector<int> surface_brick_indices;
 
@@ -344,12 +349,14 @@ auto generate_chunk2(voxel_world::VoxelWorld self, int32_t chunk_xi, int32_t chu
                 auto position = glm::ivec4{brick_xi, brick_yi, brick_zi, -4 + level};
                 if (brick_metadata.has_voxel && exposed) {
                     // generate surface brick data
-                    auto &attrib_brick = chunk->voxel_brick_attribs[brick_index];
+                    auto &render_attrib_brick = chunk->voxel_brick_render_attribs[brick_index];
+                    auto &sim_attrib_brick = chunk->voxel_brick_sim_attribs[brick_index];
                     self->generate_chunk2s_total_n += 1;
 
-                    if (attrib_brick == nullptr) {
-                        attrib_brick = std::make_unique<VoxelAttribBrick>();
-                        generate_attributes(brick_xi, brick_yi, brick_zi, chunk_xi, chunk_yi, chunk_zi, level, (uint32_t *)attrib_brick->packed_voxels, &noise_settings, RANDOM_VALUES.data());
+                    if (render_attrib_brick == nullptr) {
+                        render_attrib_brick = std::make_unique<VoxelRenderAttribBrick>();
+                        sim_attrib_brick = std::make_unique<VoxelSimAttribBrick>();
+                        generate_attributes(brick_xi, brick_yi, brick_zi, chunk_xi, chunk_yi, chunk_zi, level, (uint32_t *)render_attrib_brick->packed_voxels, (float *)sim_attrib_brick->densities, &noise_settings, RANDOM_VALUES.data());
                     }
 
                     auto get_brick_bit = [](VoxelBrickBitmask const &bitmask, uint32_t xi, uint32_t yi, uint32_t zi) {
@@ -674,10 +681,12 @@ void set_voxel_bit(voxel_world::VoxelWorld self, ivec3 p, bool value) {
     if (value) {
         brick_bitmask.bits[voxel_word_index] |= 1 << voxel_in_word_index;
         brick_metadata.has_voxel = true;
-        auto &attrib_brick = chunk->voxel_brick_attribs[brick_index];
-        if (!attrib_brick) {
-            attrib_brick = std::make_unique<VoxelAttribBrick>();
-            generate_attributes(brick_i.x, brick_i.y, brick_i.z, chunk_i.x, chunk_i.y, chunk_i.z, 0, (uint32_t *)attrib_brick->packed_voxels, &noise_settings, RANDOM_VALUES.data());
+        auto &render_attrib_brick = chunk->voxel_brick_render_attribs[brick_index];
+        auto &sim_attrib_brick = chunk->voxel_brick_sim_attribs[brick_index];
+        if (!render_attrib_brick) {
+            render_attrib_brick = std::make_unique<VoxelRenderAttribBrick>();
+            sim_attrib_brick = std::make_unique<VoxelSimAttribBrick>();
+            generate_attributes(brick_i.x, brick_i.y, brick_i.z, chunk_i.x, chunk_i.y, chunk_i.z, 0, (uint32_t *)render_attrib_brick->packed_voxels, (float *)sim_attrib_brick->densities, &noise_settings, RANDOM_VALUES.data());
         }
     } else {
         brick_bitmask.bits[voxel_word_index] &= ~(1 << voxel_in_word_index);
@@ -706,24 +715,124 @@ void set_voxel_attrib(voxel_world::VoxelWorld self, ivec3 p, Voxel value) {
     auto voxel_index = voxel_i.x + voxel_i.y * VOXEL_BRICK_SIZE + voxel_i.z * VOXEL_BRICK_SIZE * VOXEL_BRICK_SIZE;
     auto &chunk = self->chunks[chunk_index];
     if (!chunk) {
-        return;
+        chunk = std::make_unique<Chunk>();
+        chunk->pos = chunk_i;
     }
-    auto &brick_attribs = chunk->voxel_brick_attribs[brick_index];
-    if (!brick_attribs) {
-        return;
+    auto &render_attrib_brick = chunk->voxel_brick_render_attribs[brick_index];
+    if (!render_attrib_brick) {
+        auto &sim_attrib_brick = chunk->voxel_brick_sim_attribs[brick_index];
+        render_attrib_brick = std::make_unique<VoxelRenderAttribBrick>();
+        sim_attrib_brick = std::make_unique<VoxelSimAttribBrick>();
+        generate_attributes(brick_i.x, brick_i.y, brick_i.z, chunk_i.x, chunk_i.y, chunk_i.z, 0, (uint32_t *)render_attrib_brick->packed_voxels, (float *)sim_attrib_brick->densities, &noise_settings, RANDOM_VALUES.data());
     }
 
-    PackedVoxel prev_value = brick_attribs->packed_voxels[voxel_index];
+    PackedVoxel prev_value = render_attrib_brick->packed_voxels[voxel_index];
     PackedVoxel new_value = pack_voxel(value);
 
     if (prev_value.data != new_value.data) {
         chunk->bricks_changed = true;
     }
 
-    brick_attribs->packed_voxels[voxel_index] = new_value;
+    render_attrib_brick->packed_voxels[voxel_index] = new_value;
 }
 
-auto dda_voxels(voxel_world::VoxelWorld self, Ray ray) -> std::tuple<ivec3, ivec3, float> {
+void set_voxel_sim_attrib(voxel_world::VoxelWorld self, ivec3 p, float density) {
+    ivec3 chunk_i = p / int(VOXEL_CHUNK_SIZE);
+
+    if (any(lessThan(chunk_i, ivec3(0))) || any(greaterThanEqual(chunk_i, ivec3(CHUNK_NX, CHUNK_NY, CHUNK_NZ)))) {
+        return;
+    }
+
+    ivec3 brick_i = positive_mod(p / int(VOXEL_BRICK_SIZE), int(BRICK_CHUNK_SIZE));
+    ivec3 voxel_i = positive_mod(p, int(VOXEL_BRICK_SIZE));
+    auto chunk_index = chunk_i.x + chunk_i.y * CHUNK_NX + chunk_i.z * CHUNK_NX * CHUNK_NY;
+    auto brick_index = brick_i.x + brick_i.y * BRICK_CHUNK_SIZE + brick_i.z * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
+    auto voxel_index = voxel_i.x + voxel_i.y * VOXEL_BRICK_SIZE + voxel_i.z * VOXEL_BRICK_SIZE * VOXEL_BRICK_SIZE;
+    auto &chunk = self->chunks[chunk_index];
+    if (!chunk) {
+        chunk = std::make_unique<Chunk>();
+        chunk->pos = chunk_i;
+    }
+    auto &sim_attrib_brick = chunk->voxel_brick_sim_attribs[brick_index];
+    if (!sim_attrib_brick) {
+        auto &render_attrib_brick = chunk->voxel_brick_render_attribs[brick_index];
+        render_attrib_brick = std::make_unique<VoxelRenderAttribBrick>();
+        sim_attrib_brick = std::make_unique<VoxelSimAttribBrick>();
+        generate_attributes(brick_i.x, brick_i.y, brick_i.z, chunk_i.x, chunk_i.y, chunk_i.z, 0, (uint32_t *)render_attrib_brick->packed_voxels, (float *)sim_attrib_brick->densities, &noise_settings, RANDOM_VALUES.data());
+    }
+
+    auto prev_value = sim_attrib_brick->densities[voxel_index];
+    auto new_value = density;
+
+    if (prev_value != new_value) {
+        chunk->bricks_changed = true;
+    }
+
+    sim_attrib_brick->densities[voxel_index] = new_value;
+}
+
+auto get_voxel_sim_attrib(voxel_world::VoxelWorld self, ivec3 p, bool generate) -> float {
+    ivec3 chunk_i = p / int(VOXEL_CHUNK_SIZE);
+
+    if (any(lessThan(chunk_i, ivec3(0))) || any(greaterThanEqual(chunk_i, ivec3(CHUNK_NX, CHUNK_NY, CHUNK_NZ)))) {
+        return 0;
+    }
+
+    ivec3 brick_i = positive_mod(p / int(VOXEL_BRICK_SIZE), int(BRICK_CHUNK_SIZE));
+    ivec3 voxel_i = positive_mod(p, int(VOXEL_BRICK_SIZE));
+    auto chunk_index = chunk_i.x + chunk_i.y * CHUNK_NX + chunk_i.z * CHUNK_NX * CHUNK_NY;
+    auto brick_index = brick_i.x + brick_i.y * BRICK_CHUNK_SIZE + brick_i.z * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
+    auto voxel_index = voxel_i.x + voxel_i.y * VOXEL_BRICK_SIZE + voxel_i.z * VOXEL_BRICK_SIZE * VOXEL_BRICK_SIZE;
+    auto &chunk = self->chunks[chunk_index];
+    if (!chunk) {
+        if (generate) {
+            chunk = std::make_unique<Chunk>();
+            chunk->pos = chunk_i;
+        } else {
+            return 0;
+        }
+    }
+    auto &sim_attrib_brick = chunk->voxel_brick_sim_attribs[brick_index];
+
+    if (!sim_attrib_brick) {
+        if (generate) {
+            auto &render_attrib_brick = chunk->voxel_brick_render_attribs[brick_index];
+            render_attrib_brick = std::make_unique<VoxelRenderAttribBrick>();
+            sim_attrib_brick = std::make_unique<VoxelSimAttribBrick>();
+            generate_attributes(brick_i.x, brick_i.y, brick_i.z, chunk_i.x, chunk_i.y, chunk_i.z, 0, (uint32_t *)render_attrib_brick->packed_voxels, (float *)sim_attrib_brick->densities, &noise_settings, RANDOM_VALUES.data());
+        } else {
+            return 0;
+        }
+    }
+
+    return sim_attrib_brick->densities[voxel_index];
+}
+
+auto get_voxel_attrib(voxel_world::VoxelWorld self, ivec3 p) -> Voxel {
+    ivec3 chunk_i = p / int(VOXEL_CHUNK_SIZE);
+
+    if (any(lessThan(chunk_i, ivec3(0))) || any(greaterThanEqual(chunk_i, ivec3(CHUNK_NX, CHUNK_NY, CHUNK_NZ)))) {
+        return {};
+    }
+
+    ivec3 brick_i = positive_mod(p / int(VOXEL_BRICK_SIZE), int(BRICK_CHUNK_SIZE));
+    ivec3 voxel_i = positive_mod(p, int(VOXEL_BRICK_SIZE));
+    auto chunk_index = chunk_i.x + chunk_i.y * CHUNK_NX + chunk_i.z * CHUNK_NX * CHUNK_NY;
+    auto brick_index = brick_i.x + brick_i.y * BRICK_CHUNK_SIZE + brick_i.z * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
+    auto voxel_index = voxel_i.x + voxel_i.y * VOXEL_BRICK_SIZE + voxel_i.z * VOXEL_BRICK_SIZE * VOXEL_BRICK_SIZE;
+    auto &chunk = self->chunks[chunk_index];
+    if (!chunk) {
+        return {};
+    }
+    auto &brick_attribs = chunk->voxel_brick_render_attribs[brick_index];
+    if (!brick_attribs) {
+        return {};
+    }
+
+    return unpack_voxel(brick_attribs->packed_voxels[voxel_index]);
+}
+
+auto dda_voxels(voxel_world::VoxelWorld self, Ray ray, int max_iter, float max_dist) -> std::tuple<ivec3, ivec3, float> {
     using Line = std::array<vec3, 3>;
     using Point = std::array<vec3, 3>;
     using Box = std::array<vec3, 3>;
@@ -745,8 +854,8 @@ auto dda_voxels(voxel_world::VoxelWorld self, Ray ray) -> std::tuple<ivec3, ivec
     ivec3 rayStep = ivec3(sign(ray.direction));
     bvec3 mask = lessThanEqual(sideDist, min(vec3(sideDist.y, sideDist.z, sideDist.x), vec3(sideDist.z, sideDist.x, sideDist.y)));
 
-    vec3 prev_pos = (vec3(mapPos) + 0.5f) / 16.0f;
-    const int max_steps = min(500, int(aabb.maximum.x + aabb.maximum.y + aabb.maximum.z));
+    // vec3 prev_pos = (vec3(mapPos) + 0.5f) / 16.0f;
+    const int max_steps = min(max_iter, int(aabb.maximum.x + aabb.maximum.y + aabb.maximum.z));
 
     for (int i = 0; i < max_steps; i++) {
         if (get_voxel_is_solid(self, mapPos) == true) {
@@ -766,7 +875,9 @@ auto dda_voxels(voxel_world::VoxelWorld self, Ray ray) -> std::tuple<ivec3, ivec
         mapPos += ivec3(vec3(mask)) * rayStep;
         bool outside_l = any(lessThan(mapPos, ivec3(aabb.minimum)));
         bool outside_g = any(greaterThanEqual(mapPos, ivec3(aabb.maximum)));
-        if ((int(outside_l) | int(outside_g)) != 0) {
+        float dist = dot(sideDist, vec3(mask));
+        bool past_max_dist = dist > max_dist;
+        if ((int(outside_l) | int(outside_g) | int(past_max_dist)) != 0) {
             break;
         }
 
@@ -846,7 +957,7 @@ void voxel_world::update(VoxelWorld self) {
             if (chunk->render_chunk == nullptr) {
                 chunk->render_chunk = create_chunk(g_renderer);
             }
-            update(chunk->render_chunk, brick_count, chunk->surface_brick_indices.data(), chunk->voxel_brick_bitmasks.data(), reinterpret_cast<VoxelAttribBrick const *const *>(chunk->voxel_brick_attribs.data()), (int const *)chunk->voxel_brick_positions.data());
+            update(chunk->render_chunk, brick_count, chunk->surface_brick_indices.data(), chunk->voxel_brick_bitmasks.data(), reinterpret_cast<VoxelRenderAttribBrick const *const *>(chunk->voxel_brick_render_attribs.data()), (int const *)chunk->voxel_brick_positions.data());
             chunk->bricks_changed = false;
         }
 
@@ -955,8 +1066,8 @@ void voxel_world::load_model(VoxelWorld self, char const *path) {
     gvox_destroy_parser(file_parser);
 }
 
-auto voxel_world::ray_cast(VoxelWorld self, float const *ray_o, float const *ray_d) -> RayCastHit {
-    auto [pos, face, dist] = dda_voxels(self, Ray{{ray_o[0], ray_o[1], ray_o[2]}, {ray_d[0], ray_d[1], ray_d[2]}});
+auto voxel_world::ray_cast(VoxelWorld self, RayCastConfig const &config) -> RayCastHit {
+    auto [pos, face, dist] = dda_voxels(self, Ray{{config.ray_o[0], config.ray_o[1], config.ray_o[2]}, {config.ray_d[0], config.ray_d[1], config.ray_d[2]}}, config.max_iter, config.max_distance);
     return RayCastHit{.voxel_x = pos.x, .voxel_y = pos.y, .voxel_z = pos.z, .nrm_x = face.x, .nrm_y = face.y, .nrm_z = face.z, .distance = dist};
 }
 
@@ -965,26 +1076,72 @@ auto voxel_world::is_solid(VoxelWorld self, float const *pos) -> bool {
     return get_voxel_is_solid(self, p);
 }
 
-void voxel_world::apply_brush_a(VoxelWorld self, int const *pos) {
-    for (int zi = -5; zi <= 5; ++zi) {
-        for (int yi = -5; yi <= 5; ++yi) {
-            for (int xi = -5; xi <= 5; ++xi) {
+void fix_normals(voxel_world::VoxelWorld self, int const *pos) {
+    for (int zi = -16; zi <= 16; ++zi) {
+        for (int yi = -16; yi <= 16; ++yi) {
+            for (int xi = -16; xi <= 16; ++xi) {
                 auto p = glm::ivec3(pos[0], pos[1], pos[2]) + glm::ivec3(xi, yi, zi);
-                set_voxel_bit(self, p, false);
+
+                float dx = get_voxel_sim_attrib(self, p + ivec3(1, 0, 0), true) - get_voxel_sim_attrib(self, p + ivec3(-1, 0, 0), true);
+                float dy = get_voxel_sim_attrib(self, p + ivec3(0, 1, 0), true) - get_voxel_sim_attrib(self, p + ivec3(0, -1, 0), true);
+                float dz = get_voxel_sim_attrib(self, p + ivec3(0, 0, 1), true) - get_voxel_sim_attrib(self, p + ivec3(0, 0, -1), true);
+
+                auto prev_attrib = get_voxel_attrib(self, p);
+                auto nrm = glm::normalize(glm::vec3(dx, dy, dz));
+
+                // glm::vec2 uv0 = fract(glm::vec2(p.y, p.z) * 1.0f / 16.0f);
+                // glm::vec2 uv1 = fract(glm::vec2(p.x, p.z) * 1.0f / 16.0f);
+                // glm::vec2 uv2 = fract(glm::vec2(p.x, p.y) * 1.0f / 16.0f);
+
+                // float uv0_a = abs(dot(nrm, vec3(1, 0, 0)));
+                // float uv1_a = abs(dot(nrm, vec3(0, 1, 0)));
+                // float uv2_a = abs(dot(nrm, vec3(0, 0, 1)));
+
+                // auto col = glm::vec3(1.0, 0.1, 0.1) * uv0_a * uv0_a +
+                //            glm::vec3(0.1, 1.0, 0.1) * uv1_a * uv1_a +
+                //            glm::vec3(0.1, 0.1, 1.0) * uv2_a * uv2_a;
+
+                set_voxel_attrib(self, p, Voxel{.col = prev_attrib.col, .nrm = {nrm.x, nrm.y, nrm.z}});
             }
         }
     }
 }
 
-void voxel_world::apply_brush_b(VoxelWorld self, int const *pos) {
-    for (int zi = -5; zi <= 5; ++zi) {
-        for (int yi = -5; yi <= 5; ++yi) {
-            for (int xi = -5; xi <= 5; ++xi) {
+void voxel_world::apply_brush_a(VoxelWorld self, int const *pos) {
+    for (int zi = -15; zi <= 15; ++zi) {
+        for (int yi = -15; yi <= 15; ++yi) {
+            for (int xi = -15; xi <= 15; ++xi) {
+                // float density = 15.0f - max(abs(xi), max(abs(yi), abs(zi)));
+                float density = 15.0f - length(glm::vec3(xi, yi, zi));
+                density = max(0.0f, density) / 20.0f;
                 auto p = glm::ivec3(pos[0], pos[1], pos[2]) + glm::ivec3(xi, yi, zi);
-                set_voxel_bit(self, p, true);
-                auto nrm = glm::normalize(glm::vec3({(xi == 5) - (xi == -5), (yi == 5) - (yi == -5), (zi == 5) - (zi == -5)}));
-                set_voxel_attrib(self, p, Voxel{.col = {1, 0.5f, 0}, .nrm = {nrm.x, nrm.y, nrm.z}});
+                density += get_voxel_sim_attrib(self, p, true);
+                set_voxel_bit(self, p, density < 0);
+                set_voxel_sim_attrib(self, p, density);
             }
         }
     }
+
+    fix_normals(self, pos);
+}
+
+void voxel_world::apply_brush_b(VoxelWorld self, int const *pos) {
+    for (int zi = -15; zi <= 15; ++zi) {
+        for (int yi = -15; yi <= 15; ++yi) {
+            for (int xi = -15; xi <= 15; ++xi) {
+                auto p = glm::ivec3(pos[0], pos[1], pos[2]) + glm::ivec3(xi, yi, zi);
+                // float density = max(abs(xi), max(abs(yi), abs(zi))) - 15.0f;
+                float density = length(glm::vec3(xi, yi, zi)) - 15.0f;
+                density = min(0.0f, density) / 20.0f;
+                if (density < 0) {
+                    set_voxel_attrib(self, p, Voxel{.col = {1, 0.5f, 0}, .nrm = {}});
+                }
+                density += get_voxel_sim_attrib(self, p, true);
+                set_voxel_bit(self, p, density < 0);
+                set_voxel_sim_attrib(self, p, density);
+            }
+        }
+    }
+
+    fix_normals(self, pos);
 }

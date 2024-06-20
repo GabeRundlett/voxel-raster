@@ -175,6 +175,8 @@ void audio_thread_main() {
     dac.startStream();
 
     while (is_running.load()) {
+        using namespace std::chrono_literals;
+        std::this_thread::sleep_for(10ms);
     }
 
     if (dac.isStreamRunning()) {

@@ -348,6 +348,13 @@ void update_camera(Controller *self) {
     self->prj_dirty = false;
 }
 
+glm::vec3 uniform_sample_sphere(glm::vec2 urand) {
+    float phi = urand.y * 2.0f * M_PI;
+    float cos_theta = 1.0f - urand.x * 2.0f;
+    float sin_theta = sqrt(1.0f - cos_theta * cos_theta);
+    return glm::vec3(cos(phi) * sin_theta, sin(phi) * sin_theta, cos_theta);
+}
+
 #define EARTH_GRAV 9.807f
 #define MOON_GRAV 1.625f
 #define MARS_GRAV 3.728f
@@ -624,7 +631,7 @@ void player::update(Player self, float dt) {
     }
 
     auto ray_pos = self->main.pos + self->main.cam_pos_offset + view_vec(&self->main);
-    self->ray_cast = ray_cast(g_voxel_world, &ray_pos.x, &self->main.forward.x);
+    self->ray_cast = ray_cast(g_voxel_world, {&ray_pos.x, &self->main.forward.x});
     if (self->ray_cast.distance != -1.0f && self->ray_cast.distance < 8.0f) {
         auto cube = Box{
             glm::vec3(self->ray_cast.voxel_x, self->ray_cast.voxel_y, self->ray_cast.voxel_z) / 16.0f,
@@ -665,6 +672,20 @@ void player::update(Player self, float dt) {
             }
         }
     }
+
+    // if (self->viewing_observer || self->main.is_third_person) {
+    //     srand(0);
+    //     ray_pos = self->main.pos + self->main.cam_pos_offset + eye_offset;
+    //     for (uint32_t i = 0; i < 1000; ++i) {
+    //         auto ray_dir = uniform_sample_sphere({float(rand() % 10000) / 10000.0f, float(rand() % 10000) / 10000.0f});
+    //         auto ray_cast_result = ray_cast(g_voxel_world, {&ray_pos.x, &ray_dir.x, 5000, 1000.0f});
+    //         if (ray_cast_result.distance != -1.0f) {
+    //             auto p1 = ray_pos + ray_dir * ray_cast_result.distance;
+    //             auto line = Line{ray_pos, p1, {0.9f, 0.1f, 0.1f}};
+    //             submit_debug_lines(g_renderer, (renderer::Line const *)&line, 1);
+    //         }
+    //     }
+    // }
 }
 
 void get_camera(CameraState const &cam, CameraState const &prev_cam, Camera *camera, GpuInput const *gpu_input, bool should_jitter) {

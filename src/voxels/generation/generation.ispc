@@ -73,7 +73,7 @@ export void generate_bitmask(
 export void generate_attributes(
     uniform int brick_xi, uniform int brick_yi, uniform int brick_zi,
     uniform int chunk_xi, uniform int chunk_yi, uniform int chunk_zi,
-    uniform int level_i, uniform uint packed_voxels[],
+    uniform int level_i, uniform uint packed_voxels[], uniform float densities[],
     uniform NoiseSettings const *uniform noise_settings, RandomCtx random_ctx) {
     const uniform vec3 UP = {0, 0, 1};
     const uniform vec3 GRASS_COL = {12, 163, 7};
@@ -109,6 +109,7 @@ export void generate_attributes(
             voxel.nrm = dither_nrm(random_ctx, dn.nrm, o);
             PackedVoxel packed_voxel = pack_voxel(voxel);
             packed_voxels[voxel_index] = packed_voxel.data;
+            densities[voxel_index] = dn.val;
         }
     }
 }

@@ -11,7 +11,7 @@ namespace voxel_world {
 }; // namespace voxel_world
 
 struct VoxelBrickBitmask;
-struct VoxelAttribBrick;
+struct VoxelRenderAttribBrick;
 
 namespace renderer {
     struct State;
@@ -49,7 +49,7 @@ namespace renderer {
 
     auto create_chunk(Renderer self) -> Chunk;
     void destroy_chunk(Renderer self, Chunk chunk);
-    void update(Chunk self, int brick_count, int const *surface_brick_indices, VoxelBrickBitmask const *bitmasks, VoxelAttribBrick const *const *attribs, int const *positions);
+    void update(Chunk self, int brick_count, int const *surface_brick_indices, VoxelBrickBitmask const *bitmasks, VoxelRenderAttribBrick const *const *attribs, int const *positions);
     void render_chunk(Renderer self, Chunk chunk, float const *pos);
 } // namespace renderer
 
