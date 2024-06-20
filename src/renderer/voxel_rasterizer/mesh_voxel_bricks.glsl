@@ -24,6 +24,7 @@ void main() {
     vec3 p1 = ivec3(deref(chunk).pos) * int(VOXEL_CHUNK_SIZE) + pos_scl.xyz * int(VOXEL_BRICK_SIZE) + ivec3(VOXEL_BRICK_SIZE);
     int scl = pos_scl.w + 8;
 #define SCL (float(1 << scl) / float(1 << 8))
+#define INV_SCL (float(1 << 8) / float(1 << scl))
     p0 *= SCL;
     p1 *= SCL;
 
@@ -52,36 +53,36 @@ void main() {
     uint word_index = bit_index / 32;
 
     if (fi == 0) {
-        if (p1.x < 0) {
+        if (p1.x <= 0) {
             b_edge_mask = 0x0;
-        } else if (p0.x > 0) {
+        } else if (p0.x >= 0) {
             t_edge_mask = 0x0;
         } else {
-            int cam_voxel_pos = int(cam_pos.x * 16.0) % int(VOXEL_BRICK_SIZE);
+            int cam_voxel_pos = int(cam_pos.x * INV_SCL) % int(VOXEL_BRICK_SIZE);
             int mask = (1 << cam_voxel_pos) - 1;
             b_edge_mask &= ~mask;
             t_edge_mask &= mask;
         }
     }
     if (fi == 1) {
-        if (p1.y < 0) {
+        if (p1.y <= 0) {
             b_edge_mask = 0x0;
-        } else if (p0.y > 0) {
+        } else if (p0.y >= 0) {
             t_edge_mask = 0x0;
         } else {
-            int cam_voxel_pos = int(cam_pos.y * 16.0) % int(VOXEL_BRICK_SIZE);
+            int cam_voxel_pos = int(cam_pos.y * INV_SCL) % int(VOXEL_BRICK_SIZE);
             int mask = (1 << cam_voxel_pos) - 1;
             b_edge_mask &= ~mask;
             t_edge_mask &= mask;
         }
     }
     if (fi == 2) {
-        if (p1.z < 0) {
+        if (p1.z <= 0) {
             b_edge_mask = 0x0;
-        } else if (p0.z > 0) {
+        } else if (p0.z >= 0) {
             t_edge_mask = 0x0;
         } else {
-            int cam_voxel_pos = int(cam_pos.z * 16.0) % int(VOXEL_BRICK_SIZE);
+            int cam_voxel_pos = int(cam_pos.z * INV_SCL) % int(VOXEL_BRICK_SIZE);
             int mask = (1 << cam_voxel_pos) - 1;
             b_edge_mask &= ~mask;
             t_edge_mask &= mask;

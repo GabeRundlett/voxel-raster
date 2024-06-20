@@ -132,7 +132,7 @@ auto generate_chunk(voxel_world::VoxelWorld self, int32_t chunk_xi, int32_t chun
             (float((chunk_yi * VOXEL_CHUNK_SIZE) << level) + 0.5f) / 16.0f,
             (float((chunk_zi * VOXEL_CHUNK_SIZE) << level) + 0.5f) / 16.0f,
         };
-        auto p1 = p0 + BRICK_CHUNK_SIZE * VOXEL_BRICK_SIZE / 16.0f;
+        auto p1 = p0 + (BRICK_CHUNK_SIZE * VOXEL_BRICK_SIZE << level) / 16.0f;
         auto minmax = voxel_minmax_value_cpp(&noise_settings, RANDOM_VALUES.data(), p0.x, p0.y, p0.z, p1.x, p1.y, p1.z);
         if (minmax.min >= 0.0f || minmax.max < 0.0f) {
             // uniform
@@ -170,7 +170,7 @@ auto generate_chunk(voxel_world::VoxelWorld self, int32_t chunk_xi, int32_t chun
                         (float((brick_yi * VOXEL_BRICK_SIZE + chunk_yi * VOXEL_CHUNK_SIZE) << level) + 0.5f) / 16.0f,
                         (float((brick_zi * VOXEL_BRICK_SIZE + chunk_zi * VOXEL_CHUNK_SIZE) << level) + 0.5f) / 16.0f,
                     };
-                    auto p1 = p0 + VOXEL_BRICK_SIZE / 16.0f;
+                    auto p1 = p0 + (VOXEL_BRICK_SIZE << level) / 16.0f;
                     auto minmax = voxel_minmax_value_cpp(&noise_settings, RANDOM_VALUES.data(), p0.x, p0.y, p0.z, p1.x, p1.y, p1.z);
                     if (minmax.min >= 0.0f || minmax.max < 0.0f) {
                         // uniform
@@ -839,8 +839,9 @@ void voxel_world::update(VoxelWorld self) {
         if (chunk->bricks_changed) {
             int xi = chunk_index % CHUNK_NX;
             int yi = (chunk_index / CHUNK_NX) % CHUNK_NY;
-            int zi = (chunk_index / CHUNK_NY) / CHUNK_NZ;
-            generate_chunk2(self, xi, yi, zi, 0);
+            int zi = (chunk_index / CHUNK_NX / CHUNK_NY) % CHUNK_NZ;
+            int li = (chunk_index / CHUNK_NX / CHUNK_NY / CHUNK_NZ);
+            generate_chunk2(self, xi, yi, zi, li);
             brick_count = chunk->surface_brick_indices.size();
             if (chunk->render_chunk == nullptr) {
                 chunk->render_chunk = create_chunk(g_renderer);

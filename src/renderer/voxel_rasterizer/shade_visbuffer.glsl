@@ -66,15 +66,15 @@ void visualize_primitive_size() {
 
         float size = size_x;
 
-        const float threshold = 32;
+        const float threshold = 5;
 
         // vec3 albedo = hsv2rgb(vec3(clamp(float(size) / threshold, 0, 1) * 0.4 + 0.65, 0.99, size > threshold ? exp(-float(size - threshold) * 0.5 / threshold) * 0.8 + 0.2 : 1));
         vec3 albedo = size < threshold ? (size < 4 ? vec3(0.4, 0.4, 0.9) : vec3(0.2, 0.9, 0.2)) : vec3(0.9, 0.2, 0.2);
 
         vec3 diffuse = vec3(0);
         // diffuse += vec3(1);
-        diffuse += max(0.0, dot(voxel.nrm, normalize(vec3(-1, 2, -3)))) * vec3(0.9, 0.7, 0.5) * 2;
-        diffuse += max(0.0, dot(voxel.nrm, normalize(vec3(0, 0, -1))) * 0.4 + 0.6) * SKY_COL;
+        diffuse += max(0.0, dot(voxel.nrm, normalize(vec3(-1, 2, 3)))) * vec3(0.9, 0.7, 0.5) * 2;
+        diffuse += max(0.0, dot(voxel.nrm, normalize(vec3(0, 0, 1))) * 0.4 + 0.6) * SKY_COL;
 
         f_out = vec4(albedo * diffuse, 1);
     }
