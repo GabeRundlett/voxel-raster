@@ -2,6 +2,8 @@
 #include <voxels/pack_unpack.inl>
 #include <voxels/voxel_mesh.glsl>
 
+#include <g_samplers>
+
 DAXA_DECL_PUSH_CONSTANT(PostProcessingPush, push)
 
 layout(location = 0) out vec4 f_out;
@@ -75,7 +77,7 @@ vec3 color_correct(vec3 x) {
 }
 
 void main() {
-    vec3 color = texelFetch(daxa_texture2D(push.uses.color), ivec2(gl_FragCoord.xy), 0).rgb;
+    vec3 color = texture(daxa_sampler2D(push.uses.color, g_sampler_nnc), vec2(gl_FragCoord.xy) / vec2(push.image_size.xy)).rgb;
     color = color_correct(color);
 
     {

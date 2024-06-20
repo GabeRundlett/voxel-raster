@@ -36,6 +36,7 @@ DAXA_TH_IMAGE_INDEX(FRAGMENT_SHADER_SAMPLED, REGULAR_2D, color)
 DAXA_DECL_TASK_HEAD_END
 
 struct PostProcessingPush {
+    daxa_u32vec2 image_size;
     DAXA_TH_BLOB(PostProcessing, uses)
 };
 

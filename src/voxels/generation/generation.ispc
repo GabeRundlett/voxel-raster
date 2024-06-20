@@ -78,6 +78,7 @@ export void generate_attributes(
     const uniform vec3 UP = {0, 0, 1};
     const uniform vec3 GRASS_COL = {12, 163, 7};
     const uniform vec3 DIRT_COL = {112, 62, 30};
+    const uniform vec3 STONE_COL = {140, 110, 100};
 
     foreach (word_i = 0 ... (VOXEL_BRICK_SIZE * VOXEL_BRICK_SIZE * VOXEL_BRICK_SIZE / 32)) {
         for (uniform uint in_word_i = 0; in_word_i < 32; ++in_word_i) {
@@ -97,10 +98,12 @@ export void generate_attributes(
 
             DensityNrm dn = voxel_value(random_ctx, noise_settings, pos);
             Voxel voxel;
-            if (dot(dn.nrm, UP) > 0.5f && dn.val > -2.5f) {
+            if (dot(dn.nrm, UP) > 0.25f && dn.val > -2.5f) {
                 voxel.col = GRASS_COL / 255.0f;
-            } else {
+            } else if (dot(dn.nrm, UP) > 0.0f && dn.val > -7.5f) {
                 voxel.col = DIRT_COL / 255.0f;
+            } else {
+                voxel.col = STONE_COL / 255.0f;
             }
             ivec3 o = {xi, yi, zi};
             voxel.nrm = dither_nrm(random_ctx, dn.nrm, o);

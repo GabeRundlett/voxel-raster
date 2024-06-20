@@ -132,7 +132,7 @@ void record_tasks(renderer::Renderer self) {
         if (self->use_fsr2 && !self->draw_from_observer) {
             auto upscaled_image = self->loop_task_graph.create_transient_image({
                 .format = daxa::Format::R16G16B16A16_SFLOAT,
-                .size = {self->gpu_input.render_size.x, self->gpu_input.render_size.y, 1},
+                .size = {self->gpu_context.output_resolution.x, self->gpu_context.output_resolution.y, 1},
                 .name = "upscaled_image",
             });
             self->loop_task_graph.add_task({
@@ -186,6 +186,7 @@ void record_tasks(renderer::Renderer self) {
                 .render_area = {.x = 0, .y = 0, .width = image_info.size.x, .height = image_info.size.y},
             });
             renderpass_recorder.set_pipeline(pipeline);
+            push.image_size = {image_info.size.x, image_info.size.y};
             set_push_constant(ti, renderpass_recorder, push);
             renderpass_recorder.draw({.vertex_count = 3});
             ti.recorder = std::move(renderpass_recorder).end_renderpass();
@@ -199,7 +200,8 @@ void record_tasks(renderer::Renderer self) {
         },
         .task = [self](daxa::TaskInterface const &ti) {
             auto swapchain_image = self->gpu_context.task_swapchain_image.get_state().images[0];
-            self->imgui_renderer.record_commands(ImGui::GetDrawData(), ti.recorder, swapchain_image, self->gpu_input.render_size.x, self->gpu_input.render_size.y);
+            auto const image_info = ti.device.info_image(swapchain_image).value();
+            self->imgui_renderer.record_commands(ImGui::GetDrawData(), ti.recorder, swapchain_image, image_info.size.x, image_info.size.y);
         },
         .name = "ImGui draw",
     });
@@ -300,7 +302,7 @@ void renderer::deinit(Renderer self) {
 
 void renderer::on_resize(Renderer self, int size_x, int size_y) {
     self->gpu_context.output_resolution = daxa_u32vec2{uint32_t(size_x), uint32_t(size_y)};
-    self->gpu_context.render_resolution = self->gpu_context.output_resolution;
+    self->gpu_context.render_resolution = daxa_u32vec2{uint32_t(size_x), uint32_t(size_y)};
     self->gpu_context.next_lower_po2_render_size = daxa_u32vec2{find_next_lower_po2(self->gpu_context.render_resolution.x), find_next_lower_po2(self->gpu_context.render_resolution.y)};
 
     self->gpu_input.render_size = self->gpu_context.render_resolution;

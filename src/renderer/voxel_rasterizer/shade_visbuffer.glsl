@@ -27,6 +27,7 @@ float hash11(float p) {
 #define VISUALIZE_BRICK_SIZE 0
 
 const vec3 SKY_COL = vec3(20, 20, 255) / 255;
+const vec3 SUN_COL = vec3(0.9, 0.7, 0.5) * 2;
 
 void visualize_overdraw() {
     uint overdraw = texelFetch(daxa_utexture2D(push.uses.debug_overdraw), ivec2(gl_GlobalInvocationID.xy), 0).x;
@@ -117,7 +118,7 @@ void shade() {
 
         vec3 diffuse = vec3(0);
         // diffuse += vec3(1);
-        diffuse += max(0.0, dot(voxel.nrm, normalize(vec3(-1, 2, 3)))) * vec3(0.9, 0.7, 0.5) * 2;
+        diffuse += max(0.0, dot(voxel.nrm, normalize(vec3(-1, 2, 3)))) * SUN_COL;
         diffuse += max(0.0, dot(voxel.nrm, normalize(vec3(0, 0, 1))) * 0.4 + 0.6) * SKY_COL;
 
         vec3 out_col = albedo * diffuse;
