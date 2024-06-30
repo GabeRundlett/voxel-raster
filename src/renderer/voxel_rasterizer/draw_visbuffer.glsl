@@ -117,14 +117,14 @@ void main() {
     uint in_meshlet_face_index = gl_LocalInvocationIndex;
     uint meshlet_face_count = 0;
 
-    uint meshlet_index = gl_WorkGroupID.x + 1 + deref(push.uses.indirect_info[3]).offset + MAX_SW_MESHLET_COUNT;
-    if (is_valid_meshlet_index(daxa_BufferPtr(VoxelMeshlet)(push.uses.meshlet_allocator), meshlet_index)) {
-        VoxelMeshletMetadata metadata = deref(push.uses.meshlet_metadata[meshlet_index]);
+    uint meshlet_index = gl_WorkGroupID.x + 1 + deref(advance(push.uses.indirect_info, 3)).offset + MAX_SW_MESHLET_COUNT;
+    if (is_valid_meshlet_index(daxa_BufferPtr(VoxelMeshlet)(as_address(push.uses.meshlet_allocator)), meshlet_index)) {
+        VoxelMeshletMetadata metadata = deref(advance(push.uses.meshlet_metadata, meshlet_index));
 
-        if (is_valid_index(daxa_BufferPtr(BrickInstance)(push.uses.brick_instance_allocator), metadata.brick_instance_index)) {
-            brick_instance = deref(push.uses.brick_instance_allocator[metadata.brick_instance_index]);
-            voxel_chunk = deref(push.uses.chunks[brick_instance.chunk_index]);
-            mesh = deref(voxel_chunk.meshes[brick_instance.brick_index]);
+        if (is_valid_index(daxa_BufferPtr(BrickInstance)(as_address(push.uses.brick_instance_allocator)), metadata.brick_instance_index)) {
+            brick_instance = deref(advance(push.uses.brick_instance_allocator, metadata.brick_instance_index));
+            voxel_chunk = deref(advance(push.uses.chunks, brick_instance.chunk_index));
+            mesh = deref(advance(voxel_chunk.meshes, brick_instance.brick_index));
             in_mesh_meshlet_index = meshlet_index - mesh.meshlet_start;
             meshlet_face_count = min(32, mesh.face_count - in_mesh_meshlet_index * 32);
         }
@@ -137,7 +137,7 @@ void main() {
 #endif
 
     if (in_meshlet_face_index < meshlet_face_count && mesh.meshlet_start != 0) {
-        PackedVoxelBrickFace packed_face = deref(push.uses.meshlet_allocator[in_mesh_meshlet_index + mesh.meshlet_start]).faces[gl_LocalInvocationIndex];
+        PackedVoxelBrickFace packed_face = deref(advance(push.uses.meshlet_allocator, in_mesh_meshlet_index + mesh.meshlet_start)).faces[gl_LocalInvocationIndex];
 
         VoxelBrickFace face = unpack(packed_face);
 
@@ -146,7 +146,7 @@ void main() {
         o_payload.meshlet_id = meshlet_index;
         o_packed_payload = pack(o_payload);
 
-        ivec4 pos_scl = deref(voxel_chunk.pos_scl[brick_instance.brick_index]);
+        ivec4 pos_scl = deref(advance(voxel_chunk.pos_scl, brick_instance.brick_index));
         ivec3 pos = ivec3(voxel_chunk.pos) * int(VOXEL_CHUNK_SIZE) + pos_scl.xyz * int(VOXEL_BRICK_SIZE) + ivec3(face.pos);
         int scl = pos_scl.w + 8;
 

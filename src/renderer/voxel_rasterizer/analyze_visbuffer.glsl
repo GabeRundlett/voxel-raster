@@ -9,17 +9,17 @@ void write_visible_brick(uint brick_instance_index) {
     // uint word_index = brick_instance_index / 32;
     // uint in_word_index = brick_instance_index % 32;
     uint visibility_mask = 1;
-    uint prev_bits = atomicOr(deref(push.uses.brick_visibility_bits[brick_instance_index]), visibility_mask);
+    uint prev_bits = atomicOr(deref(advance(push.uses.brick_visibility_bits, brick_instance_index)), visibility_mask);
     if ((prev_bits & visibility_mask) == 0) {
         // We're the first thread to set the flag, so we can write ourselves out
         uint visible_brick_instance_index = allocate_brick_instances(push.uses.visible_brick_instance_allocator, 1);
         // it should be impossible for this to ever be bad, but we'll check anyway.
         if (visible_brick_instance_index != 0) {
-            BrickInstance brick_instance = deref(push.uses.brick_instance_allocator[brick_instance_index]);
-            deref(push.uses.visible_brick_instance_allocator[visible_brick_instance_index]) = brick_instance;
+            BrickInstance brick_instance = deref(advance(push.uses.brick_instance_allocator, brick_instance_index));
+            deref(advance(push.uses.visible_brick_instance_allocator, visible_brick_instance_index)) = brick_instance;
             // Also mark as submitted for drawing
-            VoxelChunk voxel_chunk = deref(push.uses.chunks[brick_instance.chunk_index]);
-            deref(voxel_chunk.flags[brick_instance.brick_index]) = 1;
+            VoxelChunk voxel_chunk = deref(advance(push.uses.chunks, brick_instance.chunk_index));
+            deref(advance(voxel_chunk.flags, brick_instance.brick_index)) = 1;
         }
     }
 }
@@ -46,11 +46,11 @@ void main() {
 
         if (visbuffer_id != INVALID_MESHLET_INDEX) {
             VisbufferPayload payload = unpack(PackedVisbufferPayload(visbuffer_id));
-            VoxelMeshlet meshlet = deref(push.uses.meshlet_allocator[payload.meshlet_id]);
+            VoxelMeshlet meshlet = deref(advance(push.uses.meshlet_allocator, payload.meshlet_id));
             PackedVoxelBrickFace packed_face = meshlet.faces[payload.face_id];
             VoxelBrickFace face = unpack(packed_face);
-            VoxelMeshletMetadata metadata = deref(push.uses.meshlet_metadata[payload.meshlet_id]);
-            list_entry_valid = is_valid_index(daxa_BufferPtr(BrickInstance)(push.uses.brick_instance_allocator), metadata.brick_instance_index);
+            VoxelMeshletMetadata metadata = deref(advance(push.uses.meshlet_metadata, payload.meshlet_id));
+            list_entry_valid = is_valid_index(daxa_BufferPtr(BrickInstance)(as_address(push.uses.brick_instance_allocator)), metadata.brick_instance_index);
             brick_instance_indices[i] = metadata.brick_instance_index;
         }
 

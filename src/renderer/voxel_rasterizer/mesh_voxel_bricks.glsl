@@ -12,13 +12,13 @@ layout(local_size_x = VOXEL_BRICK_SIZE, local_size_y = VOXEL_BRICK_SIZE, local_s
 void main() {
     uint brick_instance_index = gl_WorkGroupID.x + 1 + deref(push.uses.indirect_info).offset;
 
-    if (!is_valid_index(daxa_BufferPtr(BrickInstance)(push.uses.brick_instance_allocator), brick_instance_index)) {
+    if (!is_valid_index(daxa_BufferPtr(BrickInstance)(as_address(push.uses.brick_instance_allocator)), brick_instance_index)) {
         return;
     }
 
-    BrickInstance brick_instance = deref(push.uses.brick_instance_allocator[brick_instance_index]);
-    daxa_BufferPtr(VoxelChunk) chunk = push.uses.chunks[brick_instance.chunk_index];
-    ivec4 pos_scl = deref(deref(chunk).pos_scl[brick_instance.brick_index]);
+    BrickInstance brick_instance = deref(advance(push.uses.brick_instance_allocator, brick_instance_index));
+    daxa_BufferPtr(VoxelChunk) chunk = advance(push.uses.chunks, brick_instance.chunk_index);
+    ivec4 pos_scl = deref(advance(deref(chunk).pos_scl, brick_instance.brick_index));
 
     vec3 p0 = ivec3(deref(chunk).pos) * int(VOXEL_CHUNK_SIZE) + pos_scl.xyz * int(VOXEL_BRICK_SIZE) + ivec3(0);
     vec3 p1 = ivec3(deref(chunk).pos) * int(VOXEL_CHUNK_SIZE) + pos_scl.xyz * int(VOXEL_BRICK_SIZE) + ivec3(VOXEL_BRICK_SIZE);
@@ -39,8 +39,15 @@ void main() {
     uint yi = gl_LocalInvocationID.y;
     uint fi = gl_LocalInvocationID.z;
 
-    uint bit_strip = load_strip(push.uses.gpu_input, daxa_BufferPtr(VoxelBrickBitmask)(deref(chunk).bitmasks[brick_instance.brick_index]), daxa_BufferPtr(ivec4)(deref(chunk).pos_scl[brick_instance.brick_index]), xi, yi, fi);
-    uvec2 edges_exposed = load_brick_faces_exposed(push.uses.gpu_input, daxa_BufferPtr(VoxelBrickBitmask)(deref(chunk).bitmasks[brick_instance.brick_index]), xi, yi, fi);
+    uint bit_strip = load_strip(
+        push.uses.gpu_input,
+        daxa_BufferPtr(VoxelBrickBitmask)(as_address(advance(deref(chunk).bitmasks, brick_instance.brick_index))),
+        daxa_BufferPtr(ivec4)(as_address(advance(deref(chunk).pos_scl, brick_instance.brick_index))),
+        xi, yi, fi);
+    uvec2 edges_exposed = load_brick_faces_exposed(
+        push.uses.gpu_input,
+        daxa_BufferPtr(VoxelBrickBitmask)(as_address(advance(deref(chunk).bitmasks, brick_instance.brick_index))),
+        xi, yi, fi);
 
     uint b_edge_mask = bit_strip & ~(bit_strip << 1);
     uint t_edge_mask = bit_strip & ~(bit_strip >> 1);
@@ -129,8 +136,8 @@ void main() {
         result_mesh.meshlet_start = allocate_meshlets(push.uses.meshlet_allocator, meshlet_n, compute_rasterize);
 
         if (result_mesh.meshlet_start != 0) {
-            deref(deref(chunk).meshes[brick_instance.brick_index]).face_count = result_mesh.face_count;
-            deref(deref(chunk).meshes[brick_instance.brick_index]).meshlet_start = result_mesh.meshlet_start;
+            deref(advance(deref(chunk).meshes, brick_instance.brick_index)).face_count = result_mesh.face_count;
+            deref(advance(deref(chunk).meshes, brick_instance.brick_index)).meshlet_start = result_mesh.meshlet_start;
         }
     }
 
@@ -143,8 +150,8 @@ void main() {
             if (face_i < result_mesh.face_count) {
                 face_id = face_ids[face_i];
             }
-            deref(push.uses.meshlet_allocator[result_mesh.meshlet_start + gl_LocalInvocationIndex]).faces[i] = PackedVoxelBrickFace(face_id);
+            deref(advance(push.uses.meshlet_allocator, result_mesh.meshlet_start + gl_LocalInvocationIndex)).faces[i] = PackedVoxelBrickFace(face_id);
         }
-        deref(push.uses.meshlet_metadata[result_mesh.meshlet_start + gl_LocalInvocationIndex]).brick_instance_index = brick_instance_index;
+        deref(advance(push.uses.meshlet_metadata, result_mesh.meshlet_start + gl_LocalInvocationIndex)).brick_instance_index = brick_instance_index;
     }
 }

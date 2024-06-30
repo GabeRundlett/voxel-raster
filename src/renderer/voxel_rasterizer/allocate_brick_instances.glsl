@@ -6,14 +6,14 @@ DAXA_DECL_PUSH_CONSTANT(AllocateBrickInstancesPush, push)
 
 bool is_brick_instance_already_in_drawlist(BrickInstance brick_instance) {
     // return false;
-    VoxelChunk voxel_chunk = deref(push.uses.chunks[brick_instance.chunk_index]);
-    uint flags = deref(voxel_chunk.flags[brick_instance.brick_index]);
+    VoxelChunk voxel_chunk = deref(advance(push.uses.chunks, brick_instance.chunk_index));
+    uint flags = deref(advance(voxel_chunk.flags, brick_instance.brick_index));
     return flags != 0;
 }
 
 bool is_brick_instance_visible(BrickInstance brick_instance) {
-    VoxelChunk voxel_chunk = deref(push.uses.chunks[brick_instance.chunk_index]);
-    ivec4 pos_scl = deref(voxel_chunk.pos_scl[brick_instance.brick_index]);
+    VoxelChunk voxel_chunk = deref(advance(push.uses.chunks, brick_instance.chunk_index));
+    ivec4 pos_scl = deref(advance(voxel_chunk.pos_scl, brick_instance.brick_index));
 
     vec3 p0 = ivec3(voxel_chunk.pos) * int(VOXEL_CHUNK_SIZE) + pos_scl.xyz * int(VOXEL_BRICK_SIZE) + ivec3(0);
     vec3 p1 = ivec3(voxel_chunk.pos) * int(VOXEL_CHUNK_SIZE) + pos_scl.xyz * int(VOXEL_BRICK_SIZE) + ivec3(VOXEL_BRICK_SIZE);
@@ -124,7 +124,7 @@ bool is_brick_instance_visible(BrickInstance brick_instance) {
 layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
 void main() {
     uint chunk_index = gl_WorkGroupID.x;
-    uint brick_n = deref(push.uses.chunks[chunk_index]).brick_n;
+    uint brick_n = deref(advance(push.uses.chunks, chunk_index)).brick_n;
 
     for (uint brick_index = gl_LocalInvocationIndex; brick_index < brick_n; brick_index += 128) {
         BrickInstance brick_instance;
@@ -133,10 +133,10 @@ void main() {
         if (is_brick_instance_visible(brick_instance) && !is_brick_instance_already_in_drawlist(brick_instance)) {
             // Add to draw list
             uint brick_instance_index = allocate_brick_instances(push.uses.brick_instance_allocator, 1);
-            deref(push.uses.brick_instance_allocator[brick_instance_index]) = brick_instance;
+            deref(advance(push.uses.brick_instance_allocator, brick_instance_index)) = brick_instance;
             // Also mark as drawn
-            VoxelChunk voxel_chunk = deref(push.uses.chunks[brick_instance.chunk_index]);
-            deref(voxel_chunk.flags[brick_instance.brick_index]) = 1;
+            VoxelChunk voxel_chunk = deref(advance(push.uses.chunks, brick_instance.chunk_index));
+            deref(advance(voxel_chunk.flags, brick_instance.brick_index)) = 1;
         }
     }
 }

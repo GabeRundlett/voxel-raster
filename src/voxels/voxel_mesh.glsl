@@ -100,8 +100,8 @@ vec2 brick_extent_pixels(daxa_BufferPtr(GpuInput) gpu_input, daxa_BufferPtr(Voxe
     vec3 ndc_min;
     vec3 ndc_max;
 
-    VoxelChunk voxel_chunk = deref(voxel_chunks[brick_instance.chunk_index]);
-    ivec4 pos_scl = deref(voxel_chunk.pos_scl[brick_instance.brick_index]);
+    VoxelChunk voxel_chunk = deref(advance(voxel_chunks, brick_instance.chunk_index));
+    ivec4 pos_scl = deref(advance(voxel_chunk.pos_scl, brick_instance.brick_index));
 
     vec3 p0 = ivec3(voxel_chunk.pos) * int(VOXEL_CHUNK_SIZE) + pos_scl.xyz * int(VOXEL_BRICK_SIZE) + ivec3(0);
     vec3 p1 = ivec3(voxel_chunk.pos) * int(VOXEL_CHUNK_SIZE) + pos_scl.xyz * int(VOXEL_BRICK_SIZE) + ivec3(VOXEL_BRICK_SIZE);
@@ -141,15 +141,15 @@ vec2 brick_extent_pixels(daxa_BufferPtr(GpuInput) gpu_input, daxa_BufferPtr(Voxe
 
 Voxel load_voxel(daxa_BufferPtr(GpuInput) gpu_input, daxa_BufferPtr(VoxelChunk) voxel_chunk, uint brick_index, uvec3 voxel_pos) {
     uint voxel_index = voxel_pos.x + voxel_pos.y * VOXEL_BRICK_SIZE + voxel_pos.z * VOXEL_BRICK_SIZE * VOXEL_BRICK_SIZE;
-    return unpack_voxel(deref(deref(voxel_chunk).attribs[brick_index]).packed_voxels[voxel_index]);
+    return unpack_voxel(deref(advance(deref(voxel_chunk).attribs, brick_index)).packed_voxels[voxel_index]);
 
     // uint word_index = voxel_index / 32;
     // uint in_word_index = voxel_index % 32;
-    // uint bit = (deref(deref(voxel_chunk).bitmasks[brick_index]).bits[word_index] >> in_word_index) & 1;
+    // uint bit = (deref(advance(deref(voxel_chunk).bitmasks, brick_index)).bits[word_index] >> in_word_index) & 1;
     // if (bit != 0) {
-    //     return unpack_voxel(deref(deref(voxel_chunk).attribs[brick_index]).packed_voxels[voxel_index]);
+    //     return unpack_voxel(deref(advance(deref(voxel_chunk).attribs, brick_index)).packed_voxels[voxel_index]);
     // } else {
-    //     daxa_BufferPtr(ivec4) position = daxa_BufferPtr(ivec4)(deref(voxel_chunk).pos_scl[brick_index]);
+    //     daxa_BufferPtr(ivec4) position = daxa_BufferPtr(ivec4)(deref(advance(voxel_chunk).pos_scl, brick_index));
     //     ivec3 pos = deref(position).xyz;
     //     float t = deref(gpu_input).time * 3 + float(uint((uint64_t(position) / 16)) & 0xffff) * 4;
     //     vec3 offset = vec3(sin(t), cos(t), sin(t * 0.71)) * 1.0;

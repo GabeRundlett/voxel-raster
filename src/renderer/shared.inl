@@ -1,6 +1,7 @@
 #pragma once
 
 #define DAXA_IMAGE_INT64 1
+// #define DAXA_BUFFER_PTR_COMPAT 1
 
 #include <daxa/utils/task_graph.inl>
 #include "camera.inl"

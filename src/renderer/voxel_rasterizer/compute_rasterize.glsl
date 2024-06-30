@@ -42,20 +42,20 @@ shared VoxelMeshlet meshlets[MESHLETS_PER_WORKGROUP];
 
 layout(local_size_x = WORKGROUP_SIZE, local_size_y = 1, local_size_z = 1) in;
 void main() {
-    const uint meshlet_base_id = gl_WorkGroupID.x * MESHLETS_PER_WORKGROUP + 1 + deref(push.uses.indirect_info[1]).offset;
+    const uint meshlet_base_id = gl_WorkGroupID.x * MESHLETS_PER_WORKGROUP + 1 + deref(advance(push.uses.indirect_info, 1)).offset;
     const uint in_workgroup_meshlet_index = gl_LocalInvocationID.x / MAX_FACES_PER_MESHLET;
     const uint in_meshlet_face_index = gl_LocalInvocationID.x % MAX_FACES_PER_MESHLET;
     const uint meshlet_index = meshlet_base_id + in_workgroup_meshlet_index;
-    const bool is_valid_meshlet_id = is_valid_meshlet_index(daxa_BufferPtr(VoxelMeshlet)(push.uses.meshlet_allocator), meshlet_index);
+    const bool is_valid_meshlet_id = is_valid_meshlet_index(daxa_BufferPtr(VoxelMeshlet)(as_address(push.uses.meshlet_allocator)), meshlet_index);
 
     if (is_valid_meshlet_id) {
         if (in_meshlet_face_index == 0) {
-            VoxelMeshletMetadata metadata = deref(push.uses.meshlet_metadata[meshlet_index]);
-            bool is_valid_brick_instance = is_valid_index(daxa_BufferPtr(BrickInstance)(push.uses.brick_instance_allocator), metadata.brick_instance_index);
+            VoxelMeshletMetadata metadata = deref(advance(push.uses.meshlet_metadata, meshlet_index));
+            bool is_valid_brick_instance = is_valid_index(daxa_BufferPtr(BrickInstance)(as_address(push.uses.brick_instance_allocator)), metadata.brick_instance_index);
             if (is_valid_brick_instance) {
-                BrickInstance brick_instance = deref(push.uses.brick_instance_allocator[metadata.brick_instance_index]);
-                VoxelChunk voxel_chunk = deref(push.uses.chunks[brick_instance.chunk_index]);
-                VoxelBrickMesh mesh = deref(voxel_chunk.meshes[brick_instance.brick_index]);
+                BrickInstance brick_instance = deref(advance(push.uses.brick_instance_allocator, metadata.brick_instance_index));
+                VoxelChunk voxel_chunk = deref(advance(push.uses.chunks, brick_instance.chunk_index));
+                VoxelBrickMesh mesh = deref(advance(voxel_chunk.meshes, brick_instance.brick_index));
 
                 meshlet_brick_instances[in_workgroup_meshlet_index] = brick_instance;
                 voxel_chunks[in_workgroup_meshlet_index] = voxel_chunk;
@@ -63,7 +63,7 @@ void main() {
             }
         }
 
-        PackedVoxelBrickFace packed_face = deref(push.uses.meshlet_allocator[meshlet_index]).faces[in_meshlet_face_index];
+        PackedVoxelBrickFace packed_face = deref(advance(push.uses.meshlet_allocator, meshlet_index)).faces[in_meshlet_face_index];
         meshlets[in_workgroup_meshlet_index].faces[in_meshlet_face_index] = packed_face;
     } else {
         if (in_meshlet_face_index == 0) {
@@ -88,7 +88,7 @@ void main() {
         o_payload.meshlet_id = meshlet_index;
         PackedVisbufferPayload o_packed_payload = pack(o_payload);
 
-        ivec4 pos_scl = deref(voxel_chunk.pos_scl[brick_instance.brick_index]);
+        ivec4 pos_scl = deref(advance(voxel_chunk.pos_scl, brick_instance.brick_index));
         ivec3 pos = ivec3(voxel_chunk.pos) * int(VOXEL_CHUNK_SIZE) + pos_scl.xyz * int(VOXEL_BRICK_SIZE) + ivec3(face.pos);
         int scl = pos_scl.w + 8;
 

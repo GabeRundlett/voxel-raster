@@ -19,8 +19,8 @@ void main() {
     uint shape_index = gl_VertexIndex / 2;
     uint vertex_index = gl_VertexIndex % 2;
 
-    vec3 vertex_pos = deref(push.vertex_data[shape_index * 3 + vertex_index]);
-    vec3 vertex_col = deref(push.vertex_data[shape_index * 3 + 2]);
+    vec3 vertex_pos = deref(advance(push.vertex_data, shape_index * 3 + vertex_index));
+    vec3 vertex_col = deref(advance(push.vertex_data, shape_index * 3 + 2));
 
     gl_Position = world_to_clip * vec4(vertex_pos, 1);
     f_col = vertex_col;
@@ -50,9 +50,9 @@ void main() {
     uint shape_index = gl_VertexIndex / 6;
     uint vertex_index = gl_VertexIndex % 6;
 
-    vec3 vertex_pos = deref(push.vertex_data[shape_index * 3 + 0]);
-    vec3 vertex_col = deref(push.vertex_data[shape_index * 3 + 1]);
-    vec3 vertex_meta = deref(push.vertex_data[shape_index * 3 + 2]);
+    vec3 vertex_pos = deref(advance(push.vertex_data, shape_index * 3 + 0));
+    vec3 vertex_col = deref(advance(push.vertex_data, shape_index * 3 + 1));
+    vec3 vertex_meta = deref(advance(push.vertex_data, shape_index * 3 + 2));
 
     vec2 uv = vec2((0x32 >> vertex_index) & 1, (0x2c >> vertex_index) & 1);
     f_uv = uv;
