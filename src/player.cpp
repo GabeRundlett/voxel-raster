@@ -469,8 +469,8 @@ void player::update(Player self, float dt) {
                             inside_terrain = true;
                             avg_pos += p;
                             ++in_voxel_n;
-                            // break;
 
+                            // TODO: Add debug condition
                             if (self->is_third_person) {
                                 auto cube = Box{
                                     floor(p * VOXEL_SCL + 0.0f) * VOXEL_SIZE,
@@ -478,6 +478,8 @@ void player::update(Player self, float dt) {
                                     {1.0f, 0.0f, 0.0f},
                                 };
                                 submit_debug_box_lines(g_renderer, (renderer::Box const *)&cube, 1);
+                            } else {
+                                break;
                             }
                         }
                     }
@@ -673,6 +675,7 @@ void player::update(Player self, float dt) {
         }
     }
 
+    // NOTE: Random rays cast from eye:
     // if (self->viewing_observer || self->main.is_third_person) {
     //     srand(0);
     //     ray_pos = self->main.pos + self->main.cam_pos_offset + eye_offset;

@@ -131,11 +131,10 @@ void main() {
             uint lsb = findLSB(b_edge_mask >> shift);
             shift += lsb + 1;
             uint in_strip_index = shift - 1;
-            // face_ids[face_offset + i] =
             uint meshlet_index = (face_offset + i) / 32;
             uint face_index = (face_offset + i) % 32;
             deref(advance(push.uses.meshlet_allocator, result_mesh.meshlet_start + meshlet_index)).faces[face_index] =
-            pack(VoxelBrickFace(unswizzle_from_strip_coord(uvec3(xi, yi, in_strip_index), fi), fi * 2));
+                pack(VoxelBrickFace(unswizzle_from_strip_coord(uvec3(xi, yi, in_strip_index), fi), fi * 2));
         }
 
         shift = 0;
@@ -143,11 +142,10 @@ void main() {
             uint lsb = findLSB(t_edge_mask >> shift);
             shift += lsb + 1;
             uint in_strip_index = shift - 1;
-            // face_ids[face_offset + i + b_edge_count] =
             uint meshlet_index = (face_offset + i + b_edge_count) / 32;
             uint face_index = (face_offset + i + b_edge_count) % 32;
             deref(advance(push.uses.meshlet_allocator, result_mesh.meshlet_start + meshlet_index)).faces[face_index] =
-            pack(VoxelBrickFace(unswizzle_from_strip_coord(uvec3(xi, yi, in_strip_index), fi), fi * 2 + 1));
+                pack(VoxelBrickFace(unswizzle_from_strip_coord(uvec3(xi, yi, in_strip_index), fi), fi * 2 + 1));
         }
 
         if (gl_LocalInvocationIndex < meshlet_n) {

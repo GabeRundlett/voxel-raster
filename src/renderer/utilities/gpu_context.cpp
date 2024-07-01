@@ -31,7 +31,7 @@ GpuContext::GpuContext() {
             .write_out_shader_binary = ".out/spv",
             // .spirv_cache_folder = ".out/spv_cache",
             .language = daxa::ShaderLanguage::GLSL,
-            .enable_debug_info = false,
+            .enable_debug_info = true,
         },
         .register_null_pipelines_when_first_compile_fails = true,
         .name = "pipeline_manager",

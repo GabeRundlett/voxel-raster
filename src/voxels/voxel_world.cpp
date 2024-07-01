@@ -1108,6 +1108,8 @@ void fix_normals(voxel_world::VoxelWorld self, int const *pos) {
 }
 
 void voxel_world::apply_brush_a(VoxelWorld self, int const *pos) {
+    // place brush
+
     for (int zi = -15; zi <= 15; ++zi) {
         for (int yi = -15; yi <= 15; ++yi) {
             for (int xi = -15; xi <= 15; ++xi) {
@@ -1126,6 +1128,8 @@ void voxel_world::apply_brush_a(VoxelWorld self, int const *pos) {
 }
 
 void voxel_world::apply_brush_b(VoxelWorld self, int const *pos) {
+    // break brush
+
     for (int zi = -15; zi <= 15; ++zi) {
         for (int yi = -15; yi <= 15; ++yi) {
             for (int xi = -15; xi <= 15; ++xi) {

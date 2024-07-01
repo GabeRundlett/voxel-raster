@@ -122,11 +122,6 @@ void shade() {
         diffuse += max(0.0, dot(voxel.nrm, normalize(vec3(0, 0, 1))) * 0.4 + 0.6) * SKY_COL;
 
         vec3 out_col = albedo * diffuse;
-        // if (visbuffer_id64 == INVALID_MESHLET_INDEX) {
-        //     out_col = mix(out_col, vec3(1, 0, 1), 1.0);
-        // } else {
-        //     out_col = mix(out_col, SKY_COL, 0.9);
-        // }
 
         f_out = vec4(out_col, 1);
     }
@@ -139,7 +134,6 @@ void main() {
         return;
     }
 
-    // uint visbuffer_id = texelFetch(daxa_utexture2D(push.uses.visbuffer), ivec2(px), 0).x;
     uint64_t visbuffer64_val = imageLoad(daxa_u64image2D(push.uses.visbuffer64), ivec2(px)).x;
     visbuffer_id = uint(visbuffer64_val);
     depth = uintBitsToFloat(uint(visbuffer64_val >> uint64_t(32)));

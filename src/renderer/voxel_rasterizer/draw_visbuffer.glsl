@@ -195,7 +195,7 @@ layout(location = 0) in flat PackedVisbufferPayload v_payload;
 #if DISCARD_METHOD
 layout(location = 1) in vec2 v_uv;
 #endif
-// layout(location = 0) out uvec4 f_out;
+
 void main() {
 #if DISCARD_METHOD
     if (any(greaterThan(v_uv, vec2(1.0)))) {
