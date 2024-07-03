@@ -9,10 +9,20 @@
 struct TemporalBuffer {
     daxa::BufferId resource_id;
     daxa::TaskBuffer task_resource;
+    operator daxa::BufferId &() { return resource_id; }
+    operator daxa::TaskBuffer &() { return task_resource; }
+    operator daxa::BufferId const &() const { return resource_id; }
+    operator daxa::TaskBuffer const &() const { return task_resource; }
+    operator daxa::TaskBufferView() { return task_resource; }
 };
 struct TemporalImage {
     daxa::ImageId resource_id;
     daxa::TaskImage task_resource;
+    operator daxa::ImageId &() { return resource_id; }
+    operator daxa::TaskImage &() { return task_resource; }
+    operator daxa::ImageId const &() const { return resource_id; }
+    operator daxa::TaskImage const &() const { return task_resource; }
+    operator daxa::TaskImageView() { return task_resource; }
 };
 
 using TemporalBuffers = std::unordered_map<std::string, TemporalBuffer>;
@@ -56,6 +66,10 @@ struct GpuContext {
     void remove_temporal_image(std::string const &id);
     void remove_temporal_buffer(daxa::BufferId id);
     void remove_temporal_image(daxa::ImageId id);
+    void resize_temporal_buffer(std::string const &id, uint64_t new_size);
+    void resize_temporal_image(std::string const &id, daxa::Extent3D new_size);
+    void resize_temporal_buffer(daxa::BufferId id, uint64_t new_size);
+    void resize_temporal_image(daxa::ImageId id, daxa::Extent3D new_size);
 
     std::unordered_map<std::string, std::shared_ptr<AsyncManagedComputePipeline>> compute_pipelines;
     std::unordered_map<std::string, std::shared_ptr<AsyncManagedRayTracingPipeline>> ray_tracing_pipelines;

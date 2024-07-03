@@ -11,6 +11,7 @@
 #include <imgui.h>
 #include <voxels/voxel_mesh.inl>
 #include <voxels/voxel_world.hpp>
+#include <string_view>
 
 #include <daxa/daxa.hpp>
 #include <daxa/utils/pipeline_manager.hpp>
@@ -55,8 +56,7 @@ struct renderer::State {
 
     std::vector<Chunk> chunks_to_update;
     std::vector<VoxelChunk> chunks;
-    daxa::BufferId chunks_buffer;
-    daxa::TaskBuffer task_chunks;
+    TemporalBuffer chunks_buffer;
 
     std::vector<daxa::BufferId> tracked_brick_data;
     daxa::TaskBuffer task_brick_data;
@@ -112,7 +112,7 @@ void record_tasks(renderer::Renderer self) {
     });
     self->loop_task_graph.use_persistent_buffer(self->gpu_context.task_input_buffer);
     self->loop_task_graph.use_persistent_image(self->gpu_context.task_swapchain_image);
-    self->loop_task_graph.use_persistent_buffer(self->task_chunks);
+    self->loop_task_graph.use_persistent_buffer(self->chunks_buffer);
     self->loop_task_graph.use_persistent_buffer(self->task_brick_data);
 
     auto task_input_buffer = self->gpu_context.task_input_buffer;
@@ -126,7 +126,7 @@ void record_tasks(renderer::Renderer self) {
         .name = "GpuInputUploadTransferTask",
     });
 
-    auto [color, depth, motion_vectors] = render(&self->voxel_rasterizer, self->gpu_context, self->loop_task_graph, self->task_chunks, self->task_brick_data, self->gpu_input.chunk_n, self->draw_from_observer);
+    auto [color, depth, motion_vectors] = render(&self->voxel_rasterizer, self->gpu_context, self->loop_task_graph, self->chunks_buffer, self->task_brick_data, self->gpu_input.chunk_n, self->draw_from_observer);
 
     auto upscaled_image = [&]() {
         if (self->use_fsr2 && !self->draw_from_observer) {
@@ -268,19 +268,15 @@ void renderer::init(Renderer &self, void *glfw_window_ptr) {
     });
     ImGui_ImplGlfw_InitForVulkan((GLFWwindow *)glfw_window_ptr, true);
 
-    self->task_chunks = daxa::TaskBuffer({.name = "task_chunks"});
     self->task_brick_data = daxa::TaskBuffer({.name = "task_brick_data"});
 
-    self->chunks_buffer = self->gpu_context.device.create_buffer({
+    self->chunks_buffer = self->gpu_context.find_or_add_temporal_buffer({
         .size = sizeof(VoxelChunk) * 1,
         .name = "chunks_buffer",
     });
-    self->task_chunks.set_buffers({.buffers = std::array{self->chunks_buffer}});
 
     self->start_time = Clock::now();
     self->prev_time = Clock::now();
-
-    init(&self->voxel_rasterizer, self->gpu_context.device);
 
     self->debug_shapes.draw_from_observer = &self->draw_from_observer;
 }
@@ -288,12 +284,6 @@ void renderer::init(Renderer &self, void *glfw_window_ptr) {
 void renderer::deinit(Renderer self) {
     self->gpu_context.device.wait_idle();
     self->gpu_context.device.collect_garbage();
-
-    if (!self->chunks_buffer.is_empty()) {
-        self->gpu_context.device.destroy_buffer(self->chunks_buffer);
-    }
-
-    deinit(&self->voxel_rasterizer, self->gpu_context.device);
 
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
@@ -320,25 +310,20 @@ void renderer::on_resize(Renderer self, int size_x, int size_y) {
         return;
     }
 
-    on_resize(&self->voxel_rasterizer, self->gpu_context.device, size_x, size_y);
+    on_resize(&self->voxel_rasterizer, self->gpu_context, size_x, size_y);
 
     record_tasks(self);
 }
 
 void update(renderer::Renderer self) {
-    update(&self->voxel_rasterizer, self->gpu_context, self->task_chunks, self->task_brick_data);
+    if (self->gpu_input.chunk_n != 0) {
+        update(&self->voxel_rasterizer, self->gpu_context, self->chunks_buffer, self->task_brick_data);
+    }
 
     self->task_brick_data.set_buffers({.buffers = self->tracked_brick_data});
     auto new_chunk_n = self->tracked_brick_data.size();
     if (new_chunk_n != self->gpu_input.chunk_n) {
-        if (!self->chunks_buffer.is_empty()) {
-            self->gpu_context.device.destroy_buffer(self->chunks_buffer);
-        }
-        self->chunks_buffer = self->gpu_context.device.create_buffer({
-            .size = sizeof(VoxelChunk) * new_chunk_n,
-            .name = "chunks_buffer",
-        });
-        self->task_chunks.set_buffers({.buffers = std::array{self->chunks_buffer}});
+        self->gpu_context.resize_temporal_buffer(self->chunks_buffer, sizeof(VoxelChunk) * new_chunk_n);
     }
     self->gpu_input.chunk_n = new_chunk_n;
     {
@@ -347,10 +332,10 @@ void update(renderer::Renderer self) {
             .name = "update_task_graph",
         });
         temp_task_graph.use_persistent_buffer(self->task_brick_data);
-        temp_task_graph.use_persistent_buffer(self->task_chunks);
+        temp_task_graph.use_persistent_buffer(self->chunks_buffer);
 
         temp_task_graph.add_task({
-            .attachments = {daxa::inl_attachment(daxa::TaskBufferAccess::TRANSFER_WRITE, self->task_chunks)},
+            .attachments = {daxa::inl_attachment(daxa::TaskBufferAccess::TRANSFER_WRITE, self->chunks_buffer)},
             .task = [=](daxa::TaskInterface ti) {
                 auto staging_input_buffer = ti.device.create_buffer({
                     .size = sizeof(VoxelChunk) * new_chunk_n,
@@ -362,7 +347,7 @@ void update(renderer::Renderer self) {
                 memcpy(buffer_ptr, self->chunks.data(), sizeof(VoxelChunk) * new_chunk_n);
                 ti.recorder.copy_buffer_to_buffer({
                     .src_buffer = staging_input_buffer,
-                    .dst_buffer = ti.get(self->task_chunks).ids[0],
+                    .dst_buffer = ti.get(self->chunks_buffer).ids[0],
                     .dst_offset = 0,
                     .size = sizeof(VoxelChunk) * new_chunk_n,
                 });
@@ -485,6 +470,80 @@ void render_ui(renderer::Renderer self) {
         ImGui::Text(" C      | Toggle Fast-placement");
         ImGui::Text(" LMB    | Break voxels");
         ImGui::Text(" RMB    | Place voxels");
+    }
+
+    {
+        auto format_to_pixel_size = [](daxa::Format format) -> daxa_u32 {
+            switch (format) {
+            case daxa::Format::R16G16B16_SFLOAT: return 3 * 2;
+            case daxa::Format::R16G16B16A16_SFLOAT: return 4 * 2;
+            case daxa::Format::R32G32B32_SFLOAT: return 3 * 4;
+            default:
+            case daxa::Format::R32G32B32A32_SFLOAT: return 4 * 4;
+            }
+        };
+
+        auto result_size = size_t{};
+        struct ResourceInfo {
+            std::string_view type;
+            std::string name;
+            uint64_t size;
+        };
+        auto debug_gpu_resource_infos = std::vector<ResourceInfo>{};
+
+        auto image_size = [self, &format_to_pixel_size, &result_size, &debug_gpu_resource_infos](daxa::ImageId image) {
+            if (image.is_empty()) {
+                return;
+            }
+            auto image_info = self->gpu_context.device.info_image(image).value();
+            auto size = format_to_pixel_size(image_info.format) * image_info.size.x * image_info.size.y * image_info.size.z;
+            debug_gpu_resource_infos.push_back({
+                .type = "image",
+                .name = image_info.name.data(),
+                .size = size,
+            });
+            result_size += size;
+        };
+        auto buffer_size = [self, &result_size, &debug_gpu_resource_infos](daxa::BufferId buffer, bool individual = true) -> size_t {
+            if (buffer.is_empty()) {
+                return 0;
+            }
+            auto buffer_info = self->gpu_context.device.info_buffer(buffer).value();
+            auto size = buffer_info.size;
+            if (individual) {
+                debug_gpu_resource_infos.push_back({
+                    .type = "buffer",
+                    .name = buffer_info.name.data(),
+                    .size = buffer_info.size,
+                });
+            }
+            result_size += buffer_info.size;
+            return buffer_info.size;
+        };
+        for (auto &[name, temporal_buffer] : self->gpu_context.temporal_buffers) {
+            buffer_size(temporal_buffer.resource_id);
+        }
+        for (auto &[name, temporal_image] : self->gpu_context.temporal_images) {
+            image_size(temporal_image.resource_id);
+        }
+        buffer_size(self->gpu_context.input_buffer);
+
+        {
+            auto size = self->loop_task_graph.get_transient_memory_size();
+            debug_gpu_resource_infos.push_back({
+                .type = "buffer",
+                .name = "Per-frame Transient Memory Buffer",
+                .size = size,
+            });
+            result_size += size;
+        }
+
+        std::sort(debug_gpu_resource_infos.begin(), debug_gpu_resource_infos.end(), [](auto const &a, auto const &b) { return a.size > b.size; });
+
+        ImGui::Text("RESOURCES (%f MB)", float(result_size) / 1'000'000.0f);
+        for (auto const &info : debug_gpu_resource_infos) {
+            ImGui::Text("  %s %f MB (%f %%)", info.name.data(), float(info.size) / 1'000'000.0f, float(info.size) / float(result_size) * 100.0f);
+        }
     }
     ImGui::End();
 

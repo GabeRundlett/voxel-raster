@@ -77,7 +77,7 @@ auto square_wave(float t) -> float {
 [[nodiscard]] auto Sound::sample(float time) const -> float {
     int channel = 0;
     int sample_index = int(time * float(audioFile.getSampleRate()));
-    if (sample_index > audioFile.getNumSamplesPerChannel()) {
+    if (sample_index >= audioFile.getNumSamplesPerChannel()) {
         return 0;
     }
     return audioFile.samples[channel][sample_index];
