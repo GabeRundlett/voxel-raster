@@ -22,8 +22,8 @@ struct Ray {
     vec3 direction;
 };
 
-#define VOXEL_SIZE (0.5 / VOXEL_BRICK_SIZE)
-#define VOXEL_SCL (2.0 * VOXEL_BRICK_SIZE)
+#define VOXEL_SIZE (1.0 / 16.0)
+#define VOXEL_SCL (16.0)
 
 ivec3 unpack_hit_attribute(PackedHitAttribute hit_attrib) {
     ivec3 result;

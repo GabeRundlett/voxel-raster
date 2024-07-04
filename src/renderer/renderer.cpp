@@ -321,6 +321,8 @@ void renderer::init(Renderer &self, void *glfw_window_ptr) {
 void renderer::deinit(Renderer self) {
     self->gpu_context.device.wait_idle();
     self->gpu_context.device.collect_garbage();
+    self->gpu_context.device.destroy_tlas(self->tlas);
+    self->gpu_context.device.destroy_buffer(self->tlas_buffer);
 
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
@@ -353,12 +355,12 @@ void renderer::on_resize(Renderer self, int size_x, int size_y) {
 }
 
 void update(renderer::Renderer self) {
+    self->task_brick_data.set_buffers({.buffers = self->tracked_brick_data});
+    self->task_chunk_blases.set_blas({.blas = self->tracked_blases});
+
     if (self->gpu_input.chunk_n != 0) {
         update(&self->voxel_rasterizer, self->gpu_context, self->chunks_buffer, self->task_brick_data);
     }
-
-    self->task_brick_data.set_buffers({.buffers = self->tracked_brick_data});
-    self->task_chunk_blases.set_blas({.blas = self->tracked_blases});
 
     auto new_chunk_n = self->tracked_brick_data.size();
     if (new_chunk_n != self->gpu_input.chunk_n) {
@@ -408,7 +410,7 @@ void update(renderer::Renderer self) {
         }
         self->tlas_buffer = self->gpu_context.device.create_buffer({
             .size = self->tlas_build_sizes.acceleration_structure_size,
-            .name = "tlas build scratch buffer",
+            .name = "tlas_buffer",
         });
         self->tlas = self->gpu_context.device.create_tlas_from_buffer({
             .tlas_info = {
@@ -555,7 +557,7 @@ void update(renderer::Renderer self) {
             .task = [=](daxa::TaskInterface const &ti) {
                 auto tlas_scratch_buffer = ti.device.create_buffer({
                     .size = self->tlas_build_sizes.build_scratch_size,
-                    .name = "tlas build scratch buffer",
+                    .name = "tlas_scratch_buffer",
                 });
                 ti.recorder.destroy_buffer_deferred(tlas_scratch_buffer);
                 self->tlas_build_info.dst_tlas = self->tlas;
@@ -585,6 +587,8 @@ void render_ui(renderer::Renderer self) {
     ImGui::NewFrame();
     ImGui::Begin("Debug");
     ImGui::Text("%.3f ms (%.3f fps)", avg_delta_time * 1000.0f, 1.0f / avg_delta_time);
+    ImGui::SameLine();
+    ImGui::Text(self->draw_with_rt ? "[RT ON]" : "[RT OFF]");
     ImGui::Text("m pos = %.3f %.3f %.3f", self->gpu_input.cam.view_to_world.w.x, self->gpu_input.cam.view_to_world.w.y, self->gpu_input.cam.view_to_world.w.z);
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip("Main camera position");
@@ -792,6 +796,7 @@ auto renderer::create_chunk(Renderer self) -> Chunk {
 void renderer::destroy_chunk(Renderer self, Chunk chunk) {
     if (!chunk->brick_data.is_empty()) {
         self->gpu_context.device.destroy_buffer(chunk->brick_data);
+        self->gpu_context.device.destroy_buffer(chunk->blas_buffer);
     }
 }
 
@@ -867,40 +872,13 @@ void renderer::render_chunk(Renderer self, Chunk chunk, float const *pos) {
             .size = total_size,
             .name = "brick_data",
         });
-    }
 
-    // The buffer will be at the current size of tracked buffers.
-    auto tracked_chunk_index = self->tracked_brick_data.size();
-    self->tracked_brick_data.push_back(chunk->brick_data);
-    self->tracked_blases.push_back(chunk->blas);
-
-    if (tracked_chunk_index != chunk->tracked_index) {
-        chunk->tracked_index = tracked_chunk_index;
-        self->needs_update = true;
-
-        if (tracked_chunk_index >= self->chunks.size()) {
-            self->chunks.resize(tracked_chunk_index + 1);
-        }
-    }
-
-    self->chunks[tracked_chunk_index] = VoxelChunk{
-        .bitmasks = self->gpu_context.device.get_device_address(chunk->brick_data).value() + bitmasks_offset,
-        .meshes = self->gpu_context.device.get_device_address(chunk->brick_data).value() + meshes_offset,
-        .pos_scl = self->gpu_context.device.get_device_address(chunk->brick_data).value() + pos_scl_offset,
-        .aabbs = self->gpu_context.device.get_device_address(chunk->brick_data).value() + aabb_offset,
-        .attribs = self->gpu_context.device.get_device_address(chunk->brick_data).value() + attribs_offset,
-        .flags = self->gpu_context.device.get_device_address(chunk->brick_data).value() + flags_offset,
-        .brick_n = uint32_t(brick_count),
-        .pos = {pos[0], pos[1], pos[2]},
-    };
-
-    if (chunk->needs_update) {
         // recreate blas
         auto acceleration_structure_scratch_offset_alignment = self->gpu_context.device.properties().acceleration_structure_properties.value().min_acceleration_structure_scratch_offset_alignment;
         const daxa_u32 ACCELERATION_STRUCTURE_BUILD_OFFSET_ALIGMENT = 256; // NOTE: Requested by the spec
         auto geometry = std::array{
             daxa::BlasAabbGeometryInfo{
-                .data = self->chunks[tracked_chunk_index].aabbs,
+                .data = self->gpu_context.device.get_device_address(chunk->brick_data).value() + aabb_offset,
                 .stride = sizeof(Aabb),
                 .count = static_cast<uint32_t>(brick_count),
                 .flags = daxa::GeometryFlagBits::OPAQUE,
@@ -937,6 +915,31 @@ void renderer::render_chunk(Renderer self, Chunk chunk, float const *pos) {
         });
         chunk->blas_build_info.dst_blas = chunk->blas;
     }
+
+    // The buffer will be at the current size of tracked buffers.
+    auto tracked_chunk_index = self->tracked_brick_data.size();
+    self->tracked_brick_data.push_back(chunk->brick_data);
+    self->tracked_blases.push_back(chunk->blas);
+
+    if (tracked_chunk_index != chunk->tracked_index) {
+        chunk->tracked_index = tracked_chunk_index;
+        self->needs_update = true;
+
+        if (tracked_chunk_index >= self->chunks.size()) {
+            self->chunks.resize(tracked_chunk_index + 1);
+        }
+    }
+
+    self->chunks[tracked_chunk_index] = VoxelChunk{
+        .bitmasks = self->gpu_context.device.get_device_address(chunk->brick_data).value() + bitmasks_offset,
+        .meshes = self->gpu_context.device.get_device_address(chunk->brick_data).value() + meshes_offset,
+        .pos_scl = self->gpu_context.device.get_device_address(chunk->brick_data).value() + pos_scl_offset,
+        .aabbs = self->gpu_context.device.get_device_address(chunk->brick_data).value() + aabb_offset,
+        .attribs = self->gpu_context.device.get_device_address(chunk->brick_data).value() + attribs_offset,
+        .flags = self->gpu_context.device.get_device_address(chunk->brick_data).value() + flags_offset,
+        .brick_n = uint32_t(brick_count),
+        .pos = {pos[0], pos[1], pos[2]},
+    };
 
     if (chunk->needs_update) {
         self->needs_update = true;

@@ -107,9 +107,9 @@ const auto RANDOM_VALUES = []() {
     return result;
 }();
 
-constexpr int32_t CHUNK_NX = 16;
-constexpr int32_t CHUNK_NY = 16;
-constexpr int32_t CHUNK_NZ = 16;
+constexpr int32_t CHUNK_NX = 2048 / VOXEL_CHUNK_SIZE;
+constexpr int32_t CHUNK_NY = 2048 / VOXEL_CHUNK_SIZE;
+constexpr int32_t CHUNK_NZ = 2048 / VOXEL_CHUNK_SIZE;
 constexpr int32_t CHUNK_LEVELS = 1;
 
 static_assert(CHUNK_NX * CHUNK_NY * CHUNK_NZ * CHUNK_LEVELS <= MAX_CHUNK_COUNT);
