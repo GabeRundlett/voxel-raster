@@ -194,7 +194,7 @@ struct GpuContext {
         }
         shader_id.append("_");
         if constexpr (requires(Task<TaskHeadT, PushT, InfoT, PipelineT> t) { t.max_ray_recursion_depth; }) {
-            shader_id.append(std::to_string(*task.max_ray_recursion_depth));
+            shader_id.append(std::to_string(task.max_ray_recursion_depth));
         }
         auto pipe_iter = find_or_add_pipeline<TaskHeadT, PushT, InfoT, PipelineT>(task, shader_id);
         task.pipeline = pipe_iter->second;

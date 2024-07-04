@@ -70,10 +70,17 @@ struct BrickInstanceAllocatorState {
 };
 DAXA_DECL_BUFFER_PTR(BrickInstanceAllocatorState)
 
+struct Aabb {
+    daxa_f32vec3 minimum;
+    daxa_f32vec3 maximum;
+};
+DAXA_DECL_BUFFER_PTR(Aabb)
+
 struct VoxelChunk {
     daxa_BufferPtr(VoxelBrickBitmask) bitmasks;
     daxa_BufferPtr(VoxelBrickMesh) meshes;
     daxa_BufferPtr(daxa_i32vec4) pos_scl;
+    daxa_BufferPtr(Aabb) aabbs;
     daxa_BufferPtr(VoxelRenderAttribBrick) attribs;
     daxa_BufferPtr(daxa_u32) flags;
     daxa_u32 brick_n;

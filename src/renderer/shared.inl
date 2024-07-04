@@ -40,4 +40,3 @@ struct PostProcessingPush {
     daxa_u32vec2 image_size;
     DAXA_TH_BLOB(PostProcessing, uses)
 };
-

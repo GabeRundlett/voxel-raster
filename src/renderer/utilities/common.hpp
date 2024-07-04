@@ -81,3 +81,7 @@ inline constexpr auto find_next_lower_po2(uint32_t v) -> uint32_t {
     auto const msb = find_msb(v);
     return 1u << ((msb == 0 ? 1 : msb) - 1);
 }
+
+inline auto get_aligned(daxa_u64 operand, daxa_u64 granularity) -> daxa_u64 {
+    return ((operand + (granularity - 1)) & ~(granularity - 1));
+}

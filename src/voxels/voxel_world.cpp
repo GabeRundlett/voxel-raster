@@ -575,12 +575,12 @@ struct Ray {
     vec3 direction;
 };
 
-struct Aabb {
+struct GlmAabb {
     vec3 minimum;
     vec3 maximum;
 };
 
-float hitAabb(const Aabb aabb, const Ray r) {
+float hitAabb(const GlmAabb aabb, const Ray r) {
     if (all(greaterThanEqual(r.origin, aabb.minimum)) && all(lessThanEqual(r.origin, aabb.maximum))) {
         return 0.0f;
     }
@@ -838,7 +838,7 @@ auto dda_voxels(voxel_world::VoxelWorld self, Ray ray, int max_iter, float max_d
     using Box = std::array<vec3, 3>;
 
     float tHit = -1;
-    Aabb aabb = {{0, 0, 0}, glm::vec3(CHUNK_NX, CHUNK_NY, CHUNK_NZ) * float(VOXEL_CHUNK_SIZE)};
+    GlmAabb aabb = {{0, 0, 0}, glm::vec3(CHUNK_NX, CHUNK_NY, CHUNK_NZ) * float(VOXEL_CHUNK_SIZE)};
     tHit = hitAabb(aabb, ray);
     const float BIAS = uintBitsToFloat(0x3f800040); // uintBitsToFloat(0x3f800040) == 1.00000762939453125
     ray.origin += ray.direction * tHit * BIAS;

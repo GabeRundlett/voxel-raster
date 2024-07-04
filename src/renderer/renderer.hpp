@@ -26,6 +26,7 @@ namespace renderer {
     void on_resize(Renderer self, int size_x, int size_y);
     void draw(Renderer self, player::Player player, voxel_world::VoxelWorld voxel_world);
     void toggle_fsr2(Renderer self);
+    void toggle_rt(Renderer self);
 
     struct Line {
         float p0_x, p0_y, p0_z;

@@ -149,12 +149,11 @@ Voxel load_voxel(daxa_BufferPtr(GpuInput) gpu_input, daxa_BufferPtr(VoxelChunk) 
     // if (bit != 0) {
     //     return unpack_voxel(deref(advance(deref(voxel_chunk).attribs, brick_index)).packed_voxels[voxel_index]);
     // } else {
-    //     daxa_BufferPtr(ivec4) position = daxa_BufferPtr(ivec4)(deref(advance(voxel_chunk).pos_scl, brick_index));
+    //     daxa_BufferPtr(ivec4) position = daxa_BufferPtr(ivec4)(advance(deref(voxel_chunk).pos_scl, brick_index));
     //     ivec3 pos = deref(position).xyz;
     //     float t = deref(gpu_input).time * 3 + float(uint((uint64_t(position) / 16)) & 0xffff) * 4;
     //     vec3 offset = vec3(sin(t), cos(t), sin(t * 0.71)) * 1.0;
     //     ivec3 p = pos * int(VOXEL_BRICK_SIZE) + ivec3(voxel_pos);
-
     //     Voxel result;
     //     result.nrm = normalize(vec3(p & 7) - 4.0 + 0.5 - offset);
     //     result.col = vec3(223, 152, 7) / 255;
