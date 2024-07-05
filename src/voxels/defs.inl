@@ -30,7 +30,14 @@
 #define RANDOM_BUFFER_SIZE_LOG2 8
 #define RANDOM_BUFFER_SIZE (1 << RANDOM_BUFFER_SIZE_LOG2)
 
+#define LOG2_VOXELS_PER_METER 4
+#define VOXEL_SCL (1 << LOG2_VOXELS_PER_METER)
+#define VOXEL_SIZE (1.0f / VOXEL_SCL)
+#define PER_VOXEL_SHADING 1
+
 #if defined(__cplusplus)
+#undef VOXEL_SCL
+#define VOXEL_SCL float(1 << LOG2_VOXELS_PER_METER)
 using RandomCtx = unsigned char const *;
 #elif ISPC
 #define RandomCtx const uint8 *uniform

@@ -22,9 +22,6 @@ struct Ray {
     vec3 direction;
 };
 
-#define VOXEL_SIZE (1.0 / 16.0)
-#define VOXEL_SCL (16.0)
-
 ivec3 unpack_hit_attribute(PackedHitAttribute hit_attrib) {
     ivec3 result;
     result.x = int(hit_attrib.data % VOXEL_BRICK_SIZE);
@@ -53,7 +50,7 @@ RayPayload unpack_ray_payload(PackedRayPayload payload) {
     return result;
 }
 
-float hitAabb(const Aabb aabb, const Ray r) {
+float hitAabb(const Aabb aabb, const Ray r, bool guaranteed) {
     if (all(greaterThanEqual(r.origin, aabb.minimum)) && all(lessThanEqual(r.origin, aabb.maximum))) {
         return 0.0;
     }
@@ -64,10 +61,17 @@ float hitAabb(const Aabb aabb, const Ray r) {
     vec3 tmax = max(ttop, tbot);
     float t0 = max(tmin.x, max(tmin.y, tmin.z));
     float t1 = min(tmax.x, min(tmax.y, tmax.z));
-    return t1 > max(t0, 0.0) ? t0 : -1.0;
+    if (guaranteed) {
+        return t0;
+    } else {
+        return t1 >= max(t0, 0.0) ? t0 : -1.0;
+    }
 }
 
-float hitAabb_midpoint(const Aabb aabb, const Ray r) {
+vec3 hit_aabb_nrm(const Aabb aabb, const Ray r, bool guaranteed) {
+    if (all(greaterThanEqual(r.origin, aabb.minimum)) && all(lessThanEqual(r.origin, aabb.maximum))) {
+        return vec3(0.0);
+    }
     vec3 invDir = 1.0 / r.direction;
     vec3 tbot = invDir * (aabb.minimum - r.origin);
     vec3 ttop = invDir * (aabb.maximum - r.origin);
@@ -75,8 +79,20 @@ float hitAabb_midpoint(const Aabb aabb, const Ray r) {
     vec3 tmax = max(ttop, tbot);
     float t0 = max(tmin.x, max(tmin.y, tmin.z));
     float t1 = min(tmax.x, min(tmax.y, tmax.z));
-    return (t0 + t1) * 0.5;
+
+    if (!guaranteed && t1 < max(t0, 0.0)) {
+        return vec3(-1);
+    }
+
+    if (t0 == tmin.x) {
+        return vec3(-sign(r.direction.x), 0, 0);
+    } else if (t0 == tmin.y) {
+        return vec3(0, -sign(r.direction.y), 0);
+    } else {
+        return vec3(0, 0, -sign(r.direction.z));
+    }
 }
+
 
 #if DAXA_SHADER_STAGE == DAXA_SHADER_STAGE_INTERSECTION || DAXA_SHADER_STAGE == DAXA_SHADER_STAGE_CLOSEST_HIT
 hitAttributeEXT PackedHitAttribute hit_attrib;
@@ -113,7 +129,7 @@ void intersect_voxel_brick() {
     float tHit = -1;
     daxa_BufferPtr(VoxelChunk) voxel_chunk = advance(push.uses.chunks, INSTANCE_CUSTOM_INDEX);
     Aabb aabb = deref(advance(deref(voxel_chunk).aabbs, PRIMITIVE_INDEX));
-    tHit = hitAabb(aabb, ray);
+    tHit = hitAabb(aabb, ray, false);
     const float BIAS = uintBitsToFloat(0x3f800040); // uintBitsToFloat(0x3f800040) == 1.00000762939453125
     ray.origin += ray.direction * tHit * BIAS;
     if (tHit >= 0) {
@@ -130,7 +146,7 @@ void intersect_voxel_brick() {
                          uint(mapPos.x), uint(mapPos.y), uint(mapPos.z)) == 1) {
                 aabb.minimum += vec3(mapPos) * VOXEL_SIZE;
                 aabb.maximum = aabb.minimum + VOXEL_SIZE;
-                tHit += hitAabb_midpoint(aabb, ray);
+                tHit += hitAabb(aabb, ray, true);
 #if DAXA_SHADER_STAGE == DAXA_SHADER_STAGE_INTERSECTION
                 hit_attrib = pack_hit_attribute(mapPos);
                 reportIntersectionEXT(tHit, 0);

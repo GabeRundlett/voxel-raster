@@ -109,11 +109,17 @@ void init(AppState &self) {
             if (!self.paused) {
                 on_key(self.player, key, action);
             }
+            if (key == GLFW_KEY_V && action == GLFW_PRESS) {
+                toggle_vsync(self.renderer);
+            }
             if (key == GLFW_KEY_L && action == GLFW_PRESS) {
                 toggle_fsr2(self.renderer);
             }
             if (key == GLFW_KEY_R && action == GLFW_PRESS) {
                 toggle_rt(self.renderer);
+            }
+            if (key == GLFW_KEY_K && action == GLFW_PRESS) {
+                toggle_shadows(self.renderer);
             }
         });
 

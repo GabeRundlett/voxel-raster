@@ -285,9 +285,6 @@ float const standing_height = 1.75f;
 float const crouch_height = 1.0f;
 float const jump_strength = 1.0f;
 
-float const VOXEL_SCL = 16.0f;
-float const VOXEL_SIZE = 1.0f / VOXEL_SCL;
-
 glm::vec3 const eye_offset = glm::vec3(0, 0, -0.2f);
 
 using Line = std::array<glm::vec3, 3>;
@@ -473,8 +470,8 @@ void player::update(Player self, float dt) {
                             // TODO: Add debug condition
                             if (self->is_third_person) {
                                 auto cube = Box{
-                                    floor(p * VOXEL_SCL + 0.0f) * VOXEL_SIZE,
-                                    floor(p * VOXEL_SCL + 1.0f) * VOXEL_SIZE,
+                                    floor(p * float(VOXEL_SCL) + 0.0f) * VOXEL_SIZE,
+                                    floor(p * float(VOXEL_SCL) + 1.0f) * VOXEL_SIZE,
                                     {1.0f, 0.0f, 0.0f},
                                 };
                                 submit_debug_box_lines(g_renderer, (renderer::Box const *)&cube, 1);
@@ -636,8 +633,8 @@ void player::update(Player self, float dt) {
     self->ray_cast = ray_cast(g_voxel_world, {&ray_pos.x, &self->main.forward.x});
     if (self->ray_cast.distance != -1.0f && self->ray_cast.distance < 8.0f) {
         auto cube = Box{
-            glm::vec3(self->ray_cast.voxel_x, self->ray_cast.voxel_y, self->ray_cast.voxel_z) / 16.0f,
-            glm::vec3(self->ray_cast.voxel_x + 1, self->ray_cast.voxel_y + 1, self->ray_cast.voxel_z + 1) / 16.0f,
+            glm::vec3(self->ray_cast.voxel_x, self->ray_cast.voxel_y, self->ray_cast.voxel_z) * VOXEL_SIZE,
+            glm::vec3(self->ray_cast.voxel_x + 1, self->ray_cast.voxel_y + 1, self->ray_cast.voxel_z + 1) * VOXEL_SIZE,
             {1.0f, 1.0f, 1.0f},
         };
         submit_debug_box_lines(g_renderer, (renderer::Box const *)&cube, 1);

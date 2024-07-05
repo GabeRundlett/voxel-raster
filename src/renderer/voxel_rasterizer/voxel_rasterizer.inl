@@ -101,6 +101,7 @@ DAXA_TH_IMAGE_INDEX(COMPUTE_SHADER_SAMPLED, REGULAR_2D, debug_overdraw)
 #endif
 DAXA_TH_IMAGE_INDEX(COMPUTE_SHADER_STORAGE_WRITE_ONLY, REGULAR_2D, color)
 DAXA_TH_IMAGE_INDEX(COMPUTE_SHADER_STORAGE_WRITE_ONLY, REGULAR_2D, depth)
+DAXA_TH_IMAGE_INDEX(COMPUTE_SHADER_STORAGE_WRITE_ONLY, REGULAR_2D, normal)
 DAXA_TH_IMAGE_INDEX(COMPUTE_SHADER_STORAGE_WRITE_ONLY, REGULAR_2D, motion_vectors)
 DAXA_DECL_TASK_HEAD_END
 
@@ -375,7 +376,7 @@ namespace renderer {
         temp_task_graph.execute({});
     }
 
-    auto render(VoxelRasterizer *self, GpuContext &gpu_context, daxa::TaskGraph &task_graph, daxa::TaskBufferView task_chunks, daxa::TaskBufferView task_brick_data, uint32_t &chunk_n, bool &draw_from_observer) -> std::array<daxa::TaskImageView, 3> {
+    auto render(VoxelRasterizer *self, GpuContext &gpu_context, daxa::TaskGraph &task_graph, daxa::TaskBufferView task_chunks, daxa::TaskBufferView task_brick_data, uint32_t &chunk_n, bool &draw_from_observer) -> std::array<daxa::TaskImageView, 4> {
         self->brick_meshlet_allocator = gpu_context.find_or_add_temporal_buffer({
             // + 1 for the state at index 0
             .size = sizeof(VoxelMeshlet) * (MAX_MESHLET_COUNT + 1),
@@ -667,6 +668,11 @@ namespace renderer {
             .size = {gpu_context.render_resolution.x, gpu_context.render_resolution.y, 1},
             .name = "depth",
         });
+        auto normal = task_graph.create_transient_image({
+            .format = daxa::Format::R16G16_SNORM,
+            .size = {gpu_context.render_resolution.x, gpu_context.render_resolution.y, 1},
+            .name = "normal",
+        });
         auto motion_vectors = task_graph.create_transient_image({
             .format = daxa::Format::R16G16_SFLOAT,
             .size = {gpu_context.render_resolution.x, gpu_context.render_resolution.y, 1},
@@ -688,6 +694,7 @@ namespace renderer {
 #endif
                 daxa::attachment_view(ShadeVisbuffer::AT.color, color),
                 daxa::attachment_view(ShadeVisbuffer::AT.depth, depth),
+                daxa::attachment_view(ShadeVisbuffer::AT.normal, normal),
                 daxa::attachment_view(ShadeVisbuffer::AT.motion_vectors, motion_vectors),
             },
             .callback_ = [](daxa::TaskInterface const &ti, daxa::ComputePipeline &pipeline, ShadeVisbufferPush &push, NoTaskInfo const &) {
@@ -715,7 +722,7 @@ namespace renderer {
             .name = "copy state",
         });
 
-        return {color, depth, motion_vectors};
+        return {color, depth, normal, motion_vectors};
     }
 } // namespace renderer
 

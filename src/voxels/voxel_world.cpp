@@ -133,11 +133,11 @@ auto generate_chunk(voxel_world::VoxelWorld self, int32_t chunk_xi, int32_t chun
 
     {
         auto p0 = glm::vec3{
-            (float((chunk_xi * VOXEL_CHUNK_SIZE) << level) + 0.5f) / 16.0f,
-            (float((chunk_yi * VOXEL_CHUNK_SIZE) << level) + 0.5f) / 16.0f,
-            (float((chunk_zi * VOXEL_CHUNK_SIZE) << level) + 0.5f) / 16.0f,
+            (float((chunk_xi * VOXEL_CHUNK_SIZE) << level) + 0.5f) * VOXEL_SIZE,
+            (float((chunk_yi * VOXEL_CHUNK_SIZE) << level) + 0.5f) * VOXEL_SIZE,
+            (float((chunk_zi * VOXEL_CHUNK_SIZE) << level) + 0.5f) * VOXEL_SIZE,
         };
-        auto p1 = p0 + (BRICK_CHUNK_SIZE * VOXEL_BRICK_SIZE << level) / 16.0f;
+        auto p1 = p0 + (BRICK_CHUNK_SIZE * VOXEL_BRICK_SIZE << level) * VOXEL_SIZE;
         auto minmax = voxel_minmax_value_cpp(&noise_settings, RANDOM_VALUES.data(), p0.x, p0.y, p0.z, p1.x, p1.y, p1.z);
         if (minmax.min >= 0.0f || minmax.max < 0.0f) {
             // uniform
@@ -171,11 +171,11 @@ auto generate_chunk(voxel_world::VoxelWorld self, int32_t chunk_xi, int32_t chun
 
                 {
                     auto p0 = glm::vec3{
-                        (float((brick_xi * VOXEL_BRICK_SIZE + chunk_xi * VOXEL_CHUNK_SIZE) << level) + 0.5f) / 16.0f,
-                        (float((brick_yi * VOXEL_BRICK_SIZE + chunk_yi * VOXEL_CHUNK_SIZE) << level) + 0.5f) / 16.0f,
-                        (float((brick_zi * VOXEL_BRICK_SIZE + chunk_zi * VOXEL_CHUNK_SIZE) << level) + 0.5f) / 16.0f,
+                        (float((brick_xi * VOXEL_BRICK_SIZE + chunk_xi * VOXEL_CHUNK_SIZE) << level) + 0.5f) * VOXEL_SIZE,
+                        (float((brick_yi * VOXEL_BRICK_SIZE + chunk_yi * VOXEL_CHUNK_SIZE) << level) + 0.5f) * VOXEL_SIZE,
+                        (float((brick_zi * VOXEL_BRICK_SIZE + chunk_zi * VOXEL_CHUNK_SIZE) << level) + 0.5f) * VOXEL_SIZE,
                     };
-                    auto p1 = p0 + (VOXEL_BRICK_SIZE << level) / 16.0f;
+                    auto p1 = p0 + (VOXEL_BRICK_SIZE << level) * VOXEL_SIZE;
                     auto minmax = voxel_minmax_value_cpp(&noise_settings, RANDOM_VALUES.data(), p0.x, p0.y, p0.z, p1.x, p1.y, p1.z);
                     if (minmax.min >= 0.0f || minmax.max < 0.0f) {
                         // uniform
@@ -346,7 +346,7 @@ auto generate_chunk2(voxel_world::VoxelWorld self, int32_t chunk_xi, int32_t chu
 
                 bool exposed = brick_metadata.exposed_nx || brick_metadata.exposed_px || brick_metadata.exposed_ny || brick_metadata.exposed_py || brick_metadata.exposed_nz || brick_metadata.exposed_pz;
 
-                auto position = glm::ivec4{brick_xi, brick_yi, brick_zi, -4 + level};
+                auto position = glm::ivec4{brick_xi, brick_yi, brick_zi, -LOG2_VOXELS_PER_METER + level};
                 if (brick_metadata.has_voxel && exposed) {
                     // generate surface brick data
                     auto &render_attrib_brick = chunk->voxel_brick_render_attribs[brick_index];
@@ -848,19 +848,19 @@ auto dda_voxels(voxel_world::VoxelWorld self, Ray ray, int max_iter, float max_d
     }
 
     ivec3 bmin = ivec3(floor(aabb.minimum));
-    ivec3 mapPos = clamp(ivec3(floor(ray.origin * 16.0f)) - bmin, ivec3(aabb.minimum), ivec3(aabb.maximum));
+    ivec3 mapPos = clamp(ivec3(floor(ray.origin * VOXEL_SCL)) - bmin, ivec3(aabb.minimum), ivec3(aabb.maximum));
     vec3 deltaDist = abs(vec3(length(ray.direction)) / ray.direction);
-    vec3 sideDist = (sign(ray.direction) * (vec3(mapPos + bmin) - ray.origin * 16.0f) + (sign(ray.direction) * 0.5f) + 0.5f) * deltaDist;
+    vec3 sideDist = (sign(ray.direction) * (vec3(mapPos + bmin) - ray.origin * VOXEL_SCL) + (sign(ray.direction) * 0.5f) + 0.5f) * deltaDist;
     ivec3 rayStep = ivec3(sign(ray.direction));
     bvec3 mask = lessThanEqual(sideDist, min(vec3(sideDist.y, sideDist.z, sideDist.x), vec3(sideDist.z, sideDist.x, sideDist.y)));
 
-    // vec3 prev_pos = (vec3(mapPos) + 0.5f) / 16.0f;
+    // vec3 prev_pos = (vec3(mapPos) + 0.5f) * VOXEL_SIZE;
     const int max_steps = min(max_iter, int(aabb.maximum.x + aabb.maximum.y + aabb.maximum.z));
 
     for (int i = 0; i < max_steps; i++) {
         if (get_voxel_is_solid(self, mapPos) == true) {
-            aabb.minimum += vec3(mapPos) * (1.0f / 16.0f);
-            aabb.maximum = aabb.minimum + (1.0f / 16.0f);
+            aabb.minimum += vec3(mapPos) * VOXEL_SIZE;
+            aabb.maximum = aabb.minimum + VOXEL_SIZE;
             tHit += hitAabb(aabb, ray);
 
             // int x_face = (mask.x * ((rayStep.x + 1) / 2 + 0));
@@ -881,10 +881,10 @@ auto dda_voxels(voxel_world::VoxelWorld self, Ray ray, int max_iter, float max_d
             break;
         }
 
-        // vec3 next_pos = (vec3(mapPos) + 0.5f) / 16.0f;
+        // vec3 next_pos = (vec3(mapPos) + 0.5f) * VOXEL_SIZE;
         // auto line = Line{prev_pos, next_pos, {1.0f, 1.0f, 1.0f}};
         // submit_debug_lines(g_renderer, (renderer::Line const *)&line, 1);
-        // auto pt = Point{next_pos, {0.0f, 1.0f, 1.0f}, glm::vec3(0.25f / 16.0f, 0.25f / 16.0f, 1.0f)};
+        // auto pt = Point{next_pos, {0.0f, 1.0f, 1.0f}, glm::vec3(0.25f * VOXEL_SIZE, 0.25f * VOXEL_SIZE, 1.0f)};
         // submit_debug_points(g_renderer, (renderer::Point const *)&pt, 1);
         // prev_pos = next_pos;
     }
@@ -1072,7 +1072,7 @@ auto voxel_world::ray_cast(VoxelWorld self, RayCastConfig const &config) -> RayC
 }
 
 auto voxel_world::is_solid(VoxelWorld self, float const *pos) -> bool {
-    auto p = glm::ivec3(glm::vec3(pos[0], pos[1], pos[2]) * 16.0f);
+    auto p = glm::ivec3(glm::vec3(pos[0], pos[1], pos[2]) * VOXEL_SCL);
     return get_voxel_is_solid(self, p);
 }
 
@@ -1089,9 +1089,9 @@ void fix_normals(voxel_world::VoxelWorld self, int const *pos) {
                 auto prev_attrib = get_voxel_attrib(self, p);
                 auto nrm = glm::normalize(glm::vec3(dx, dy, dz));
 
-                // glm::vec2 uv0 = fract(glm::vec2(p.y, p.z) * 1.0f / 16.0f);
-                // glm::vec2 uv1 = fract(glm::vec2(p.x, p.z) * 1.0f / 16.0f);
-                // glm::vec2 uv2 = fract(glm::vec2(p.x, p.y) * 1.0f / 16.0f);
+                // glm::vec2 uv0 = fract(glm::vec2(p.y, p.z) * VOXEL_SIZE);
+                // glm::vec2 uv1 = fract(glm::vec2(p.x, p.z) * VOXEL_SIZE);
+                // glm::vec2 uv2 = fract(glm::vec2(p.x, p.y) * VOXEL_SIZE);
 
                 // float uv0_a = abs(dot(nrm, vec3(1, 0, 0)));
                 // float uv1_a = abs(dot(nrm, vec3(0, 1, 0)));

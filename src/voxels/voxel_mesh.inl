@@ -3,13 +3,6 @@
 #include <daxa/utils/task_graph.inl>
 #include <voxels/defs.inl>
 
-#if defined(__cplusplus)
-// Below, we pack meshlet start offsets into 8-bit integers. Since
-// we will start only on the bounds of a uint, we divide the face
-// count by 32 and ensure that number is representable in 8 bits
-static_assert(MAX_OUTER_FACES_PER_BRICK / 32 < 256);
-#endif
-
 struct Voxel {
     daxa_f32vec3 col;
     daxa_f32vec3 nrm;

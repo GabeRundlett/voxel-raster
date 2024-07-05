@@ -54,11 +54,9 @@ void main() {
     aabb.minimum = vec3(pos) * SCL;
     aabb.maximum = aabb.minimum + SCL;
 
-    float t_hit = hitAabb(aabb, Ray(ray_o, ray_d));
+    float t_hit = hitAabb(aabb, Ray(ray_o, ray_d), true);
 
-    if (prd.data1 == miss_ray_payload().data1 || t_hit == -1) {
-        color = SKY_COL;
-
+    if (prd.data1 == miss_ray_payload().data1) {
         vec4 pos_cs = vec4(uv_to_cs(uv), 0.0, 1.0);
         vec4 pos_vs = deref(push.uses.gpu_input).cam.clip_to_view * pos_cs;
 
@@ -70,7 +68,6 @@ void main() {
         vec2 prev_uv = cs_to_uv(prev_pcs.xy);
         uv_diff = prev_uv - uv;
 
-        imageStore(daxa_image2D(push.uses.color), ivec2(px), vec4(color, 0));
         imageStore(daxa_image2D(push.uses.depth), ivec2(px), vec4(depth, 0, 0, 0));
         imageStore(daxa_image2D(push.uses.motion_vectors), ivec2(px), vec4(uv_diff, 0, 0));
         return;
@@ -111,18 +108,15 @@ void main() {
     Voxel voxel = load_voxel(push.uses.gpu_input, advance(push.uses.chunks, payload.chunk_id), payload.brick_id, payload.voxel_i);
 
     vec3 albedo = vec3(1);
-
     albedo = voxel.col;
 
-    vec3 diffuse = vec3(0);
-    // diffuse += vec3(1);
-    diffuse += max(0.0, dot(voxel.nrm, normalize(vec3(-1, 2, 3)))) * SUN_COL;
-    diffuse += max(0.0, dot(voxel.nrm, normalize(vec3(0, 0, 1))) * 0.4 + 0.6) * SKY_COL;
+#if !PER_VOXEL_SHADING
+    voxel.nrm = hit_aabb_nrm(aabb, Ray(ray_o, ray_d), true);
+#endif
 
-    color = albedo * diffuse;
-
-    imageStore(daxa_image2D(push.uses.color), ivec2(px), vec4(color, 0));
+    imageStore(daxa_image2D(push.uses.color), ivec2(px), vec4(albedo, 0));
     imageStore(daxa_image2D(push.uses.depth), ivec2(px), vec4(depth, 0, 0, 0));
+    imageStore(daxa_image2D(push.uses.normal), ivec2(px), vec4(map_octahedral(voxel.nrm), 0, 0));
     imageStore(daxa_image2D(push.uses.motion_vectors), ivec2(px), vec4(uv_diff, 0, 0));
 }
 

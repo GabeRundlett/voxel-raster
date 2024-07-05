@@ -28,9 +28,9 @@ export void generate_bitmask(
             pos.y = (yi + brick_yi * VOXEL_BRICK_SIZE + chunk_yi * VOXEL_CHUNK_SIZE) << level_i;
             pos.z = (zi + brick_zi * VOXEL_BRICK_SIZE + chunk_zi * VOXEL_CHUNK_SIZE) << level_i;
 
-            pos.x = (pos.x + 0.5f) / 16.0f;
-            pos.y = (pos.y + 0.5f) / 16.0f;
-            pos.z = (pos.z + 0.5f) / 16.0f;
+            pos.x = (pos.x + 0.5f) * VOXEL_SIZE;
+            pos.y = (pos.y + 0.5f) * VOXEL_SIZE;
+            pos.z = (pos.z + 0.5f) * VOXEL_SIZE;
 
             DensityNrm dn = voxel_value(random_ctx, noise_settings, pos);
             uint value = dn.val < 0.0f;
@@ -92,9 +92,9 @@ export void generate_attributes(
             pos.y = (yi + brick_yi * VOXEL_BRICK_SIZE + chunk_yi * VOXEL_CHUNK_SIZE) << level_i;
             pos.z = (zi + brick_zi * VOXEL_BRICK_SIZE + chunk_zi * VOXEL_CHUNK_SIZE) << level_i;
 
-            pos.x = (pos.x + 0.5f) / 16.0f;
-            pos.y = (pos.y + 0.5f) / 16.0f;
-            pos.z = (pos.z + 0.5f) / 16.0f;
+            pos.x = (pos.x + 0.5f) * VOXEL_SIZE;
+            pos.y = (pos.y + 0.5f) * VOXEL_SIZE;
+            pos.z = (pos.z + 0.5f) * VOXEL_SIZE;
 
             DensityNrm dn = voxel_value(random_ctx, noise_settings, pos);
             Voxel voxel;

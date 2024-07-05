@@ -90,6 +90,7 @@ struct renderer::State {
 
     bool use_fsr2 = false;
     bool draw_with_rt = false;
+    bool draw_shadows = true;
     bool draw_from_observer = false;
     bool needs_record = false;
     bool needs_update = false;
@@ -98,6 +99,109 @@ struct renderer::State {
     int delta_times_offset = 0;
     int delta_times_count = 0;
 };
+
+auto composite(GpuContext &gpu_context, daxa::TaskGraph &task_graph, daxa::TaskImageView color, daxa::TaskImageView depth, daxa::TaskImageView shadow_mask, daxa::TaskImageView normal) -> daxa::TaskImageView {
+    auto composited_image = task_graph.create_transient_image({
+        .format = daxa::Format::R16G16B16A16_SFLOAT,
+        .size = {gpu_context.render_resolution.x, gpu_context.render_resolution.y, 1},
+        .name = "composited_image",
+    });
+
+    gpu_context.add(RasterTask<Composite::Task, CompositePush, NoTaskInfo>{
+        .vert_source = daxa::ShaderFile{"FULL_SCREEN_TRIANGLE_VERTEX_SHADER"},
+        .frag_source = daxa::ShaderFile{"composite.glsl"},
+        .color_attachments = {{.format = daxa::Format::R16G16B16A16_SFLOAT}},
+        .views = std::array{
+            daxa::attachment_view(Composite::AT.render_target, composited_image),
+            daxa::attachment_view(Composite::AT.color, color),
+            daxa::attachment_view(Composite::AT.depth, depth),
+            daxa::attachment_view(Composite::AT.shadow_mask, shadow_mask),
+            daxa::attachment_view(Composite::AT.normal, normal),
+        },
+        .callback_ = [](daxa::TaskInterface const &ti, daxa::RasterPipeline &pipeline, CompositePush &push, NoTaskInfo const &) {
+            auto render_image = ti.get(Composite::AT.render_target).ids[0];
+            auto const image_info = ti.device.info_image(render_image).value();
+            auto renderpass_recorder = std::move(ti.recorder).begin_renderpass({
+                .color_attachments = {{.image_view = render_image.default_view(), .load_op = daxa::AttachmentLoadOp::DONT_CARE}},
+                .render_area = {.x = 0, .y = 0, .width = image_info.size.x, .height = image_info.size.y},
+            });
+            renderpass_recorder.set_pipeline(pipeline);
+            push.image_size = {image_info.size.x, image_info.size.y};
+            set_push_constant(ti, renderpass_recorder, push);
+            renderpass_recorder.draw({.vertex_count = 3});
+            ti.recorder = std::move(renderpass_recorder).end_renderpass();
+        },
+        .task_graph = &task_graph,
+    });
+
+    return composited_image;
+}
+
+auto upscale(renderer::Renderer self, daxa::TaskGraph &task_graph, daxa::TaskImageView color, daxa::TaskImageView depth, daxa::TaskImageView motion_vectors) -> daxa::TaskImageView {
+    if (self->use_fsr2 && !self->draw_from_observer) {
+        auto upscaled_image = self->loop_task_graph.create_transient_image({
+            .format = daxa::Format::R16G16B16A16_SFLOAT,
+            .size = {self->gpu_context.output_resolution.x, self->gpu_context.output_resolution.y, 1},
+            .name = "upscaled_image",
+        });
+        task_graph.add_task({
+            .attachments = {
+                daxa::inl_attachment(daxa::TaskImageAccess::COMPUTE_SHADER_SAMPLED, daxa::ImageViewType::REGULAR_2D, color),
+                daxa::inl_attachment(daxa::TaskImageAccess::COMPUTE_SHADER_SAMPLED, daxa::ImageViewType::REGULAR_2D, depth),
+                daxa::inl_attachment(daxa::TaskImageAccess::COMPUTE_SHADER_SAMPLED, daxa::ImageViewType::REGULAR_2D, motion_vectors),
+                daxa::inl_attachment(daxa::TaskImageAccess::COMPUTE_SHADER_STORAGE_WRITE_ONLY, daxa::ImageViewType::REGULAR_2D, upscaled_image),
+            },
+            .task = [=](daxa::TaskInterface const &ti) {
+                self->fsr2_context.upscale(
+                    ti.recorder,
+                    daxa::UpscaleInfo{
+                        .color = ti.get(daxa::TaskImageAttachmentIndex{0}).ids[0],
+                        .depth = ti.get(daxa::TaskImageAttachmentIndex{1}).ids[0],
+                        .motion_vectors = ti.get(daxa::TaskImageAttachmentIndex{2}).ids[0],
+                        .output = ti.get(daxa::TaskImageAttachmentIndex{3}).ids[0],
+                        .should_reset = self->gpu_input.frame_index == 0,
+                        .delta_time = self->gpu_input.delta_time,
+                        .jitter = self->gpu_input.jitter,
+                        .camera_info = {
+                            .near_plane = 0.01f,
+                            .far_plane = {},
+                            .vertical_fov = 74.0f * (3.14159f / 180.0f), // TODO...
+                        },
+                    });
+            },
+        });
+        return upscaled_image;
+    } else {
+        return color;
+    }
+}
+
+auto post_process_to_swapchain(renderer::Renderer self, daxa::TaskGraph &task_graph, daxa::TaskImageView color) {
+    self->gpu_context.add(RasterTask<PostProcessing::Task, PostProcessingPush, NoTaskInfo>{
+        .vert_source = daxa::ShaderFile{"FULL_SCREEN_TRIANGLE_VERTEX_SHADER"},
+        .frag_source = daxa::ShaderFile{"post_processing.glsl"},
+        .color_attachments = {{.format = self->gpu_context.swapchain.get_format()}},
+        .views = std::array{
+            daxa::attachment_view(PostProcessing::AT.gpu_input, self->gpu_context.task_input_buffer),
+            daxa::attachment_view(PostProcessing::AT.render_target, self->gpu_context.task_swapchain_image),
+            daxa::attachment_view(PostProcessing::AT.color, color),
+        },
+        .callback_ = [](daxa::TaskInterface const &ti, daxa::RasterPipeline &pipeline, PostProcessingPush &push, NoTaskInfo const &) {
+            auto render_image = ti.get(PostProcessing::AT.render_target).ids[0];
+            auto const image_info = ti.device.info_image(render_image).value();
+            auto renderpass_recorder = std::move(ti.recorder).begin_renderpass({
+                .color_attachments = {{.image_view = render_image.default_view(), .load_op = daxa::AttachmentLoadOp::DONT_CARE}},
+                .render_area = {.x = 0, .y = 0, .width = image_info.size.x, .height = image_info.size.y},
+            });
+            renderpass_recorder.set_pipeline(pipeline);
+            push.image_size = {image_info.size.x, image_info.size.y};
+            set_push_constant(ti, renderpass_recorder, push);
+            renderpass_recorder.draw({.vertex_count = 3});
+            ti.recorder = std::move(renderpass_recorder).end_renderpass();
+        },
+        .task_graph = &task_graph,
+    });
+}
 
 void record_tasks(renderer::Renderer self) {
     {
@@ -155,79 +259,32 @@ void record_tasks(renderer::Renderer self) {
         .name = "GpuInputUploadTransferTask",
     });
 
-    auto [color, depth, motion_vectors] = [&]() {
+    auto [color, depth, normal, motion_vectors] = [&]() {
         if (self->draw_with_rt) {
-            return renderer::raytrace(self->gpu_context, self->loop_task_graph, self->task_tlas, self->chunks_buffer, self->task_brick_data, self->gpu_input.chunk_n, self->draw_from_observer);
+            return renderer::trace_primary(self->gpu_context, self->loop_task_graph, self->task_tlas, self->chunks_buffer, self->task_brick_data, self->draw_from_observer);
         } else {
             return render(&self->voxel_rasterizer, self->gpu_context, self->loop_task_graph, self->chunks_buffer, self->task_brick_data, self->gpu_input.chunk_n, self->draw_from_observer);
         }
     }();
 
-    auto upscaled_image = [&]() {
-        if (self->use_fsr2 && !self->draw_from_observer) {
-            auto upscaled_image = self->loop_task_graph.create_transient_image({
-                .format = daxa::Format::R16G16B16A16_SFLOAT,
-                .size = {self->gpu_context.output_resolution.x, self->gpu_context.output_resolution.y, 1},
-                .name = "upscaled_image",
-            });
-            self->loop_task_graph.add_task({
-                .attachments = {
-                    daxa::inl_attachment(daxa::TaskImageAccess::COMPUTE_SHADER_SAMPLED, daxa::ImageViewType::REGULAR_2D, color),
-                    daxa::inl_attachment(daxa::TaskImageAccess::COMPUTE_SHADER_SAMPLED, daxa::ImageViewType::REGULAR_2D, depth),
-                    daxa::inl_attachment(daxa::TaskImageAccess::COMPUTE_SHADER_SAMPLED, daxa::ImageViewType::REGULAR_2D, motion_vectors),
-                    daxa::inl_attachment(daxa::TaskImageAccess::COMPUTE_SHADER_STORAGE_WRITE_ONLY, daxa::ImageViewType::REGULAR_2D, upscaled_image),
-                },
-                .task = [=](daxa::TaskInterface const &ti) {
-                    self->fsr2_context.upscale(
-                        ti.recorder,
-                        daxa::UpscaleInfo{
-                            .color = ti.get(daxa::TaskImageAttachmentIndex{0}).ids[0],
-                            .depth = ti.get(daxa::TaskImageAttachmentIndex{1}).ids[0],
-                            .motion_vectors = ti.get(daxa::TaskImageAttachmentIndex{2}).ids[0],
-                            .output = ti.get(daxa::TaskImageAttachmentIndex{3}).ids[0],
-                            .should_reset = self->gpu_input.frame_index == 0,
-                            .delta_time = self->gpu_input.delta_time,
-                            .jitter = self->gpu_input.jitter,
-                            .camera_info = {
-                                .near_plane = 0.01f,
-                                .far_plane = {},
-                                .vertical_fov = 74.0f * (3.14159f / 180.0f), // TODO...
-                            },
-                        });
-                },
-            });
-            return upscaled_image;
+    auto shadow_mask = [&]() {
+        if (self->draw_shadows) {
+            return renderer::trace_shadow(self->gpu_context, self->loop_task_graph, self->task_tlas, self->chunks_buffer, self->task_brick_data, depth, normal);
         } else {
-            return color;
+            auto shadow_mask = self->loop_task_graph.create_transient_image({
+                .format = daxa::Format::R8_UNORM,
+                .size = {self->gpu_context.render_resolution.x, self->gpu_context.render_resolution.y, 1},
+                .name = "shadow_mask",
+            });
+            clear_task_images(self->loop_task_graph, std::array{shadow_mask}, std::array{daxa::ClearValue{std::array{1.0f, 1.0f, 1.0f, 1.0f}}});
+            return shadow_mask;
         }
     }();
+    auto composited_image = composite(self->gpu_context, self->loop_task_graph, color, depth, shadow_mask, normal);
+    auto upscaled_image = upscale(self, self->loop_task_graph, composited_image, depth, motion_vectors);
 
     draw_debug_shapes(self->gpu_context, self->loop_task_graph, upscaled_image, &self->debug_shapes);
-
-    self->gpu_context.add(RasterTask<PostProcessing::Task, PostProcessingPush, NoTaskInfo>{
-        .vert_source = daxa::ShaderFile{"FULL_SCREEN_TRIANGLE_VERTEX_SHADER"},
-        .frag_source = daxa::ShaderFile{"post_processing.glsl"},
-        .color_attachments = {{.format = self->gpu_context.swapchain.get_format()}},
-        .views = std::array{
-            daxa::attachment_view(PostProcessing::AT.gpu_input, task_input_buffer),
-            daxa::attachment_view(PostProcessing::AT.render_target, self->gpu_context.task_swapchain_image),
-            daxa::attachment_view(PostProcessing::AT.color, upscaled_image),
-        },
-        .callback_ = [](daxa::TaskInterface const &ti, daxa::RasterPipeline &pipeline, PostProcessingPush &push, NoTaskInfo const &) {
-            auto render_image = ti.get(PostProcessing::AT.render_target).ids[0];
-            auto const image_info = ti.device.info_image(render_image).value();
-            auto renderpass_recorder = std::move(ti.recorder).begin_renderpass({
-                .color_attachments = {{.image_view = render_image.default_view(), .load_op = daxa::AttachmentLoadOp::DONT_CARE}},
-                .render_area = {.x = 0, .y = 0, .width = image_info.size.x, .height = image_info.size.y},
-            });
-            renderpass_recorder.set_pipeline(pipeline);
-            push.image_size = {image_info.size.x, image_info.size.y};
-            set_push_constant(ti, renderpass_recorder, push);
-            renderpass_recorder.draw({.vertex_count = 3});
-            ti.recorder = std::move(renderpass_recorder).end_renderpass();
-        },
-        .task_graph = &self->loop_task_graph,
-    });
+    post_process_to_swapchain(self, self->loop_task_graph, upscaled_image);
 
     self->loop_task_graph.add_task({
         .attachments = {
@@ -278,7 +335,7 @@ void renderer::init(Renderer &self, void *glfw_window_ptr) {
             default: return daxa::default_format_score(format);
             }
         },
-        .present_mode = daxa::PresentMode::IMMEDIATE,
+        .present_mode = daxa::PresentMode::FIFO,
         .image_usage = daxa::ImageUsageFlagBits::TRANSFER_DST,
         .name = "my swapchain",
     });
@@ -370,7 +427,7 @@ void update(renderer::Renderer self) {
     {
         // update tlas
         auto *blas_instances = self->gpu_context.device.get_host_address_as<daxa_BlasInstanceData>(self->blas_instances_buffer.resource_id).value();
-        int scl = -4 + 8;
+        int scl = -LOG2_VOXELS_PER_METER + 8;
 #define SCL (float(1 << scl) / float(1 << 8))
 
         for (auto chunk : self->chunks_to_update) {
@@ -588,7 +645,7 @@ void render_ui(renderer::Renderer self) {
     ImGui::Begin("Debug");
     ImGui::Text("%.3f ms (%.3f fps)", avg_delta_time * 1000.0f, 1.0f / avg_delta_time);
     ImGui::SameLine();
-    ImGui::Text(self->draw_with_rt ? "[RT ON]" : "[RT OFF]");
+    ImGui::Text(self->draw_with_rt ? "[RT PRIMARY ON]" : "[RT PRIMARY OFF]");
     ImGui::Text("m pos = %.3f %.3f %.3f", self->gpu_input.cam.view_to_world.w.x, self->gpu_input.cam.view_to_world.w.y, self->gpu_input.cam.view_to_world.w.z);
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip("Main camera position");
@@ -597,8 +654,8 @@ void render_ui(renderer::Renderer self) {
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip("Observer camera position");
     }
-    {
-        ImGui::Text("Inputs:");
+
+    if (ImGui::CollapsingHeader("Inputs")) {
         ImGui::Text(" ESC    | Toggle capture mouse and keyboard");
         ImGui::Text(" WASD/SPACE/CONTROL | Move current camera");
         if (ImGui::IsItemHovered()) {
@@ -617,7 +674,9 @@ void render_ui(renderer::Renderer self) {
             ImGui::SetTooltip("* only if already in observer camera view");
         }
         ImGui::Text(" L      | Toggle FSR2");
-        ImGui::Text(" R      | Toggle HWRT");
+        ImGui::Text(" L      | Toggle V-Sync");
+        ImGui::Text(" K      | Toggle Shadows");
+        ImGui::Text(" R      | Toggle RT Primary");
         ImGui::Text(" F      | Toggle Fly");
         ImGui::Text(" F5     | Toggle Third-person");
         ImGui::Text(" C      | Toggle Fast-placement");
@@ -767,6 +826,14 @@ void renderer::draw(Renderer self, player::Player player, voxel_world::VoxelWorl
     ++self->gpu_input.frame_index;
 }
 
+void renderer::toggle_vsync(Renderer self) {
+    if (self->gpu_context.swapchain.info().present_mode == daxa::PresentMode::IMMEDIATE) {
+        self->gpu_context.swapchain.set_present_mode(daxa::PresentMode::FIFO);
+    } else {
+        self->gpu_context.swapchain.set_present_mode(daxa::PresentMode::IMMEDIATE);
+    }
+}
+
 void renderer::toggle_fsr2(Renderer self) {
     self->use_fsr2 = !self->use_fsr2;
     self->needs_record = true;
@@ -774,6 +841,11 @@ void renderer::toggle_fsr2(Renderer self) {
 
 void renderer::toggle_rt(Renderer self) {
     self->draw_with_rt = !self->draw_with_rt;
+    self->needs_record = true;
+}
+
+void renderer::toggle_shadows(Renderer self) {
+    self->draw_shadows = !self->draw_shadows;
     self->needs_record = true;
 }
 
