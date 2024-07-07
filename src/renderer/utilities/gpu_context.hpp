@@ -66,10 +66,10 @@ struct GpuContext {
     void remove_temporal_image(std::string const &id);
     void remove_temporal_buffer(daxa::BufferId id);
     void remove_temporal_image(daxa::ImageId id);
-    void resize_temporal_buffer(std::string const &id, uint64_t new_size);
-    void resize_temporal_image(std::string const &id, daxa::Extent3D new_size);
-    void resize_temporal_buffer(daxa::BufferId id, uint64_t new_size);
-    void resize_temporal_image(daxa::ImageId id, daxa::Extent3D new_size);
+    auto resize_temporal_buffer(std::string const &id, uint64_t new_size) -> TemporalBuffer;
+    auto resize_temporal_image(std::string const &id, daxa::Extent3D new_size) -> TemporalImage;
+    auto resize_temporal_buffer(daxa::BufferId id, uint64_t new_size) -> TemporalBuffer;
+    auto resize_temporal_image(daxa::ImageId id, daxa::Extent3D new_size) -> TemporalImage;
 
     std::unordered_map<std::string, std::shared_ptr<AsyncManagedComputePipeline>> compute_pipelines;
     std::unordered_map<std::string, std::shared_ptr<AsyncManagedRayTracingPipeline>> ray_tracing_pipelines;

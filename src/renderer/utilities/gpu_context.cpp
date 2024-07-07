@@ -2,6 +2,7 @@
 
 #include <fmt/format.h>
 #include <renderer/shared.inl>
+#include <cassert>
 
 GpuContext::GpuContext() {
     daxa_instance = daxa::create_instance({});
@@ -161,58 +162,94 @@ auto GpuContext::find_or_add_temporal_image(daxa::ImageInfo const &info) -> Temp
 
 void GpuContext::remove_temporal_buffer(std::string const &id) {
     auto iter = temporal_buffers.find(id);
-    if (iter != temporal_buffers.end()) {
-        device.destroy_buffer(iter->second.resource_id);
-        temporal_buffers.erase(iter);
+    if (iter == temporal_buffers.end()) {
+        return;
     }
+    // assert(iter != temporal_buffers.end());
+    device.destroy_buffer(iter->second.resource_id);
+    temporal_buffers.erase(iter);
 }
 
 void GpuContext::remove_temporal_image(std::string const &id) {
     auto iter = temporal_images.find(id);
-    if (iter != temporal_images.end()) {
-        device.destroy_image(iter->second.resource_id);
-        temporal_images.erase(iter);
+    if (iter == temporal_images.end()) {
+        return;
     }
+    // assert(iter != temporal_images.end());
+    device.destroy_image(iter->second.resource_id);
+    temporal_images.erase(iter);
 }
 
 void GpuContext::remove_temporal_buffer(daxa::BufferId id) {
-    remove_temporal_buffer(std::string{device.info_buffer(id).value().name.view()});
+    auto res_info = device.info_buffer(id);
+    if (!res_info.has_value()) {
+        return;
+    }
+    // assert(res_info.has_value());
+    remove_temporal_buffer(std::string{res_info.value().name.view()});
 }
 
 void GpuContext::remove_temporal_image(daxa::ImageId id) {
-    remove_temporal_image(std::string{device.info_image(id).value().name.view()});
-}
-
-void GpuContext::resize_temporal_buffer(std::string const &id, uint64_t new_size) {
-    auto iter = temporal_buffers.find(id);
-    if (iter != temporal_buffers.end()) {
-        auto info = device.info_buffer(iter->second.resource_id).value();
-        if (info.size != new_size) {
-            info.size = new_size;
-            device.destroy_buffer(iter->second.resource_id);
-            iter->second.resource_id = device.create_buffer(info);
-            iter->second.task_resource.set_buffers({.buffers = std::array{iter->second.resource_id}});
-        }
+    auto res_info = device.info_image(id);
+    if (!res_info.has_value()) {
+        return;
     }
+    // assert(res_info.has_value());
+    remove_temporal_image(std::string{res_info.value().name.view()});
 }
 
-void GpuContext::resize_temporal_image(std::string const &id, daxa::Extent3D new_size) {
-    auto iter = temporal_images.find(id);
-    if (iter != temporal_images.end()) {
-        auto info = device.info_image(iter->second.resource_id).value();
-        if (info.size != new_size) {
-            info.size = new_size;
-            device.destroy_image(iter->second.resource_id);
-            iter->second.resource_id = device.create_image(info);
-            iter->second.task_resource.set_images({.images = std::array{iter->second.resource_id}});
-        }
+auto GpuContext::resize_temporal_buffer(std::string const &s_id, uint64_t new_size) -> TemporalBuffer {
+    auto iter = temporal_buffers.find(s_id);
+    assert(iter != temporal_buffers.end());
+    auto info = daxa::BufferInfo{device.info_buffer(iter->second.resource_id).value()};
+    if (info.size != new_size) {
+        info.size = new_size;
+        device.destroy_buffer(iter->second.resource_id);
+        iter->second.resource_id = device.create_buffer(info);
+        iter->second.task_resource.set_buffers({.buffers = std::array{iter->second.resource_id}});
     }
+    return iter->second;
 }
 
-void GpuContext::resize_temporal_buffer(daxa::BufferId id, uint64_t new_size) {
-    resize_temporal_buffer(std::string{device.info_buffer(id).value().name.view()}, new_size);
+auto GpuContext::resize_temporal_image(std::string const &s_id, daxa::Extent3D new_size) -> TemporalImage {
+    auto iter = temporal_images.find(s_id);
+    assert(iter != temporal_images.end());
+    auto info = daxa::ImageInfo{device.info_image(iter->second.resource_id).value()};
+    if (info.size != new_size) {
+        info.size = new_size;
+        device.destroy_image(iter->second.resource_id);
+        iter->second.resource_id = device.create_image(info);
+        iter->second.task_resource.set_images({.images = std::array{iter->second.resource_id}});
+    }
+    return iter->second;
 }
 
-void GpuContext::resize_temporal_image(daxa::ImageId id, daxa::Extent3D new_size) {
-    resize_temporal_image(std::string{device.info_image(id).value().name.view()}, new_size);
+auto GpuContext::resize_temporal_buffer(daxa::BufferId id, uint64_t new_size) -> TemporalBuffer {
+    auto res_info = device.info_buffer(id);
+    assert(res_info.has_value());
+    auto info = res_info.value();
+    auto iter = temporal_buffers.find(std::string(info.name.view()));
+    assert(iter != temporal_buffers.end());
+    if (info.size != new_size) {
+        info.size = new_size;
+        device.destroy_buffer(iter->second.resource_id);
+        iter->second.resource_id = device.create_buffer(info);
+        iter->second.task_resource.set_buffers({.buffers = std::array{iter->second.resource_id}});
+    }
+    return iter->second;
+}
+
+auto GpuContext::resize_temporal_image(daxa::ImageId id, daxa::Extent3D new_size) -> TemporalImage {
+    auto res_info = device.info_image(id);
+    assert(res_info.has_value());
+    auto info = res_info.value();
+    auto iter = temporal_images.find(std::string(info.name.view()));
+    assert(iter != temporal_images.end());
+    if (info.size != new_size) {
+        info.size = new_size;
+        device.destroy_image(iter->second.resource_id);
+        iter->second.resource_id = device.create_image(info);
+        iter->second.task_resource.set_images({.images = std::array{iter->second.resource_id}});
+    }
+    return iter->second;
 }

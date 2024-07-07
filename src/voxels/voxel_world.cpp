@@ -107,9 +107,9 @@ const auto RANDOM_VALUES = []() {
     return result;
 }();
 
-constexpr int32_t CHUNK_NX = 2048 / VOXEL_CHUNK_SIZE;
-constexpr int32_t CHUNK_NY = 2048 / VOXEL_CHUNK_SIZE;
-constexpr int32_t CHUNK_NZ = 2048 / VOXEL_CHUNK_SIZE;
+constexpr int32_t CHUNK_NX = 1024 / VOXEL_CHUNK_SIZE;
+constexpr int32_t CHUNK_NY = 1024 / VOXEL_CHUNK_SIZE;
+constexpr int32_t CHUNK_NZ = 1024 / VOXEL_CHUNK_SIZE;
 constexpr int32_t CHUNK_LEVELS = 1;
 
 static_assert(CHUNK_NX * CHUNK_NY * CHUNK_NZ * CHUNK_LEVELS <= MAX_CHUNK_COUNT);
@@ -1115,7 +1115,7 @@ void voxel_world::apply_brush_a(VoxelWorld self, int const *pos) {
             for (int xi = -15; xi <= 15; ++xi) {
                 // float density = 15.0f - max(abs(xi), max(abs(yi), abs(zi)));
                 float density = 15.0f - length(glm::vec3(xi, yi, zi));
-                density = max(0.0f, density) / 20.0f;
+                density = max(0.0f, density) / 5.0f;
                 auto p = glm::ivec3(pos[0], pos[1], pos[2]) + glm::ivec3(xi, yi, zi);
                 density += get_voxel_sim_attrib(self, p, true);
                 set_voxel_bit(self, p, density < 0);
@@ -1136,7 +1136,7 @@ void voxel_world::apply_brush_b(VoxelWorld self, int const *pos) {
                 auto p = glm::ivec3(pos[0], pos[1], pos[2]) + glm::ivec3(xi, yi, zi);
                 // float density = max(abs(xi), max(abs(yi), abs(zi))) - 15.0f;
                 float density = length(glm::vec3(xi, yi, zi)) - 15.0f;
-                density = min(0.0f, density) / 20.0f;
+                density = min(0.0f, density) / 5.0f;
                 if (density < 0) {
                     set_voxel_attrib(self, p, Voxel{.col = {1, 0.5f, 0}, .nrm = {}});
                 }

@@ -421,9 +421,9 @@ void update(renderer::Renderer self) {
 
     auto new_chunk_n = self->tracked_brick_data.size();
     if (new_chunk_n != self->gpu_input.chunk_n) {
-        self->gpu_context.resize_temporal_buffer(self->chunks_buffer, sizeof(VoxelChunk) * new_chunk_n);
+        self->chunks_buffer = self->gpu_context.resize_temporal_buffer(self->chunks_buffer, sizeof(VoxelChunk) * new_chunk_n);
+        self->gpu_input.chunk_n = new_chunk_n;
     }
-    self->gpu_input.chunk_n = new_chunk_n;
     {
         // update tlas
         auto *blas_instances = self->gpu_context.device.get_host_address_as<daxa_BlasInstanceData>(self->blas_instances_buffer.resource_id).value();
