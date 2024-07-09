@@ -1,6 +1,11 @@
 cmake_minimum_required(VERSION 3.21)
 
-set(USE_ISPC 1)
+if (CMAKE_GENERATOR MATCHES "Visual Studio")
+    # Visual Studio doesn't support building ISPC...
+    set(USE_ISPC 0)
+else()
+    set(USE_ISPC 1)
+endif()
 
 include("${CMAKE_CURRENT_LIST_DIR}/cmake/deps.cmake")
 if (USE_ISPC)

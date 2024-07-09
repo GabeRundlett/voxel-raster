@@ -64,6 +64,7 @@ struct renderer::State {
     daxa::TaskGraph loop_empty_task_graph;
 
     std::vector<Chunk> chunks_to_update;
+    std::vector<Chunk> chunks_to_move;
     std::vector<VoxelChunk> chunks;
     TemporalBuffer chunks_buffer;
 
@@ -283,7 +284,7 @@ void record_tasks(renderer::Renderer self) {
     auto composited_image = composite(self->gpu_context, self->loop_task_graph, color, depth, shadow_mask, normal);
     auto upscaled_image = upscale(self, self->loop_task_graph, composited_image, depth, motion_vectors);
 
-    draw_debug_shapes(self->gpu_context, self->loop_task_graph, upscaled_image, &self->debug_shapes);
+    draw_debug_shapes(self->gpu_context, self->loop_task_graph, upscaled_image, depth, &self->debug_shapes);
     post_process_to_swapchain(self, self->loop_task_graph, upscaled_image);
 
     self->loop_task_graph.add_task({
@@ -431,6 +432,22 @@ void update(renderer::Renderer self) {
 #define SCL (float(1 << scl) / float(1 << 8))
 
         for (auto chunk : self->chunks_to_update) {
+            auto &gpu_chunk = self->chunks[chunk->tracked_index];
+            blas_instances[chunk->tracked_index] = daxa_BlasInstanceData{
+                .transform = {
+                    {1, 0, 0, gpu_chunk.pos.x * float(VOXEL_CHUNK_SIZE) * SCL},
+                    {0, 1, 0, gpu_chunk.pos.y * float(VOXEL_CHUNK_SIZE) * SCL},
+                    {0, 0, 1, gpu_chunk.pos.z * float(VOXEL_CHUNK_SIZE) * SCL},
+                },
+                .instance_custom_index = chunk->tracked_index,
+                .mask = chunk->brick_count == 0 ? 0x00u : 0xff, // chunk->cull_mask,
+                .instance_shader_binding_table_record_offset = 0,
+                .flags = {},
+                .blas_device_address = self->gpu_context.device.get_device_address(chunk->blas).value(),
+            };
+        }
+
+        for (auto chunk : self->chunks_to_move) {
             auto &gpu_chunk = self->chunks[chunk->tracked_index];
             blas_instances[chunk->tracked_index] = daxa_BlasInstanceData{
                 .transform = {
@@ -822,6 +839,7 @@ void renderer::draw(Renderer self, player::Player player, voxel_world::VoxelWorl
     self->tracked_brick_data.clear();
     self->tracked_blases.clear();
     self->chunks_to_update.clear();
+    self->chunks_to_move.clear();
 
     ++self->gpu_input.frame_index;
 }
@@ -1002,6 +1020,11 @@ void renderer::render_chunk(Renderer self, Chunk chunk, float const *pos) {
         }
     }
 
+    auto prev_pos = self->chunks[tracked_chunk_index].pos;
+    auto pos_changed = pos[0] != prev_pos.x ||
+                       pos[1] != prev_pos.y ||
+                       pos[2] != prev_pos.z;
+
     self->chunks[tracked_chunk_index] = VoxelChunk{
         .bitmasks = self->gpu_context.device.get_device_address(chunk->brick_data).value() + bitmasks_offset,
         .meshes = self->gpu_context.device.get_device_address(chunk->brick_data).value() + meshes_offset,
@@ -1017,5 +1040,8 @@ void renderer::render_chunk(Renderer self, Chunk chunk, float const *pos) {
         self->needs_update = true;
         chunk->needs_update = false;
         self->chunks_to_update.push_back(chunk);
+    } else if (pos_changed) {
+        self->needs_update = true;
+        self->chunks_to_move.push_back(chunk);
     }
 }

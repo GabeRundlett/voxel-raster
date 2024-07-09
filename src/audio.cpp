@@ -28,10 +28,6 @@ auto sounds = []() {
         Sound{.path = "assets/jump0.wav"},
     };
 
-    for (auto &sound : result) {
-        sound.audioFile.load(sound.path.string());
-    }
-
     return result;
 }();
 
@@ -189,6 +185,11 @@ void audio_thread_main() {
 
 void audio::init() {
     is_running.store(true);
+
+    for (auto &sound : sounds) {
+        sound.audioFile.load(sound.path.string());
+    }
+
     audio_thread = std::thread(audio_thread_main);
 }
 

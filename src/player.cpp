@@ -97,7 +97,7 @@ float const M_PI = 3.14159265f;
 void player::init(Player &self) {
     self = new State{};
 
-    self->main.pos = glm::vec3{40.0f, 40.0f, 40.0f};
+    self->main.pos = glm::vec3{0.0f, 0.0f, 40.0f};
     self->main.yaw = 0.0f;
     self->main.pitch = M_PI * 0.5f;
     self->main.speed = 1.5f;

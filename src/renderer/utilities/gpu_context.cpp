@@ -30,7 +30,7 @@ GpuContext::GpuContext() {
             },
             // .write_out_preprocessed_code = ".out/",
             .write_out_shader_binary = ".out/spv",
-            // .spirv_cache_folder = ".out/spv_cache",
+            .spirv_cache_folder = ".out/spv_cache",
             .language = daxa::ShaderLanguage::GLSL,
             .enable_debug_info = true,
         },
@@ -51,7 +51,7 @@ GpuContext::GpuContext() {
     pipeline_manager->add_virtual_file({
         .name = "R32_D32_BLIT",
         .contents = R"glsl(
-            #include <renderer/trace_primary.inl>
+            #include <renderer/shared.inl>
             DAXA_DECL_PUSH_CONSTANT(R32D32BlitPush, push)
             daxa_ImageViewIndex input_tex = push.uses.input_tex;
             void main() {

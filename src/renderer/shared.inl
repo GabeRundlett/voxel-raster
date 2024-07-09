@@ -53,3 +53,12 @@ struct PostProcessingPush {
     daxa_u32vec2 image_size;
     DAXA_TH_BLOB(PostProcessing, uses)
 };
+
+DAXA_DECL_TASK_HEAD_BEGIN(R32D32Blit)
+DAXA_TH_IMAGE_INDEX(FRAGMENT_SHADER_SAMPLED, REGULAR_2D, input_tex)
+DAXA_TH_IMAGE(DEPTH_ATTACHMENT, REGULAR_2D, output_tex)
+DAXA_DECL_TASK_HEAD_END
+
+struct R32D32BlitPush {
+    DAXA_TH_BLOB(R32D32Blit, uses)
+};
