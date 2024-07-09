@@ -103,8 +103,8 @@ vec2 brick_extent_pixels(daxa_BufferPtr(GpuInput) gpu_input, daxa_BufferPtr(Voxe
     VoxelChunk voxel_chunk = deref(advance(voxel_chunks, brick_instance.chunk_index));
     ivec4 pos_scl = deref(advance(voxel_chunk.pos_scl, brick_instance.brick_index));
 
-    vec3 p0 = ivec3(voxel_chunk.pos) * int(VOXEL_CHUNK_SIZE) + pos_scl.xyz * int(VOXEL_BRICK_SIZE) + ivec3(0);
-    vec3 p1 = ivec3(voxel_chunk.pos) * int(VOXEL_CHUNK_SIZE) + pos_scl.xyz * int(VOXEL_BRICK_SIZE) + ivec3(VOXEL_BRICK_SIZE);
+    vec3 p0 = ivec3(voxel_chunk.pos * VOXEL_CHUNK_SIZE) + pos_scl.xyz * int(VOXEL_BRICK_SIZE) + ivec3(0);
+    vec3 p1 = ivec3(voxel_chunk.pos * VOXEL_CHUNK_SIZE) + pos_scl.xyz * int(VOXEL_BRICK_SIZE) + ivec3(VOXEL_BRICK_SIZE);
     int scl = pos_scl.w + 8;
     const float SCL = (float(1 << scl) / float(1 << 8));
     p0 *= SCL;

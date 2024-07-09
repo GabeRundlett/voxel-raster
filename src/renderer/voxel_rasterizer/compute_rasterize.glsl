@@ -89,7 +89,7 @@ void main() {
         PackedVisbufferPayload o_packed_payload = pack(o_payload);
 
         ivec4 pos_scl = deref(advance(voxel_chunk.pos_scl, brick_instance.brick_index));
-        ivec3 pos = ivec3(voxel_chunk.pos) * int(VOXEL_CHUNK_SIZE) + pos_scl.xyz * int(VOXEL_BRICK_SIZE) + ivec3(face.pos);
+        ivec3 pos = ivec3(voxel_chunk.pos * VOXEL_CHUNK_SIZE) + pos_scl.xyz * int(VOXEL_BRICK_SIZE) + ivec3(face.pos);
         int scl = pos_scl.w + 8;
 
         // guaranteed 0, 1, or 2.
