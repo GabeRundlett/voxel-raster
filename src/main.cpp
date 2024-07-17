@@ -20,8 +20,8 @@ struct WindowInfo {
 
 using Clock = std::chrono::steady_clock;
 
-renderer::Renderer g_renderer;
-voxel_world::VoxelWorld g_voxel_world;
+Renderer *g_renderer;
+VoxelWorld *g_voxel_world;
 debug_utils::Console g_console;
 
 void search_for_path_to_fix_working_directory(std::span<std::filesystem::path const> test_paths) {
@@ -43,9 +43,9 @@ void search_for_path_to_fix_working_directory(std::span<std::filesystem::path co
 struct AppState {
     WindowInfo window_info;
     bool paused;
-    player::Player player;
-    renderer::Renderer renderer;
-    voxel_world::VoxelWorld voxel_world;
+    Player *player;
+    Renderer *renderer;
+    VoxelWorld *voxel_world;
 
     GLFWwindow *glfw_window_ptr;
     Clock::time_point prev_time;
@@ -53,17 +53,17 @@ struct AppState {
 };
 
 void on_resize(AppState &self) {
-    on_resize(self.player, self.window_info.width, self.window_info.height);
-    on_resize(self.renderer, self.window_info.width, self.window_info.height);
-    draw(self.renderer, self.player, self.voxel_world);
+    player::on_resize(self.player, self.window_info.width, self.window_info.height);
+    renderer::on_resize(self.renderer, self.window_info.width, self.window_info.height);
+    renderer::draw(self.renderer, self.player, self.voxel_world);
 }
 
 void init(AppState &self) {
     self.window_info = {.width = 800, .height = 600};
     self.paused = true;
-    init(self.player);
+    self.player = player::create();
 
-    init(self.voxel_world);
+    self.voxel_world = voxel_world::create();
     g_voxel_world = self.voxel_world;
 
     audio::init();
@@ -91,7 +91,7 @@ void init(AppState &self) {
                 auto const center_y = float(self.window_info.height / 2);
                 auto const offset_x = float(x) - center_x;
                 auto const offset_y = float(y) - center_y;
-                on_mouse_move(self.player, offset_x, offset_y);
+                player::on_mouse_move(self.player, offset_x, offset_y);
                 glfwSetCursorPos(glfw_window, double(center_x), double(center_y));
             }
         });
@@ -100,7 +100,7 @@ void init(AppState &self) {
         [](GLFWwindow *glfw_window, double x, double y) {
             auto &self = *reinterpret_cast<AppState *>(glfwGetWindowUserPointer(glfw_window));
             if (!self.paused) {
-                on_mouse_scroll(self.player, x, y);
+                player::on_mouse_scroll(self.player, x, y);
             }
         });
     glfwSetMouseButtonCallback(
@@ -109,7 +109,7 @@ void init(AppState &self) {
             auto &self = *reinterpret_cast<AppState *>(glfwGetWindowUserPointer(glfw_window));
 
             if (!self.paused) {
-                on_mouse_button(self.player, button_id, action);
+                player::on_mouse_button(self.player, button_id, action);
             }
         });
     glfwSetKeyCallback(
@@ -126,23 +126,23 @@ void init(AppState &self) {
             }
 
             if (!self.paused) {
-                on_key(self.player, key, action);
+                player::on_key(self.player, key, action);
             }
             if (key == GLFW_KEY_V && action == GLFW_PRESS) {
-                toggle_vsync(self.renderer);
+                renderer::toggle_vsync(self.renderer);
             }
             if (key == GLFW_KEY_L && action == GLFW_PRESS) {
-                toggle_fsr2(self.renderer);
+                renderer::toggle_fsr2(self.renderer);
             }
             if (key == GLFW_KEY_R && action == GLFW_PRESS) {
-                toggle_rt(self.renderer);
+                renderer::toggle_rt(self.renderer);
             }
             if (key == GLFW_KEY_K && action == GLFW_PRESS) {
-                toggle_shadows(self.renderer);
+                renderer::toggle_shadows(self.renderer);
             }
         });
 
-    init(self.renderer, self.glfw_window_ptr);
+    self.renderer = renderer::create(self.glfw_window_ptr);
     g_renderer = self.renderer;
 
     self.prev_time = Clock::now();
@@ -151,9 +151,9 @@ void init(AppState &self) {
 }
 
 void deinit(AppState &self) {
-    deinit(self.player);
-    deinit(self.voxel_world);
-    deinit(self.renderer);
+    player::destroy(self.player);
+    voxel_world::destroy(self.voxel_world);
+    renderer::destroy(self.renderer);
     audio::deinit();
 }
 
@@ -166,9 +166,9 @@ auto update(AppState &self) -> bool {
     auto dt = std::chrono::duration<float>(now - self.prev_time).count();
     auto time = std::chrono::duration<float>(now - self.start_time).count();
     self.prev_time = now;
-    update(self.player, dt);
-    update(self.voxel_world);
-    draw(self.renderer, self.player, self.voxel_world);
+    player::update(self.player, dt);
+    voxel_world::update(self.voxel_world);
+    renderer::draw(self.renderer, self.player, self.voxel_world);
     return true;
 }
 

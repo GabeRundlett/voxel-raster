@@ -80,7 +80,7 @@ void clear_move_state(Controller *self) {
     self->prj_dirty = true;
 }
 
-struct player::State {
+struct Player {
     voxel_world::RayCastHit ray_cast;
 
     Controller main;
@@ -94,8 +94,8 @@ float const SENS = 1.0f;
 float const MAX_ROT_EPS = 0.0f;
 float const M_PI = 3.14159265f;
 
-void player::init(Player &self) {
-    self = new State{};
+auto player::create() -> Player * {
+    auto *self = new Player{};
 
     self->main.pos = glm::vec3{0.0f, 0.0f, 40.0f};
     self->main.yaw = 0.0f;
@@ -114,12 +114,13 @@ void player::init(Player &self) {
 
     self->observer = self->main;
     self->controlling_observer = false;
+    return self;
 }
-void player::deinit(Player self) {
+void player::destroy(Player *self) {
     delete self;
 }
 
-void player::on_mouse_move(Player self, float x, float y) {
+void player::on_mouse_move(Player *self, float x, float y) {
     auto on_mouse_move = [](Controller *self, float x, float y) {
         self->yaw += x * SENS * 0.001f;
         self->pitch -= y * SENS * 0.001f;
@@ -134,7 +135,7 @@ void player::on_mouse_move(Player self, float x, float y) {
     }
 }
 
-void player::on_mouse_scroll(Player self, float x, float y) {
+void player::on_mouse_scroll(Player *self, float x, float y) {
     auto on_mouse_scroll = [](Controller *self, float x, float y) {
         if (y < 0) {
             self->speed *= 0.85f;
@@ -150,7 +151,7 @@ void player::on_mouse_scroll(Player self, float x, float y) {
     }
 }
 
-void player::on_mouse_button(Player self, int button_id, int action) {
+void player::on_mouse_button(Player *self, int button_id, int action) {
     if (button_id == GLFW_MOUSE_BUTTON_LEFT) {
         self->main.brush_a = action != GLFW_RELEASE;
     }
@@ -159,7 +160,7 @@ void player::on_mouse_button(Player self, int button_id, int action) {
     }
 }
 
-void player::on_key(Player self, int key_id, int action) {
+void player::on_key(Player *self, int key_id, int action) {
     auto on_key = [](Controller *self, int key_id, int action) {
         if (key_id == GLFW_KEY_W) {
             self->move_f = action != GLFW_RELEASE;
@@ -223,7 +224,7 @@ void player::on_key(Player self, int key_id, int action) {
     }
 }
 
-void player::on_resize(Player self, int size_x, int size_y) {
+void player::on_resize(Player *self, int size_x, int size_y) {
     auto on_resize = [](Controller *self, int size_x, int size_y) {
         self->aspect = float(size_x) / float(size_y);
         self->prj_dirty = true;
@@ -359,7 +360,7 @@ glm::vec3 uniform_sample_sphere(glm::vec2 urand) {
 
 #define GRAVITY EARTH_GRAV
 
-void player::update(Player self, float dt) {
+void player::update(Player *self, float dt) {
     auto update = [](Controller *self, float dt, bool no_clip) {
         self->prev_cam = self->cam;
         float const speed = (self->move_sprint ? (self->is_flying ? 10.0f : 3.0f) : 1.0f) * self->speed;
@@ -461,7 +462,7 @@ void player::update(Player self, float dt) {
                 for (int32_t yi = -2; yi <= 2; ++yi) {
                     for (int32_t zi = 0; zi <= voxel_height; ++zi) {
                         auto p = self->pos - glm::vec3(0, 0, height) + glm::vec3(xi * VOXEL_SIZE, yi * VOXEL_SIZE, zi * VOXEL_SIZE);
-                        auto in_voxel = is_solid(g_voxel_world, &p.x);
+                        auto in_voxel = voxel_world::is_solid(g_voxel_world, &p.x);
                         if (in_voxel) {
                             inside_terrain = true;
                             avg_pos += p;
@@ -497,7 +498,7 @@ void player::update(Player self, float dt) {
                                 break;
                             }
                             auto p = self->pos - glm::vec3(0, 0, height) + glm::vec3(xi * VOXEL_SIZE, yi * VOXEL_SIZE, zi * VOXEL_SIZE);
-                            auto solid = is_solid(g_voxel_world, &p.x);
+                            auto solid = voxel_world::is_solid(g_voxel_world, &p.x);
                             if (solid) {
                                 found_voxel = true;
                             }
@@ -630,7 +631,7 @@ void player::update(Player self, float dt) {
     }
 
     auto ray_pos = self->main.pos + self->main.cam_pos_offset + view_vec(&self->main);
-    self->ray_cast = ray_cast(g_voxel_world, {&ray_pos.x, &self->main.forward.x});
+    self->ray_cast = voxel_world::ray_cast(g_voxel_world, {&ray_pos.x, &self->main.forward.x});
     if (self->ray_cast.distance != -1.0f && self->ray_cast.distance < 8.0f) {
         auto cube = Box{
             glm::vec3(self->ray_cast.voxel_x, self->ray_cast.voxel_y, self->ray_cast.voxel_z) * VOXEL_SIZE,
@@ -641,7 +642,7 @@ void player::update(Player self, float dt) {
 
         if (self->main.brush_a) {
             glm::ivec3 pos = {self->ray_cast.voxel_x, self->ray_cast.voxel_y, self->ray_cast.voxel_z};
-            apply_brush_a(g_voxel_world, &pos.x);
+            voxel_world::apply_brush_a(g_voxel_world, &pos.x);
             audio::play_sound(4);
             if (!self->main.fast_placement) {
                 self->main.brush_a = false;
@@ -663,7 +664,7 @@ void player::update(Player self, float dt) {
                 glm::ivec3 pos = {self->ray_cast.voxel_x, self->ray_cast.voxel_y, self->ray_cast.voxel_z};
                 glm::ivec3 nrm = {self->ray_cast.nrm_x, self->ray_cast.nrm_y, self->ray_cast.nrm_z};
                 pos += nrm;
-                apply_brush_b(g_voxel_world, &pos.x);
+                voxel_world::apply_brush_b(g_voxel_world, &pos.x);
                 audio::play_sound(5);
                 if (!self->main.fast_placement) {
                     self->main.brush_b = false;
@@ -730,16 +731,16 @@ void get_camera(CameraState const &cam, CameraState const &prev_cam, Camera *cam
         cam.clip_to_view);
 }
 
-void player::get_camera(Player self, Camera *camera, GpuInput const *gpu_input) {
+void player::get_camera(Player *self, Camera *camera, GpuInput const *gpu_input) {
     update_camera(&self->main);
     get_camera(self->main.cam, self->main.prev_cam, camera, gpu_input, true);
 }
 
-void player::get_observer_camera(Player self, Camera *camera, GpuInput const *gpu_input) {
+void player::get_observer_camera(Player *self, Camera *camera, GpuInput const *gpu_input) {
     update_camera(&self->observer);
     get_camera(self->observer.cam, self->observer.prev_cam, camera, gpu_input, false);
 }
 
-auto player::should_draw_from_observer(Player self) -> bool {
+auto player::should_draw_from_observer(Player *self) -> bool {
     return self->viewing_observer;
 }

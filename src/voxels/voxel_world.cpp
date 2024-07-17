@@ -57,12 +57,12 @@ struct Chunk {
     std::array<glm::ivec4, BRICKS_PER_CHUNK> voxel_brick_positions{};
     std::vector<int> surface_brick_indices;
 
-    renderer::Chunk render_chunk = nullptr;
+    renderer::Chunk *render_chunk = nullptr;
     glm::vec3 pos;
     bool bricks_changed;
 
     Chunk() {
-        render_chunk = create_chunk(g_renderer);
+        render_chunk = renderer::create_chunk(g_renderer);
     }
     ~Chunk() {
         if (render_chunk != nullptr) {
@@ -73,7 +73,7 @@ struct Chunk {
 
 using Clock = std::chrono::steady_clock;
 
-struct voxel_world::State {
+struct VoxelWorld {
     std::array<std::unique_ptr<Chunk>, MAX_CHUNK_COUNT> chunks;
     Clock::time_point start_time;
     Clock::time_point prev_time;
@@ -126,7 +126,7 @@ auto get_brick_metadata(std::unique_ptr<Chunk> &chunk, auto brick_index) -> Bric
     return *reinterpret_cast<BrickMetadata *>(&chunk->voxel_brick_bitmasks[brick_index].metadata);
 }
 
-auto generate_chunk(voxel_world::VoxelWorld self, int32_t chunk_xi, int32_t chunk_yi, int32_t chunk_zi, int32_t level) {
+auto generate_chunk(VoxelWorld *self, int32_t chunk_xi, int32_t chunk_yi, int32_t chunk_zi, int32_t level) {
     if (level > 0 && chunk_xi < CHUNK_NX / 2 && chunk_yi < CHUNK_NY / 2 && chunk_zi < CHUNK_NZ / 2) {
         return;
     }
@@ -209,7 +209,7 @@ auto generate_chunk(voxel_world::VoxelWorld self, int32_t chunk_xi, int32_t chun
     self->generate_chunk1s_total += (t1 - t0).count();
 }
 
-auto generate_chunk2(voxel_world::VoxelWorld self, int32_t chunk_xi, int32_t chunk_yi, int32_t chunk_zi, int32_t level, bool update = true) {
+auto generate_chunk2(VoxelWorld *self, int32_t chunk_xi, int32_t chunk_yi, int32_t chunk_zi, int32_t level, bool update = true) {
     int32_t chunk_index = chunk_xi + chunk_yi * CHUNK_NX + chunk_zi * CHUNK_NX * CHUNK_NY + level * CHUNK_NX * CHUNK_NY * CHUNK_NZ;
     auto &chunk = self->chunks[chunk_index];
     if (!chunk) {
@@ -476,7 +476,7 @@ auto generate_chunk2(voxel_world::VoxelWorld self, int32_t chunk_xi, int32_t chu
     }
 }
 
-auto generate_all_chunks(voxel_world::VoxelWorld self) {
+auto generate_all_chunks(VoxelWorld *self) {
     std::vector<std::pair<thread_pool::Task, void *>> tasks;
     tasks.reserve(CHUNK_NX * CHUNK_NY * CHUNK_NZ * CHUNK_LEVELS);
 
@@ -486,7 +486,7 @@ auto generate_all_chunks(voxel_world::VoxelWorld self) {
     auto generate_chunk2s_main_total_ns = uint64_t{};
 
     struct GenChunkArgs {
-        voxel_world::VoxelWorld self;
+        VoxelWorld *self;
         int32_t chunk_xi;
         int32_t chunk_yi;
         int32_t chunk_zi;
@@ -598,7 +598,7 @@ constexpr auto positive_mod(auto x, auto d) {
     return ((x % d) + d) % d;
 }
 
-auto get_voxel_is_solid(voxel_world::VoxelWorld self, ivec3 p) -> bool {
+auto get_voxel_is_solid(VoxelWorld *self, ivec3 p) -> bool {
     ivec3 chunk_i = p / int(VOXEL_CHUNK_SIZE);
 
     if (any(lessThan(chunk_i, ivec3(0))) || any(greaterThanEqual(chunk_i, ivec3(CHUNK_NX, CHUNK_NY, CHUNK_NZ)))) {
@@ -620,7 +620,7 @@ auto get_voxel_is_solid(voxel_world::VoxelWorld self, ivec3 p) -> bool {
     return ((brick_bitmask.bits[voxel_word_index] >> voxel_in_word_index) & 1) != 0;
 }
 
-void set_voxel_bit(voxel_world::VoxelWorld self, ivec3 p, bool value) {
+void set_voxel_bit(VoxelWorld *self, ivec3 p, bool value) {
     ivec3 chunk_i = p / int(VOXEL_CHUNK_SIZE);
 
     if (any(lessThan(chunk_i, ivec3(0))) || any(greaterThanEqual(chunk_i, ivec3(CHUNK_NX, CHUNK_NY, CHUNK_NZ)))) {
@@ -701,7 +701,7 @@ void set_voxel_bit(voxel_world::VoxelWorld self, ivec3 p, bool value) {
 
 #include "pack_unpack.inl"
 
-void set_voxel_attrib(voxel_world::VoxelWorld self, ivec3 p, Voxel value) {
+void set_voxel_attrib(VoxelWorld *self, ivec3 p, Voxel value) {
     ivec3 chunk_i = p / int(VOXEL_CHUNK_SIZE);
 
     if (any(lessThan(chunk_i, ivec3(0))) || any(greaterThanEqual(chunk_i, ivec3(CHUNK_NX, CHUNK_NY, CHUNK_NZ)))) {
@@ -736,7 +736,7 @@ void set_voxel_attrib(voxel_world::VoxelWorld self, ivec3 p, Voxel value) {
     render_attrib_brick->packed_voxels[voxel_index] = new_value;
 }
 
-void set_voxel_sim_attrib(voxel_world::VoxelWorld self, ivec3 p, float density) {
+void set_voxel_sim_attrib(VoxelWorld *self, ivec3 p, float density) {
     ivec3 chunk_i = p / int(VOXEL_CHUNK_SIZE);
 
     if (any(lessThan(chunk_i, ivec3(0))) || any(greaterThanEqual(chunk_i, ivec3(CHUNK_NX, CHUNK_NY, CHUNK_NZ)))) {
@@ -771,7 +771,7 @@ void set_voxel_sim_attrib(voxel_world::VoxelWorld self, ivec3 p, float density) 
     sim_attrib_brick->densities[voxel_index] = new_value;
 }
 
-auto get_voxel_sim_attrib(voxel_world::VoxelWorld self, ivec3 p, bool generate) -> float {
+auto get_voxel_sim_attrib(VoxelWorld *self, ivec3 p, bool generate) -> float {
     ivec3 chunk_i = p / int(VOXEL_CHUNK_SIZE);
 
     if (any(lessThan(chunk_i, ivec3(0))) || any(greaterThanEqual(chunk_i, ivec3(CHUNK_NX, CHUNK_NY, CHUNK_NZ)))) {
@@ -808,7 +808,7 @@ auto get_voxel_sim_attrib(voxel_world::VoxelWorld self, ivec3 p, bool generate) 
     return sim_attrib_brick->densities[voxel_index];
 }
 
-auto get_voxel_attrib(voxel_world::VoxelWorld self, ivec3 p) -> Voxel {
+auto get_voxel_attrib(VoxelWorld *self, ivec3 p) -> Voxel {
     ivec3 chunk_i = p / int(VOXEL_CHUNK_SIZE);
 
     if (any(lessThan(chunk_i, ivec3(0))) || any(greaterThanEqual(chunk_i, ivec3(CHUNK_NX, CHUNK_NY, CHUNK_NZ)))) {
@@ -832,7 +832,7 @@ auto get_voxel_attrib(voxel_world::VoxelWorld self, ivec3 p) -> Voxel {
     return unpack_voxel(brick_attribs->packed_voxels[voxel_index]);
 }
 
-auto dda_voxels(voxel_world::VoxelWorld self, Ray ray, int max_iter, float max_dist) -> std::tuple<ivec3, ivec3, float> {
+auto dda_voxels(VoxelWorld *self, Ray ray, int max_iter, float max_dist) -> std::tuple<ivec3, ivec3, float> {
     using Line = std::array<vec3, 3>;
     using Point = std::array<vec3, 3>;
     using Box = std::array<vec3, 3>;
@@ -892,17 +892,18 @@ auto dda_voxels(voxel_world::VoxelWorld self, Ray ray, int max_iter, float max_d
     return {ivec3{0, 0, 0}, {0, 0, 0}, -1.0f};
 }
 
-void voxel_world::init(VoxelWorld &self) {
-    self = new State{};
+auto voxel_world::create() -> VoxelWorld * {
+    auto *self = new VoxelWorld{};
     self->start_time = Clock::now();
     self->prev_time = self->start_time;
     generate_all_chunks(self);
+    return self;
 }
-void voxel_world::deinit(VoxelWorld self) {
+void voxel_world::destroy(VoxelWorld *self) {
     delete self;
 }
 
-void voxel_world::update(VoxelWorld self) {
+void voxel_world::update(VoxelWorld *self) {
     auto now = Clock::now();
     auto elapsed = std::chrono::duration<float>(now - self->prev_time).count();
     auto time = std::chrono::duration<float>(now - self->start_time).count();
@@ -955,7 +956,7 @@ void voxel_world::update(VoxelWorld self) {
             generate_chunk2(self, xi, yi, zi, li);
             brick_count = chunk->surface_brick_indices.size();
             if (chunk->render_chunk == nullptr) {
-                chunk->render_chunk = create_chunk(g_renderer);
+                chunk->render_chunk = renderer::create_chunk(g_renderer);
             }
             update(chunk->render_chunk, brick_count, chunk->surface_brick_indices.data(), chunk->voxel_brick_bitmasks.data(), reinterpret_cast<VoxelRenderAttribBrick const *const *>(chunk->voxel_brick_render_attribs.data()), (int const *)chunk->voxel_brick_positions.data());
             chunk->bricks_changed = false;
@@ -972,7 +973,7 @@ void voxel_world::update(VoxelWorld self) {
         return;                \
     }
 
-void voxel_world::load_model(VoxelWorld self, char const *path) {
+void voxel_world::load_model(VoxelWorld *self, char const *path) {
     auto *file_input = GvoxInputStream{};
     {
         auto file = std::ifstream{path, std::ios::binary};
@@ -1066,17 +1067,17 @@ void voxel_world::load_model(VoxelWorld self, char const *path) {
     gvox_destroy_parser(file_parser);
 }
 
-auto voxel_world::ray_cast(VoxelWorld self, RayCastConfig const &config) -> RayCastHit {
+auto voxel_world::ray_cast(VoxelWorld *self, RayCastConfig const &config) -> RayCastHit {
     auto [pos, face, dist] = dda_voxels(self, Ray{{config.ray_o[0], config.ray_o[1], config.ray_o[2]}, {config.ray_d[0], config.ray_d[1], config.ray_d[2]}}, config.max_iter, config.max_distance);
     return RayCastHit{.voxel_x = pos.x, .voxel_y = pos.y, .voxel_z = pos.z, .nrm_x = face.x, .nrm_y = face.y, .nrm_z = face.z, .distance = dist};
 }
 
-auto voxel_world::is_solid(VoxelWorld self, float const *pos) -> bool {
+auto voxel_world::is_solid(VoxelWorld *self, float const *pos) -> bool {
     auto p = glm::ivec3(glm::vec3(pos[0], pos[1], pos[2]) * VOXEL_SCL);
     return get_voxel_is_solid(self, p);
 }
 
-void fix_normals(voxel_world::VoxelWorld self, int const *pos) {
+void fix_normals(VoxelWorld *self, int const *pos) {
     for (int zi = -16; zi <= 16; ++zi) {
         for (int yi = -16; yi <= 16; ++yi) {
             for (int xi = -16; xi <= 16; ++xi) {
@@ -1107,7 +1108,7 @@ void fix_normals(voxel_world::VoxelWorld self, int const *pos) {
     }
 }
 
-void voxel_world::apply_brush_a(VoxelWorld self, int const *pos) {
+void voxel_world::apply_brush_a(VoxelWorld *self, int const *pos) {
     // place brush
 
     for (int zi = -15; zi <= 15; ++zi) {
@@ -1127,7 +1128,7 @@ void voxel_world::apply_brush_a(VoxelWorld self, int const *pos) {
     fix_normals(self, pos);
 }
 
-void voxel_world::apply_brush_b(VoxelWorld self, int const *pos) {
+void voxel_world::apply_brush_b(VoxelWorld *self, int const *pos) {
     // break brush
 
     for (int zi = -15; zi <= 15; ++zi) {

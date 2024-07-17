@@ -37,7 +37,7 @@
 
 #undef OPAQUE
 
-struct renderer::ChunkState {
+struct renderer::Chunk {
     daxa::BufferId brick_data;
     daxa::BufferId blas_buffer;
     daxa::BufferId blas_scratch_buffer;
@@ -55,7 +55,7 @@ struct renderer::ChunkState {
 
 using Clock = std::chrono::steady_clock;
 
-struct renderer::State {
+struct Renderer {
     GpuContext gpu_context;
     daxa::ImGuiRenderer imgui_renderer;
     daxa::Fsr2Context fsr2_context;
@@ -63,8 +63,8 @@ struct renderer::State {
     daxa::TaskGraph loop_task_graph;
     daxa::TaskGraph loop_empty_task_graph;
 
-    std::vector<Chunk> chunks_to_update;
-    std::vector<Chunk> chunks_to_move;
+    std::vector<renderer::Chunk *> chunks_to_update;
+    std::vector<renderer::Chunk *> chunks_to_move;
     std::vector<VoxelChunk> chunks;
     TemporalBuffer chunks_buffer;
 
@@ -86,8 +86,8 @@ struct renderer::State {
     Clock::time_point start_time;
     Clock::time_point prev_time;
 
-    DebugShapeRenderer debug_shapes;
-    VoxelRasterizer voxel_rasterizer;
+    renderer::DebugShapeRenderer debug_shapes;
+    renderer::VoxelRasterizer voxel_rasterizer;
 
     bool use_fsr2 = false;
     bool draw_with_rt = false;
@@ -138,7 +138,7 @@ auto composite(GpuContext &gpu_context, daxa::TaskGraph &task_graph, daxa::TaskI
     return composited_image;
 }
 
-auto upscale(renderer::Renderer self, daxa::TaskGraph &task_graph, daxa::TaskImageView color, daxa::TaskImageView depth, daxa::TaskImageView motion_vectors) -> daxa::TaskImageView {
+auto upscale(Renderer *self, daxa::TaskGraph &task_graph, daxa::TaskImageView color, daxa::TaskImageView depth, daxa::TaskImageView motion_vectors) -> daxa::TaskImageView {
     if (self->use_fsr2 && !self->draw_from_observer) {
         auto upscaled_image = self->loop_task_graph.create_transient_image({
             .format = daxa::Format::R16G16B16A16_SFLOAT,
@@ -177,7 +177,7 @@ auto upscale(renderer::Renderer self, daxa::TaskGraph &task_graph, daxa::TaskIma
     }
 }
 
-auto post_process_to_swapchain(renderer::Renderer self, daxa::TaskGraph &task_graph, daxa::TaskImageView color) {
+auto post_process_to_swapchain(Renderer *self, daxa::TaskGraph &task_graph, daxa::TaskImageView color) {
     self->gpu_context.add(RasterTask<PostProcessing::Task, PostProcessingPush, NoTaskInfo>{
         .vert_source = daxa::ShaderFile{"FULL_SCREEN_TRIANGLE_VERTEX_SHADER"},
         .frag_source = daxa::ShaderFile{"post_processing.glsl"},
@@ -204,7 +204,7 @@ auto post_process_to_swapchain(renderer::Renderer self, daxa::TaskGraph &task_gr
     });
 }
 
-void record_tasks(renderer::Renderer self) {
+void record_tasks(Renderer *self) {
     {
         self->loop_empty_task_graph = daxa::TaskGraph({
             .device = self->gpu_context.device,
@@ -322,8 +322,8 @@ auto get_native_platform(void * /*unused*/) -> daxa::NativeWindowPlatform {
 #endif
 }
 
-void renderer::init(Renderer &self, void *glfw_window_ptr) {
-    self = new State{};
+auto renderer::create(void *glfw_window_ptr) -> Renderer * {
+    auto *self = new Renderer{};
 
     auto *native_window_handle = get_native_handle(glfw_window_ptr);
     auto native_window_platform = get_native_platform(glfw_window_ptr);
@@ -374,9 +374,10 @@ void renderer::init(Renderer &self, void *glfw_window_ptr) {
     self->prev_time = Clock::now();
 
     self->debug_shapes.draw_from_observer = &self->draw_from_observer;
+    return self;
 }
 
-void renderer::deinit(Renderer self) {
+void renderer::destroy(Renderer *self) {
     self->gpu_context.device.wait_idle();
     self->gpu_context.device.collect_garbage();
     self->gpu_context.device.destroy_tlas(self->tlas);
@@ -387,7 +388,7 @@ void renderer::deinit(Renderer self) {
     delete self;
 }
 
-void renderer::on_resize(Renderer self, int size_x, int size_y) {
+void renderer::on_resize(Renderer *self, int size_x, int size_y) {
     self->gpu_context.output_resolution = daxa_u32vec2{uint32_t(size_x), uint32_t(size_y)};
     self->gpu_context.render_resolution = daxa_u32vec2{uint32_t(size_x), uint32_t(size_y)};
     self->gpu_context.next_lower_po2_render_size = daxa_u32vec2{find_next_lower_po2(self->gpu_context.render_resolution.x), find_next_lower_po2(self->gpu_context.render_resolution.y)};
@@ -412,7 +413,7 @@ void renderer::on_resize(Renderer self, int size_x, int size_y) {
     record_tasks(self);
 }
 
-void update(renderer::Renderer self) {
+void update(Renderer *self) {
     self->task_brick_data.set_buffers({.buffers = self->tracked_brick_data});
     self->task_chunk_blases.set_blas({.blas = self->tracked_blases});
 
@@ -650,7 +651,7 @@ void update(renderer::Renderer self) {
     self->needs_update = false;
 }
 
-void render_ui(renderer::Renderer self) {
+void render_ui(Renderer *self) {
     float avg_delta_time = 0.0f;
     for (int i = 0; i < self->delta_times_count; ++i) {
         avg_delta_time += self->delta_times[i];
@@ -781,13 +782,13 @@ void render_ui(renderer::Renderer self) {
     ImGui::Render();
 }
 
-void renderer::draw(Renderer self, player::Player player, voxel_world::VoxelWorld voxel_world) {
+void renderer::draw(Renderer *self, Player *player, VoxelWorld *voxel_world) {
     if (self->needs_update) {
         ::update(self);
     }
 
     {
-        auto new_draw_from_observer = should_draw_from_observer(player);
+        auto new_draw_from_observer = player::should_draw_from_observer(player);
         if (self->draw_from_observer != new_draw_from_observer) {
             self->draw_from_observer = new_draw_from_observer;
             self->needs_record = true;
@@ -825,8 +826,8 @@ void renderer::draw(Renderer self, player::Player player, voxel_world::VoxelWorl
     } else {
         self->gpu_input.jitter = {0, 0};
     }
-    get_camera(player, &self->gpu_input.cam, &self->gpu_input);
-    get_observer_camera(player, &self->gpu_input.observer_cam, &self->gpu_input);
+    player::get_camera(player, &self->gpu_input.cam, &self->gpu_input);
+    player::get_observer_camera(player, &self->gpu_input.observer_cam, &self->gpu_input);
 
     if (self->tracked_brick_data.empty()) {
         self->loop_empty_task_graph.execute({});
@@ -844,7 +845,7 @@ void renderer::draw(Renderer self, player::Player player, voxel_world::VoxelWorl
     ++self->gpu_input.frame_index;
 }
 
-void renderer::toggle_vsync(Renderer self) {
+void renderer::toggle_vsync(Renderer *self) {
     if (self->gpu_context.swapchain.info().present_mode == daxa::PresentMode::IMMEDIATE) {
         self->gpu_context.swapchain.set_present_mode(daxa::PresentMode::FIFO);
     } else {
@@ -852,45 +853,45 @@ void renderer::toggle_vsync(Renderer self) {
     }
 }
 
-void renderer::toggle_fsr2(Renderer self) {
+void renderer::toggle_fsr2(Renderer *self) {
     self->use_fsr2 = !self->use_fsr2;
     self->needs_record = true;
 }
 
-void renderer::toggle_rt(Renderer self) {
+void renderer::toggle_rt(Renderer *self) {
     self->draw_with_rt = !self->draw_with_rt;
     self->needs_record = true;
 }
 
-void renderer::toggle_shadows(Renderer self) {
+void renderer::toggle_shadows(Renderer *self) {
     self->draw_shadows = !self->draw_shadows;
     self->needs_record = true;
 }
 
-void renderer::submit_debug_lines(Renderer self, Line const *lines, int line_n) {
+void renderer::submit_debug_lines(Renderer *self, Line const *lines, int line_n) {
     submit_debug_lines(&self->debug_shapes, lines, line_n);
 }
 
-void renderer::submit_debug_points(Renderer self, Point const *points, int point_n) {
+void renderer::submit_debug_points(Renderer *self, Point const *points, int point_n) {
     submit_debug_points(&self->debug_shapes, points, point_n);
 }
 
-void renderer::submit_debug_box_lines(Renderer self, Box const *cubes, int cube_n) {
+void renderer::submit_debug_box_lines(Renderer *self, Box const *cubes, int cube_n) {
     submit_debug_box_lines(&self->debug_shapes, cubes, cube_n);
 }
 
-auto renderer::create_chunk(Renderer self) -> Chunk {
-    return new ChunkState{};
+auto renderer::create_chunk(Renderer *self) -> Chunk * {
+    return new Chunk{};
 }
 
-void renderer::destroy_chunk(Renderer self, Chunk chunk) {
+void renderer::destroy_chunk(Renderer *self, Chunk *chunk) {
     if (!chunk->brick_data.is_empty()) {
         self->gpu_context.device.destroy_buffer(chunk->brick_data);
         self->gpu_context.device.destroy_buffer(chunk->blas_buffer);
     }
 }
 
-void renderer::update(Chunk self, int brick_count, int const *surface_brick_indices, VoxelBrickBitmask const *bitmasks, VoxelRenderAttribBrick const *const *attribs, int const *positions) {
+void renderer::update(Chunk *self, int brick_count, int const *surface_brick_indices, VoxelBrickBitmask const *bitmasks, VoxelRenderAttribBrick const *const *attribs, int const *positions) {
     self->needs_update = true;
     self->brick_count = brick_count;
 
@@ -935,7 +936,7 @@ void renderer::update(Chunk self, int brick_count, int const *surface_brick_indi
     }
 }
 
-void renderer::render_chunk(Renderer self, Chunk chunk, float const *pos) {
+void renderer::render_chunk(Renderer *self, Chunk *chunk, float const *pos) {
     auto brick_count = chunk->brick_count;
 
     auto meshes_size = round_up_div((sizeof(VoxelBrickMesh) * brick_count), 128) * 128;
