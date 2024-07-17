@@ -27,9 +27,6 @@ float hash11(float p) {
 #define VISUALIZE_OVERDRAW (ENABLE_DEBUG_VIS && 0)
 #define VISUALIZE_BRICK_SIZE 0
 
-const vec3 SKY_COL = vec3(20, 20, 255) / 255;
-const vec3 SUN_COL = vec3(0.9, 0.7, 0.5) * 2;
-
 void visualize_overdraw() {
     uint overdraw = texelFetch(daxa_utexture2D(push.uses.debug_overdraw), ivec2(gl_GlobalInvocationID.xy), 0).x;
     const uint threshold = 10;
@@ -38,43 +35,43 @@ void visualize_overdraw() {
 
 void visualize_primitive_size() {
     if (visbuffer_id == INVALID_MESHLET_INDEX) {
-        f_out = vec4(SKY_COL, 1);
-    } else {
-        VisbufferPayload payload = unpack(PackedVisbufferPayload(visbuffer_id));
-        VoxelMeshlet meshlet = deref(advance(push.uses.meshlet_allocator, payload.meshlet_id));
-        PackedVoxelBrickFace packed_face = meshlet.faces[payload.face_id];
-        VoxelBrickFace face = unpack(packed_face);
-
-        VoxelMeshletMetadata metadata = deref(advance(push.uses.meshlet_metadata, payload.meshlet_id));
-        if (!is_valid_index(daxa_BufferPtr(BrickInstance)(as_address(push.uses.brick_instance_allocator)), metadata.brick_instance_index)) {
-            return;
-        }
-
-        BrickInstance brick_instance = deref(advance(push.uses.brick_instance_allocator, metadata.brick_instance_index));
-
-        VoxelChunk voxel_chunk = deref(advance(push.uses.chunks, brick_instance.chunk_index));
-        uint voxel_index = face.pos.x + face.pos.y * VOXEL_BRICK_SIZE + face.pos.z * VOXEL_BRICK_SIZE * VOXEL_BRICK_SIZE;
-        Voxel voxel = unpack_voxel(deref(advance(voxel_chunk.attribs, brick_instance.brick_index)).packed_voxels[voxel_index]);
-
-        ivec4 pos_scl = deref(advance(voxel_chunk.pos_scl, brick_instance.brick_index));
-        ivec3 pos = ivec3(voxel_chunk.pos * VOXEL_CHUNK_SIZE) + pos_scl.xyz * int(VOXEL_BRICK_SIZE) + ivec3(face.pos);
-        int scl = pos_scl.w + 8;
-        const float SCL = (float(1 << scl) / float(1 << 8));
-
-        vec3 ndc_min;
-        vec3 ndc_max;
-
-        float size_x = brick_extent_pixels(push.uses.gpu_input, push.uses.chunks, brick_instance).x / VOXEL_BRICK_SIZE;
-
-        float size = size_x;
-
-        const float threshold = 5;
-
-        // vec3 albedo = hsv2rgb(vec3(clamp(float(size) / threshold, 0, 1) * 0.4 + 0.65, 0.99, size > threshold ? exp(-float(size - threshold) * 0.5 / threshold) * 0.8 + 0.2 : 1));
-        vec3 albedo = size < threshold ? (size < 4 ? vec3(0.4, 0.4, 0.9) : vec3(0.2, 0.9, 0.2)) : vec3(0.9, 0.2, 0.2);
-
-        f_out = vec4(albedo, 1);
+        return;
     }
+
+    VisbufferPayload payload = unpack(PackedVisbufferPayload(visbuffer_id));
+    VoxelMeshlet meshlet = deref(advance(push.uses.meshlet_allocator, payload.meshlet_id));
+    PackedVoxelBrickFace packed_face = meshlet.faces[payload.face_id];
+    VoxelBrickFace face = unpack(packed_face);
+
+    VoxelMeshletMetadata metadata = deref(advance(push.uses.meshlet_metadata, payload.meshlet_id));
+    if (!is_valid_index(daxa_BufferPtr(BrickInstance)(as_address(push.uses.brick_instance_allocator)), metadata.brick_instance_index)) {
+        return;
+    }
+
+    BrickInstance brick_instance = deref(advance(push.uses.brick_instance_allocator, metadata.brick_instance_index));
+
+    VoxelChunk voxel_chunk = deref(advance(push.uses.chunks, brick_instance.chunk_index));
+    uint voxel_index = face.pos.x + face.pos.y * VOXEL_BRICK_SIZE + face.pos.z * VOXEL_BRICK_SIZE * VOXEL_BRICK_SIZE;
+    Voxel voxel = unpack_voxel(deref(advance(voxel_chunk.attribs, brick_instance.brick_index)).packed_voxels[voxel_index]);
+
+    ivec4 pos_scl = deref(advance(voxel_chunk.pos_scl, brick_instance.brick_index));
+    ivec3 pos = ivec3(voxel_chunk.pos * VOXEL_CHUNK_SIZE) + pos_scl.xyz * int(VOXEL_BRICK_SIZE) + ivec3(face.pos);
+    int scl = pos_scl.w + 8;
+    const float SCL = (float(1 << scl) / float(1 << 8));
+
+    vec3 ndc_min;
+    vec3 ndc_max;
+
+    float size_x = brick_extent_pixels(push.uses.gpu_input, push.uses.chunks, brick_instance).x / VOXEL_BRICK_SIZE;
+
+    float size = size_x;
+
+    const float threshold = 5;
+
+    // vec3 albedo = hsv2rgb(vec3(clamp(float(size) / threshold, 0, 1) * 0.4 + 0.65, 0.99, size > threshold ? exp(-float(size - threshold) * 0.5 / threshold) * 0.8 + 0.2 : 1));
+    vec3 albedo = size < threshold ? (size < 4 ? vec3(0.4, 0.4, 0.9) : vec3(0.2, 0.9, 0.2)) : vec3(0.9, 0.2, 0.2);
+
+    f_out = vec4(albedo, 1);
 }
 
 void shade() {

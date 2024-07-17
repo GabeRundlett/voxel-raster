@@ -11,9 +11,6 @@ DAXA_DECL_PUSH_CONSTANT(TracePrimaryPush, push)
 
 layout(location = PAYLOAD_LOC) rayPayloadEXT PackedRayPayload prd;
 
-const vec3 SKY_COL = vec3(20, 20, 255) / 255;
-const vec3 SUN_COL = vec3(0.9, 0.7, 0.5) * 2;
-
 void main() {
     const ivec2 px = ivec2(gl_LaunchIDEXT.xy);
 

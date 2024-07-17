@@ -2,6 +2,33 @@
 
 #define PAYLOAD_LOC 0
 
+struct Ray {
+    vec3 origin;
+    vec3 direction;
+};
+
+#if defined(VOXEL_RT_ANY_HIT)
+struct RayPayload {
+    bool hit;
+};
+struct PackedRayPayload {
+    bool hit;
+};
+
+PackedRayPayload pack_ray_payload(bool hit) {
+    return PackedRayPayload(hit);
+}
+
+PackedRayPayload miss_ray_payload() {
+    return pack_ray_payload(false);
+}
+
+RayPayload unpack_ray_payload(PackedRayPayload payload) {
+    RayPayload result;
+    result.hit = payload.hit;
+    return result;
+}
+#else
 struct RayPayload {
     uint chunk_id;
     uint brick_id;
@@ -15,11 +42,6 @@ struct PackedRayPayload {
 
 struct PackedHitAttribute {
     uint data;
-};
-
-struct Ray {
-    vec3 origin;
-    vec3 direction;
 };
 
 ivec3 unpack_hit_attribute(PackedHitAttribute hit_attrib) {
@@ -49,6 +71,7 @@ RayPayload unpack_ray_payload(PackedRayPayload payload) {
     result.voxel_i = unpack_hit_attribute(PackedHitAttribute(payload.data1 % (VOXEL_BRICK_SIZE * VOXEL_BRICK_SIZE * VOXEL_BRICK_SIZE * 2)));
     return result;
 }
+#endif
 
 float hitAabb(const Aabb aabb, const Ray r, bool guaranteed) {
     if (all(greaterThanEqual(r.origin, aabb.minimum)) && all(lessThanEqual(r.origin, aabb.maximum))) {
@@ -93,13 +116,16 @@ vec3 hit_aabb_nrm(const Aabb aabb, const Ray r, bool guaranteed) {
     }
 }
 
-
 #if DAXA_SHADER_STAGE == DAXA_SHADER_STAGE_INTERSECTION || DAXA_SHADER_STAGE == DAXA_SHADER_STAGE_CLOSEST_HIT
+#if !defined(VOXEL_RT_ANY_HIT)
 hitAttributeEXT PackedHitAttribute hit_attrib;
+#endif
 #else
 #extension GL_EXT_ray_query : enable
 rayQueryEXT ray_query;
+#if !defined(VOXEL_RT_ANY_HIT)
 PackedHitAttribute hit_attrib;
+#endif
 #endif
 
 #if DAXA_SHADER_STAGE == DAXA_SHADER_STAGE_INTERSECTION || DAXA_SHADER_STAGE == DAXA_SHADER_STAGE_COMPUTE
@@ -144,6 +170,16 @@ void intersect_voxel_brick() {
                          daxa_BufferPtr(VoxelBrickBitmask)(deref(voxel_chunk).bitmasks[PRIMITIVE_INDEX]),
                          daxa_BufferPtr(ivec4)(deref(voxel_chunk).pos_scl[PRIMITIVE_INDEX]),
                          uint(mapPos.x), uint(mapPos.y), uint(mapPos.z)) == 1) {
+#if defined(VOXEL_RT_ANY_HIT)
+                // NOTE: tHit is "wrong" here, but we don't care because this is a specialization
+                // to help potentially save registers for raycasts that don't care about the dist
+                // and instead just want to know if there is any hit at all (such as shadows)
+#if DAXA_SHADER_STAGE == DAXA_SHADER_STAGE_INTERSECTION
+                reportIntersectionEXT(tHit, 0);
+#else
+                rayQueryGenerateIntersectionEXT(ray_query, tHit);
+#endif
+#else
                 aabb.minimum += vec3(mapPos) * VOXEL_SIZE;
                 aabb.maximum = aabb.minimum + VOXEL_SIZE;
                 tHit += hitAabb(aabb, ray, true);
@@ -155,6 +191,7 @@ void intersect_voxel_brick() {
                     hit_attrib = pack_hit_attribute(mapPos);
                     rayQueryGenerateIntersectionEXT(ray_query, tHit);
                 }
+#endif
 #endif
                 break;
             }
@@ -178,7 +215,11 @@ void main() {
 #elif DAXA_SHADER_STAGE == DAXA_SHADER_STAGE_CLOSEST_HIT
 layout(location = PAYLOAD_LOC) rayPayloadInEXT PackedRayPayload prd;
 void main() {
+#if defined(VOXEL_RT_ANY_HIT)
+    prd = pack_ray_payload(true);
+#else
     prd = pack_ray_payload(gl_InstanceCustomIndexEXT, gl_PrimitiveID, hit_attrib);
+#endif
 }
 #elif DAXA_SHADER_STAGE == DAXA_SHADER_STAGE_MISS
 layout(location = PAYLOAD_LOC) rayPayloadInEXT PackedRayPayload prd;

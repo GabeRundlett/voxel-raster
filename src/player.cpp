@@ -73,7 +73,7 @@ void clear_move_state(Controller *self) {
     self->move_r = false;
     self->move_u = false;
     self->move_d = false;
-    self->move_flat = false;
+    self->move_flat = true;
     self->move_sprint = false;
     self->rot_dirty = true;
     self->trn_dirty = true;
@@ -102,8 +102,7 @@ auto player::create() -> Player * {
     self->main.pitch = M_PI * 0.5f;
     self->main.speed = 1.5f;
 
-    self->main.rot_dirty = true;
-    self->main.prj_dirty = true;
+    clear_move_state(&self->main);
     self->main.is_flying = true;
 
     self->main.prev_footstep_time = Clock::now();
