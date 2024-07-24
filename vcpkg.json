@@ -6,7 +6,6 @@
     {
       "name": "daxa",
       "features": [
-        "utils-pipeline-manager-spirv-validation",
         "utils-imgui",
         "utils-mem",
         "utils-pipeline-manager-glslang",

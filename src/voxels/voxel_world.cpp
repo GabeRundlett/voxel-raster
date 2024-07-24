@@ -21,6 +21,7 @@
 #include <array>
 #include <vector>
 #include <thread>
+#include <filesystem>
 
 #include "generation/generation.hpp"
 
@@ -598,8 +599,13 @@ constexpr auto positive_mod(auto x, auto d) {
     return ((x % d) + d) % d;
 }
 
+auto get_chunk_i(ivec3 p) {
+    // NOTE: subtracting 1 from negatives, since I want to round down
+    return p / int(VOXEL_CHUNK_SIZE) + (sign(p) - 1) / 2;
+}
+
 auto get_voxel_is_solid(VoxelWorld *self, ivec3 p) -> bool {
-    ivec3 chunk_i = p / int(VOXEL_CHUNK_SIZE);
+    ivec3 chunk_i = get_chunk_i(p);
 
     if (any(lessThan(chunk_i, ivec3(0))) || any(greaterThanEqual(chunk_i, ivec3(CHUNK_NX, CHUNK_NY, CHUNK_NZ)))) {
         return false;
@@ -621,7 +627,7 @@ auto get_voxel_is_solid(VoxelWorld *self, ivec3 p) -> bool {
 }
 
 void set_voxel_bit(VoxelWorld *self, ivec3 p, bool value) {
-    ivec3 chunk_i = p / int(VOXEL_CHUNK_SIZE);
+    ivec3 chunk_i = get_chunk_i(p);
 
     if (any(lessThan(chunk_i, ivec3(0))) || any(greaterThanEqual(chunk_i, ivec3(CHUNK_NX, CHUNK_NY, CHUNK_NZ)))) {
         return;
@@ -702,7 +708,7 @@ void set_voxel_bit(VoxelWorld *self, ivec3 p, bool value) {
 #include "pack_unpack.inl"
 
 void set_voxel_attrib(VoxelWorld *self, ivec3 p, Voxel value) {
-    ivec3 chunk_i = p / int(VOXEL_CHUNK_SIZE);
+    ivec3 chunk_i = get_chunk_i(p);
 
     if (any(lessThan(chunk_i, ivec3(0))) || any(greaterThanEqual(chunk_i, ivec3(CHUNK_NX, CHUNK_NY, CHUNK_NZ)))) {
         return;
@@ -737,7 +743,7 @@ void set_voxel_attrib(VoxelWorld *self, ivec3 p, Voxel value) {
 }
 
 void set_voxel_sim_attrib(VoxelWorld *self, ivec3 p, float density) {
-    ivec3 chunk_i = p / int(VOXEL_CHUNK_SIZE);
+    ivec3 chunk_i = get_chunk_i(p);
 
     if (any(lessThan(chunk_i, ivec3(0))) || any(greaterThanEqual(chunk_i, ivec3(CHUNK_NX, CHUNK_NY, CHUNK_NZ)))) {
         return;
@@ -772,7 +778,7 @@ void set_voxel_sim_attrib(VoxelWorld *self, ivec3 p, float density) {
 }
 
 auto get_voxel_sim_attrib(VoxelWorld *self, ivec3 p, bool generate) -> float {
-    ivec3 chunk_i = p / int(VOXEL_CHUNK_SIZE);
+    ivec3 chunk_i = get_chunk_i(p);
 
     if (any(lessThan(chunk_i, ivec3(0))) || any(greaterThanEqual(chunk_i, ivec3(CHUNK_NX, CHUNK_NY, CHUNK_NZ)))) {
         return 0;
@@ -809,7 +815,7 @@ auto get_voxel_sim_attrib(VoxelWorld *self, ivec3 p, bool generate) -> float {
 }
 
 auto get_voxel_attrib(VoxelWorld *self, ivec3 p) -> Voxel {
-    ivec3 chunk_i = p / int(VOXEL_CHUNK_SIZE);
+    ivec3 chunk_i = get_chunk_i(p);
 
     if (any(lessThan(chunk_i, ivec3(0))) || any(greaterThanEqual(chunk_i, ivec3(CHUNK_NX, CHUNK_NY, CHUNK_NZ)))) {
         return {};
