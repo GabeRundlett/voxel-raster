@@ -175,9 +175,9 @@ void intersect_voxel_brick() {
                 // to help potentially save registers for raycasts that don't care about the dist
                 // and instead just want to know if there is any hit at all (such as shadows)
 #if DAXA_SHADER_STAGE == DAXA_SHADER_STAGE_INTERSECTION
-                reportIntersectionEXT(tHit, 0);
+                reportIntersectionEXT(1, 0);
 #else
-                rayQueryGenerateIntersectionEXT(ray_query, tHit);
+                rayQueryGenerateIntersectionEXT(ray_query, 1);
 #endif
 #else
                 aabb.minimum += vec3(mapPos) * VOXEL_SIZE;

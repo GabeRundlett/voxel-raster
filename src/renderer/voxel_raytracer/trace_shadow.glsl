@@ -45,7 +45,7 @@ void main() {
             ray_flags, cull_mask, sbt_record_offset, sbt_record_stride, miss_index,
             ray_pos, t_min, ray_dir, t_max, PAYLOAD_LOC);
 
-        if (!prd.hit) {
+        if (prd == miss_ray_payload()) {
             hit = 1;
         }
     }
