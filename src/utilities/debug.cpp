@@ -6,7 +6,7 @@
 #include <iostream>
 #include <imgui.h>
 
-struct debug_utils::ConsoleState {
+struct Console {
     char input_buffer[256]{};
     std::vector<std::string> items;
     ImGuiTextFilter filter;
@@ -15,22 +15,24 @@ struct debug_utils::ConsoleState {
     std::shared_ptr<std::mutex> items_mtx = std::make_shared<std::mutex>();
 };
 
-void debug_utils::init(Console &self) {
-    self = new ConsoleState{};
+auto debug_utils::create_console() -> Console * {
+    auto *self = new Console{};
     clear_log(self);
     memset(self->input_buffer, 0, sizeof(self->input_buffer));
+    return self;
 }
 
-void debug_utils::deinit(Console self) {
+void debug_utils::destroy(Console *self) {
     clear_log(self);
+    delete self;
 }
 
-void debug_utils::clear_log(Console self) {
+void debug_utils::clear_log(Console *self) {
     auto lock = std::lock_guard{*self->items_mtx};
     self->items.clear();
 }
 
-void debug_utils::add_log(Console self, char const *str) {
+void debug_utils::add_log(Console *self, char const *str) {
     {
         auto lock = std::lock_guard{*self->items_mtx};
         self->items.push_back(str);
@@ -38,7 +40,7 @@ void debug_utils::add_log(Console self, char const *str) {
     std::cout << str << std::endl;
 }
 
-void debug_utils::draw_imgui(Console self, const char *title, bool *p_open) {
+void debug_utils::draw_imgui(Console *self, const char *title, bool *p_open) {
     ImGui::SetNextWindowSize(ImVec2(520, 600), ImGuiCond_FirstUseEver);
     if (!ImGui::Begin(title, p_open)) {
         ImGui::End();

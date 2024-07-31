@@ -88,11 +88,11 @@ struct AsyncPipelineManager {
                 auto [pipeline_manager, lock] = state.self->get_pipeline_manager();
                 auto compile_result = pipeline_manager.add_compute_pipeline(state.info_copy);
                 if (compile_result.is_err()) {
-                    add_log(g_console, compile_result.message().c_str());
+                    debug_utils::add_log(g_console, compile_result.message().c_str());
                     return;
                 }
                 if (!compile_result.value()->is_valid()) {
-                    add_log(g_console, compile_result.message().c_str());
+                    debug_utils::add_log(g_console, compile_result.message().c_str());
                     return;
                 }
                 state.pipeline_promise->set_value(compile_result.value());
@@ -121,11 +121,11 @@ struct AsyncPipelineManager {
                 auto [pipeline_manager, lock] = state.self->get_pipeline_manager();
                 auto compile_result = pipeline_manager.add_ray_tracing_pipeline(state.info_copy);
                 if (compile_result.is_err()) {
-                    add_log(g_console, compile_result.message().c_str());
+                    debug_utils::add_log(g_console, compile_result.message().c_str());
                     return;
                 }
                 if (!compile_result.value()->is_valid()) {
-                    add_log(g_console, compile_result.message().c_str());
+                    debug_utils::add_log(g_console, compile_result.message().c_str());
                     return;
                 }
                 state.pipeline_promise->set_value(compile_result.value());
@@ -155,11 +155,11 @@ struct AsyncPipelineManager {
                 auto [pipeline_manager, lock] = state.self->get_pipeline_manager();
                 auto compile_result = pipeline_manager.add_raster_pipeline(state.info_copy);
                 if (compile_result.is_err()) {
-                    add_log(g_console, compile_result.message().c_str());
+                    debug_utils::add_log(g_console, compile_result.message().c_str());
                     return;
                 }
                 if (!compile_result.value()->is_valid()) {
-                    add_log(g_console, compile_result.message().c_str());
+                    debug_utils::add_log(g_console, compile_result.message().c_str());
                     return;
                 }
                 state.pipeline_promise->set_value(compile_result.value());

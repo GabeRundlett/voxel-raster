@@ -553,13 +553,13 @@ auto generate_all_chunks(VoxelWorld *self) {
     auto generate_chunk1s_main_total = std::chrono::duration<float, std::micro>(std::chrono::duration<uint64_t, std::nano>(generate_chunk1s_main_total_ns)).count();
     auto generate_chunk2s_main_total = std::chrono::duration<float, std::micro>(std::chrono::duration<uint64_t, std::nano>(generate_chunk2s_main_total_ns)).count();
 
-    add_log(g_console, fmt::format("1: {} s | {} us/brick ({} total bricks) {} us/brick per thread",
+    debug_utils::add_log(g_console, fmt::format("1: {} s | {} us/brick ({} total bricks) {} us/brick per thread",
                                    generate_chunk1s_main_total / 1'000'000,
                                    generate_chunk1s_main_total / self->generate_chunk1s_total_n,
                                    self->generate_chunk1s_total_n.load(),
                                    generate_chunk1s_total / self->generate_chunk1s_total_n)
                            .c_str());
-    add_log(g_console, fmt::format("2: {} s | {} us/brick ({} total bricks) {} us/brick per thread",
+    debug_utils::add_log(g_console, fmt::format("2: {} s | {} us/brick ({} total bricks) {} us/brick per thread",
                                    generate_chunk2s_main_total / 1'000'000,
                                    generate_chunk2s_main_total / self->generate_chunk2s_total_n,
                                    self->generate_chunk2s_total_n.load(),
@@ -1066,7 +1066,7 @@ void voxel_world::load_model(VoxelWorld *self, char const *path) {
     //     }
     // }
     // auto t1 = Clock::now();
-    // debug_utils::Console::add_log(fmt::format("{} voxels loaded in {} seconds", voxel_count, std::chrono::duration<float>(t1 - t0).count()));
+    // debug_utils::add_log(g_console, fmt::format("{} voxels loaded in {} seconds", voxel_count, std::chrono::duration<float>(t1 - t0).count()));
 
     gvox_destroy_iterator(input_iterator);
     gvox_destroy_input_stream(file_input);

@@ -133,7 +133,7 @@ auto GpuContext::find_or_add_temporal_buffer(daxa::BufferInfo const &info) -> Te
     } else {
         auto existing_info = device.info_buffer(iter->second.resource_id).value();
         if (existing_info.size != info.size) {
-            add_log(g_console, fmt::format("TemporalBuffer \"{}\" recreated with bad size... This should NEVER happen!!!", id).c_str());
+            debug_utils::add_log(g_console, fmt::format("TemporalBuffer \"{}\" recreated with bad size... This should NEVER happen!!!", id).c_str());
         }
     }
 
@@ -153,7 +153,7 @@ auto GpuContext::find_or_add_temporal_image(daxa::ImageInfo const &info) -> Temp
     } else {
         auto existing_info = device.info_image(iter->second.resource_id).value();
         if (existing_info.size != info.size) {
-            add_log(g_console, fmt::format("TemporalImage \"{}\" recreated with bad size... This should NEVER happen!!!", id).c_str());
+            debug_utils::add_log(g_console, fmt::format("TemporalImage \"{}\" recreated with bad size... This should NEVER happen!!!", id).c_str());
         }
     }
 

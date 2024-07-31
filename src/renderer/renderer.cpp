@@ -816,7 +816,7 @@ void renderer::draw(Renderer *self, Player *player, VoxelWorld *voxel_world) {
     }
     auto reload_result = self->gpu_context.pipeline_manager->reload_all();
     if (auto *reload_err = daxa::get_if<daxa::PipelineReloadError>(&reload_result)) {
-        add_log(g_console, reload_err->message.c_str());
+        debug_utils::add_log(g_console, reload_err->message.c_str());
     }
     self->gpu_context.task_swapchain_image.set_images({.images = std::span{&swapchain_image, 1}});
     render_ui(self);

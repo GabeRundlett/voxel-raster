@@ -22,7 +22,7 @@ using Clock = std::chrono::steady_clock;
 
 Renderer *g_renderer;
 VoxelWorld *g_voxel_world;
-debug_utils::Console g_console;
+Console *g_console;
 
 void search_for_path_to_fix_working_directory(std::span<std::filesystem::path const> test_paths) {
     auto current_path = std::filesystem::current_path();
@@ -177,7 +177,7 @@ auto main() -> int {
         std::filesystem::path{"assets"},
     });
 
-    init(g_console);
+    g_console = debug_utils::create_console();
 
     AppState app;
     init(app);
@@ -185,5 +185,5 @@ auto main() -> int {
     }
     deinit(app);
 
-    deinit(g_console);
+    debug_utils::destroy(g_console);
 }
