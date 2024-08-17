@@ -10,12 +10,12 @@ void generate_bitmask_cpp(
     int level_i, uint bits[], uint *uniform metadata,
     NoiseSettings const *noise_settings, RandomCtx random_ctx) {
 
-    for (uint zi = 0; zi < VOXEL_BRICK_SIZE; ++zi) {
-        for (uint yi = 0; yi < VOXEL_BRICK_SIZE; ++yi) {
-            for (uint xi = 0; xi < VOXEL_BRICK_SIZE; ++xi) {
-                float x = (float((xi + brick_xi * VOXEL_BRICK_SIZE + chunk_xi * VOXEL_CHUNK_SIZE) << level_i) + 0.5f) * VOXEL_SIZE;
-                float y = (float((yi + brick_yi * VOXEL_BRICK_SIZE + chunk_yi * VOXEL_CHUNK_SIZE) << level_i) + 0.5f) * VOXEL_SIZE;
-                float z = (float((zi + brick_zi * VOXEL_BRICK_SIZE + chunk_zi * VOXEL_CHUNK_SIZE) << level_i) + 0.5f) * VOXEL_SIZE;
+    for (int zi = 0; zi < VOXEL_BRICK_SIZE; ++zi) {
+        for (int yi = 0; yi < VOXEL_BRICK_SIZE; ++yi) {
+            for (int xi = 0; xi < VOXEL_BRICK_SIZE; ++xi) {
+                float x = (float((xi + brick_xi * VOXEL_BRICK_SIZE + chunk_xi * VOXEL_CHUNK_SIZE) * (1 << level_i)) + 0.5f) * VOXEL_SIZE;
+                float y = (float((yi + brick_yi * VOXEL_BRICK_SIZE + chunk_yi * VOXEL_CHUNK_SIZE) * (1 << level_i)) + 0.5f) * VOXEL_SIZE;
+                float z = (float((zi + brick_zi * VOXEL_BRICK_SIZE + chunk_zi * VOXEL_CHUNK_SIZE) * (1 << level_i)) + 0.5f) * VOXEL_SIZE;
 
                 uint value = voxel_value(random_ctx, noise_settings, vec3(x, y, z)).val < 0.0f ? 1 : 0;
 
@@ -53,13 +53,13 @@ void generate_attributes_cpp(
     int level_i, uint packed_voxels[], float densities[],
     NoiseSettings const *noise_settings, RandomCtx random_ctx) {
 
-    for (uint32_t zi = 0; zi < VOXEL_BRICK_SIZE; ++zi) {
-        for (uint32_t yi = 0; yi < VOXEL_BRICK_SIZE; ++yi) {
-            for (uint32_t xi = 0; xi < VOXEL_BRICK_SIZE; ++xi) {
+    for (int zi = 0; zi < VOXEL_BRICK_SIZE; ++zi) {
+        for (int yi = 0; yi < VOXEL_BRICK_SIZE; ++yi) {
+            for (int xi = 0; xi < VOXEL_BRICK_SIZE; ++xi) {
                 uint32_t voxel_index = xi + yi * VOXEL_BRICK_SIZE + zi * VOXEL_BRICK_SIZE * VOXEL_BRICK_SIZE;
-                float x = (float((xi + brick_xi * VOXEL_BRICK_SIZE + chunk_xi * VOXEL_CHUNK_SIZE) << level_i) + 0.5f) * VOXEL_SIZE;
-                float y = (float((yi + brick_yi * VOXEL_BRICK_SIZE + chunk_yi * VOXEL_CHUNK_SIZE) << level_i) + 0.5f) * VOXEL_SIZE;
-                float z = (float((zi + brick_zi * VOXEL_BRICK_SIZE + chunk_zi * VOXEL_CHUNK_SIZE) << level_i) + 0.5f) * VOXEL_SIZE;
+                float x = (float((xi + brick_xi * VOXEL_BRICK_SIZE + chunk_xi * VOXEL_CHUNK_SIZE) * (1 << level_i)) + 0.5f) * VOXEL_SIZE;
+                float y = (float((yi + brick_yi * VOXEL_BRICK_SIZE + chunk_yi * VOXEL_CHUNK_SIZE) * (1 << level_i)) + 0.5f) * VOXEL_SIZE;
+                float z = (float((zi + brick_zi * VOXEL_BRICK_SIZE + chunk_zi * VOXEL_CHUNK_SIZE) * (1 << level_i)) + 0.5f) * VOXEL_SIZE;
                 auto dn = voxel_value(random_ctx, noise_settings, glm::vec3(x, y, z));
                 auto col = glm::vec3(0.0f);
                 if (dot(dn.nrm, vec3(0, 0, 1)) > 0.5f && dn.val > -0.5f) {

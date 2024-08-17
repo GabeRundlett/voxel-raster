@@ -158,11 +158,12 @@ void intersect_voxel_brick() {
     tHit = hitAabb(aabb, ray, false);
     const float BIAS = uintBitsToFloat(0x3f800040); // uintBitsToFloat(0x3f800040) == 1.00000762939453125
     ray.origin += ray.direction * tHit * BIAS;
+    const float scl = float(VOXEL_BRICK_SIZE) / (aabb.maximum.x - aabb.minimum.x);
     if (tHit >= 0) {
-        ivec3 bmin = ivec3(floor(aabb.minimum * VOXEL_SCL));
-        ivec3 mapPos = clamp(ivec3(floor(ray.origin * VOXEL_SCL)) - bmin, ivec3(0), ivec3(VOXEL_BRICK_SIZE - 1));
+        ivec3 bmin = ivec3(floor(aabb.minimum * scl));
+        ivec3 mapPos = clamp(ivec3(floor(ray.origin * scl)) - bmin, ivec3(0), ivec3(VOXEL_BRICK_SIZE - 1));
         vec3 deltaDist = abs(vec3(length(ray.direction)) / ray.direction);
-        vec3 sideDist = (sign(ray.direction) * (vec3(mapPos + bmin) - ray.origin * VOXEL_SCL) + (sign(ray.direction) * 0.5) + 0.5) * deltaDist;
+        vec3 sideDist = (sign(ray.direction) * (vec3(mapPos + bmin) - ray.origin * scl) + (sign(ray.direction) * 0.5) + 0.5) * deltaDist;
         ivec3 rayStep = ivec3(sign(ray.direction));
         bvec3 mask = lessThanEqual(sideDist.xyz, min(sideDist.yzx, sideDist.zxy));
         for (int i = 0; i < int(3 * VOXEL_BRICK_SIZE); i++) {
@@ -180,8 +181,8 @@ void intersect_voxel_brick() {
                 rayQueryGenerateIntersectionEXT(ray_query, 1);
 #endif
 #else
-                aabb.minimum += vec3(mapPos) * VOXEL_SIZE;
-                aabb.maximum = aabb.minimum + VOXEL_SIZE;
+                aabb.minimum += vec3(mapPos) / scl;
+                aabb.maximum = aabb.minimum + 1 / scl;
                 tHit += hitAabb(aabb, ray, true);
 #if DAXA_SHADER_STAGE == DAXA_SHADER_STAGE_INTERSECTION
                 hit_attrib = pack_hit_attribute(mapPos);

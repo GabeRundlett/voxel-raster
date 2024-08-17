@@ -7,6 +7,18 @@ vec2 get_uv(vec2 pix, vec4 tex_size) { return (pix + 0.5) * tex_size.zw; }
 vec2 cs_to_uv(vec2 cs) { return cs * vec2(0.5, 0.5) + vec2(0.5, 0.5); }
 vec2 uv_to_cs(vec2 uv) { return (uv - 0.5) * vec2(2, 2); }
 
+float voxel_scl_at_pos(vec3 p) {
+    uint v = uint(ceil(max(1, max(abs(p.x), max(abs(p.y), abs(p.z))) / (1024 * VOXEL_SIZE))));
+    v--;
+    v |= v >> 1;
+    v |= v >> 2;
+    v |= v >> 4;
+    v |= v >> 8;
+    v |= v >> 16;
+    v++;
+    return float(v);
+}
+
 struct ViewRayContext {
     vec4 ray_dir_cs;
     vec4 ray_dir_vs_h;
@@ -33,7 +45,7 @@ vec3 biased_secondary_ray_origin_ws_with_normal(in ViewRayContext vrc, vec3 norm
     float max_comp = max(max(ws_abs.x, ws_abs.y), max(ws_abs.z, -ray_hit_vs(vrc).z));
     vec3 origin = ray_hit_ws(vrc) + (normal - ray_dir_ws(vrc)) * max(1e-4, max_comp * 1e-6);
 #if PER_VOXEL_SHADING
-    return origin + normal * 1.5 * VOXEL_SIZE;
+    return origin + normal * 1.5 * VOXEL_SIZE * voxel_scl_at_pos(origin);
 #else
     return origin;
 #endif
@@ -58,6 +70,10 @@ ViewRayContext unjittered_vrc_from_uv(daxa_BufferPtr(GpuInput) gpu_input, vec2 u
     res.ray_origin_ws_h = deref(gpu_input).cam.view_to_world * res.ray_origin_vs_h;
     return res;
 }
+vec3 round_to_nearest_voxel(vec3 p) {
+    float l = voxel_scl_at_pos(p);
+    return (floor(p * VOXEL_SCL / l) + 0.5) * VOXEL_SIZE * l;
+}
 ViewRayContext vrc_from_uv_and_depth(daxa_BufferPtr(GpuInput) gpu_input, vec2 uv, float depth) {
     ViewRayContext res;
     res.ray_dir_cs = vec4(uv_to_cs(uv), 0.0, 1.0);
@@ -71,7 +87,7 @@ ViewRayContext vrc_from_uv_and_depth(daxa_BufferPtr(GpuInput) gpu_input, vec2 uv
     res.ray_hit_ws_h = deref(gpu_input).cam.view_to_world * res.ray_hit_vs_h;
 #if PER_VOXEL_SHADING
     res.ray_hit_ws_h = vec4(res.ray_hit_ws_h.xyz / res.ray_hit_ws_h.w, 1.0);
-    res.ray_hit_ws_h.xyz = (floor(res.ray_hit_ws_h.xyz * VOXEL_SCL) + 0.5) * VOXEL_SIZE;
+    res.ray_hit_ws_h.xyz = round_to_nearest_voxel(res.ray_hit_ws_h.xyz);
     res.ray_hit_vs_h = deref(gpu_input).cam.world_to_view * res.ray_hit_ws_h;
 #endif
     return res;

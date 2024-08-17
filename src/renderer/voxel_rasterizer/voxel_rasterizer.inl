@@ -314,6 +314,10 @@ namespace renderer {
     }
 
     void update(VoxelRasterizer *self, GpuContext &gpu_context, daxa::TaskBuffer &task_chunks, daxa::TaskBuffer &task_brick_data) {
+        if (!self->brick_meshlet_metadata.task_resource.is_valid()) {
+            return;
+        }
+
         auto temp_task_graph = daxa::TaskGraph({
             .device = gpu_context.device,
             .name = "update_task_graph",

@@ -40,10 +40,10 @@ namespace renderer {
     void submit_debug_points(Renderer *self, Point const *points, int point_n);
     void submit_debug_box_lines(Renderer *self, Box const *cubes, int cube_n);
 
-    auto create_chunk(Renderer *self) -> Chunk *;
+    auto create_chunk(Renderer *self, float const *pos) -> Chunk *;
     void destroy_chunk(Renderer *self, Chunk *chunk);
     void update(Chunk *self, int brick_count, int const *surface_brick_indices, VoxelBrickBitmask const *bitmasks, VoxelRenderAttribBrick const *const *attribs, int const *positions);
-    void render_chunk(Renderer *self, Chunk *chunk, float const *pos);
+    void render_chunk(Renderer *self, Chunk *chunk);
 } // namespace renderer
 
 extern Renderer *g_renderer;

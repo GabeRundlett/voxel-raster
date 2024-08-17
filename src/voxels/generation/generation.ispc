@@ -19,14 +19,14 @@ export void generate_bitmask(
         #pragma unroll
         for (uniform uint in_word_i = 0; in_word_i < 32; ++in_word_i) {
             uint i = word_i * 32 + in_word_i;
-            uint xi = i & ((1 << VOXEL_BRICK_SIZE_LOG2) - 1);
-            uint yi = (i >> VOXEL_BRICK_SIZE_LOG2) & ((1 << VOXEL_BRICK_SIZE_LOG2) - 1);
-            uint zi = (i >> (VOXEL_BRICK_SIZE_LOG2 * 2)) & ((1 << VOXEL_BRICK_SIZE_LOG2) - 1);
+            int xi = i & ((1 << VOXEL_BRICK_SIZE_LOG2) - 1);
+            int yi = (i >> VOXEL_BRICK_SIZE_LOG2) & ((1 << VOXEL_BRICK_SIZE_LOG2) - 1);
+            int zi = (i >> (VOXEL_BRICK_SIZE_LOG2 * 2)) & ((1 << VOXEL_BRICK_SIZE_LOG2) - 1);
 
             vec3 pos;
-            pos.x = (xi + brick_xi * VOXEL_BRICK_SIZE + chunk_xi * VOXEL_CHUNK_SIZE) << level_i;
-            pos.y = (yi + brick_yi * VOXEL_BRICK_SIZE + chunk_yi * VOXEL_CHUNK_SIZE) << level_i;
-            pos.z = (zi + brick_zi * VOXEL_BRICK_SIZE + chunk_zi * VOXEL_CHUNK_SIZE) << level_i;
+            pos.x = (xi + brick_xi * VOXEL_BRICK_SIZE + chunk_xi * VOXEL_CHUNK_SIZE) * (1 << level_i);
+            pos.y = (yi + brick_yi * VOXEL_BRICK_SIZE + chunk_yi * VOXEL_CHUNK_SIZE) * (1 << level_i);
+            pos.z = (zi + brick_zi * VOXEL_BRICK_SIZE + chunk_zi * VOXEL_CHUNK_SIZE) * (1 << level_i);
 
             pos.x = (pos.x + 0.5f) * VOXEL_SIZE;
             pos.y = (pos.y + 0.5f) * VOXEL_SIZE;
@@ -83,14 +83,14 @@ export void generate_attributes(
     foreach (word_i = 0 ... (VOXEL_BRICK_SIZE * VOXEL_BRICK_SIZE * VOXEL_BRICK_SIZE / 32)) {
         for (uniform uint in_word_i = 0; in_word_i < 32; ++in_word_i) {
             uint voxel_index = word_i * 32 + in_word_i;
-            uint xi = voxel_index & ((1 << VOXEL_BRICK_SIZE_LOG2) - 1);
-            uint yi = (voxel_index >> VOXEL_BRICK_SIZE_LOG2) & ((1 << VOXEL_BRICK_SIZE_LOG2) - 1);
-            uint zi = (voxel_index >> (VOXEL_BRICK_SIZE_LOG2 * 2)) & ((1 << VOXEL_BRICK_SIZE_LOG2) - 1);
+            int xi = voxel_index & ((1 << VOXEL_BRICK_SIZE_LOG2) - 1);
+            int yi = (voxel_index >> VOXEL_BRICK_SIZE_LOG2) & ((1 << VOXEL_BRICK_SIZE_LOG2) - 1);
+            int zi = (voxel_index >> (VOXEL_BRICK_SIZE_LOG2 * 2)) & ((1 << VOXEL_BRICK_SIZE_LOG2) - 1);
 
             vec3 pos;
-            pos.x = (xi + brick_xi * VOXEL_BRICK_SIZE + chunk_xi * VOXEL_CHUNK_SIZE) << level_i;
-            pos.y = (yi + brick_yi * VOXEL_BRICK_SIZE + chunk_yi * VOXEL_CHUNK_SIZE) << level_i;
-            pos.z = (zi + brick_zi * VOXEL_BRICK_SIZE + chunk_zi * VOXEL_CHUNK_SIZE) << level_i;
+            pos.x = (xi + brick_xi * VOXEL_BRICK_SIZE + chunk_xi * VOXEL_CHUNK_SIZE) * (1 << level_i);
+            pos.y = (yi + brick_yi * VOXEL_BRICK_SIZE + chunk_yi * VOXEL_CHUNK_SIZE) * (1 << level_i);
+            pos.z = (zi + brick_zi * VOXEL_BRICK_SIZE + chunk_zi * VOXEL_CHUNK_SIZE) * (1 << level_i);
 
             pos.x = (pos.x + 0.5f) * VOXEL_SIZE;
             pos.y = (pos.y + 0.5f) * VOXEL_SIZE;

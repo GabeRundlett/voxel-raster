@@ -38,6 +38,7 @@
 #undef OPAQUE
 
 struct renderer::Chunk {
+    daxa_f32vec3 pos;
     daxa::BufferId brick_data;
     daxa::BufferId blas_buffer;
     daxa::BufferId blas_scratch_buffer;
@@ -64,7 +65,6 @@ struct Renderer {
     daxa::TaskGraph loop_empty_task_graph;
 
     std::vector<renderer::Chunk *> chunks_to_update;
-    std::vector<renderer::Chunk *> chunks_to_move;
     std::vector<VoxelChunk> chunks;
     TemporalBuffer chunks_buffer;
 
@@ -91,7 +91,7 @@ struct Renderer {
 
     bool use_fsr2 = false;
     bool draw_with_rt = false;
-    bool draw_shadows = true;
+    bool draw_shadows = false;
     bool draw_from_observer = false;
     bool needs_record = false;
     bool needs_update = false;
@@ -380,8 +380,10 @@ auto renderer::create(void *glfw_window_ptr) -> Renderer * {
 void renderer::destroy(Renderer *self) {
     self->gpu_context.device.wait_idle();
     self->gpu_context.device.collect_garbage();
-    self->gpu_context.device.destroy_tlas(self->tlas);
-    self->gpu_context.device.destroy_buffer(self->tlas_buffer);
+    if (!self->tlas.is_empty())
+        self->gpu_context.device.destroy_tlas(self->tlas);
+    if (!self->tlas_buffer.is_empty())
+        self->gpu_context.device.destroy_buffer(self->tlas_buffer);
 
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
@@ -436,25 +438,9 @@ void update(Renderer *self) {
             auto &gpu_chunk = self->chunks[chunk->tracked_index];
             blas_instances[chunk->tracked_index] = daxa_BlasInstanceData{
                 .transform = {
-                    {1, 0, 0, gpu_chunk.pos.x * float(VOXEL_CHUNK_SIZE) * SCL},
-                    {0, 1, 0, gpu_chunk.pos.y * float(VOXEL_CHUNK_SIZE) * SCL},
-                    {0, 0, 1, gpu_chunk.pos.z * float(VOXEL_CHUNK_SIZE) * SCL},
-                },
-                .instance_custom_index = chunk->tracked_index,
-                .mask = chunk->brick_count == 0 ? 0x00u : 0xff, // chunk->cull_mask,
-                .instance_shader_binding_table_record_offset = 0,
-                .flags = {},
-                .blas_device_address = self->gpu_context.device.get_device_address(chunk->blas).value(),
-            };
-        }
-
-        for (auto chunk : self->chunks_to_move) {
-            auto &gpu_chunk = self->chunks[chunk->tracked_index];
-            blas_instances[chunk->tracked_index] = daxa_BlasInstanceData{
-                .transform = {
-                    {1, 0, 0, gpu_chunk.pos.x * float(VOXEL_CHUNK_SIZE) * SCL},
-                    {0, 1, 0, gpu_chunk.pos.y * float(VOXEL_CHUNK_SIZE) * SCL},
-                    {0, 0, 1, gpu_chunk.pos.z * float(VOXEL_CHUNK_SIZE) * SCL},
+                    {1, 0, 0, 0},
+                    {0, 1, 0, 0},
+                    {0, 0, 1, 0},
                 },
                 .instance_custom_index = chunk->tracked_index,
                 .mask = chunk->brick_count == 0 ? 0x00u : 0xff, // chunk->cull_mask,
@@ -840,7 +826,6 @@ void renderer::draw(Renderer *self, Player *player, VoxelWorld *voxel_world) {
     self->tracked_brick_data.clear();
     self->tracked_blases.clear();
     self->chunks_to_update.clear();
-    self->chunks_to_move.clear();
 
     ++self->gpu_input.frame_index;
 }
@@ -880,8 +865,8 @@ void renderer::submit_debug_box_lines(Renderer *self, Box const *cubes, int cube
     submit_debug_box_lines(&self->debug_shapes, cubes, cube_n);
 }
 
-auto renderer::create_chunk(Renderer *self) -> Chunk * {
-    return new Chunk{};
+auto renderer::create_chunk(Renderer *self, float const *pos) -> Chunk * {
+    return new Chunk{.pos = {pos[0], pos[1], pos[2]}};
 }
 
 void renderer::destroy_chunk(Renderer *self, Chunk *chunk) {
@@ -913,6 +898,12 @@ void renderer::update(Chunk *self, int brick_count, int const *surface_brick_ind
     self->positions.reserve(brick_count * 4);
     self->aabbs.clear();
     self->aabbs.reserve(brick_count);
+    auto chunk_offset = daxa_f32vec3{
+        self->pos.x * float(VOXEL_CHUNK_SIZE),
+        self->pos.y * float(VOXEL_CHUNK_SIZE),
+        self->pos.z * float(VOXEL_CHUNK_SIZE),
+    };
+
     for (int i = 0; i < brick_count; ++i) {
         int brick_index = surface_brick_indices[i];
         auto px = positions[brick_index * 4 + 0];
@@ -926,17 +917,17 @@ void renderer::update(Chunk *self, int brick_count, int const *surface_brick_ind
         self->positions.push_back(positions[brick_index * 4 + 3]);
 
 #define SCL (float(1 << scl) / float(1 << 8))
-        float x0 = float(px * VOXEL_BRICK_SIZE) * SCL;
-        float y0 = float(py * VOXEL_BRICK_SIZE) * SCL;
-        float z0 = float(pz * VOXEL_BRICK_SIZE) * SCL;
-        float x1 = float((px + 1) * VOXEL_BRICK_SIZE) * SCL;
-        float y1 = float((py + 1) * VOXEL_BRICK_SIZE) * SCL;
-        float z1 = float((pz + 1) * VOXEL_BRICK_SIZE) * SCL;
+        float x0 = float(px * VOXEL_BRICK_SIZE + chunk_offset.x) * SCL;
+        float y0 = float(py * VOXEL_BRICK_SIZE + chunk_offset.y) * SCL;
+        float z0 = float(pz * VOXEL_BRICK_SIZE + chunk_offset.z) * SCL;
+        float x1 = float((px + 1) * VOXEL_BRICK_SIZE + chunk_offset.x) * SCL;
+        float y1 = float((py + 1) * VOXEL_BRICK_SIZE + chunk_offset.y) * SCL;
+        float z1 = float((pz + 1) * VOXEL_BRICK_SIZE + chunk_offset.z) * SCL;
         self->aabbs.push_back({{x0, y0, z0}, {x1, y1, z1}});
     }
 }
 
-void renderer::render_chunk(Renderer *self, Chunk *chunk, float const *pos) {
+void renderer::render_chunk(Renderer *self, Chunk *chunk) {
     auto brick_count = chunk->brick_count;
 
     auto meshes_size = round_up_div((sizeof(VoxelBrickMesh) * brick_count), 128) * 128;
@@ -1021,11 +1012,6 @@ void renderer::render_chunk(Renderer *self, Chunk *chunk, float const *pos) {
         }
     }
 
-    auto prev_pos = self->chunks[tracked_chunk_index].pos;
-    auto pos_changed = pos[0] != prev_pos.x ||
-                       pos[1] != prev_pos.y ||
-                       pos[2] != prev_pos.z;
-
     self->chunks[tracked_chunk_index] = VoxelChunk{
         .bitmasks = self->gpu_context.device.get_device_address(chunk->brick_data).value() + bitmasks_offset,
         .meshes = self->gpu_context.device.get_device_address(chunk->brick_data).value() + meshes_offset,
@@ -1034,15 +1020,12 @@ void renderer::render_chunk(Renderer *self, Chunk *chunk, float const *pos) {
         .attribs = self->gpu_context.device.get_device_address(chunk->brick_data).value() + attribs_offset,
         .flags = self->gpu_context.device.get_device_address(chunk->brick_data).value() + flags_offset,
         .brick_n = uint32_t(brick_count),
-        .pos = {pos[0], pos[1], pos[2]},
+        .pos = chunk->pos,
     };
 
     if (chunk->needs_update) {
         self->needs_update = true;
         chunk->needs_update = false;
         self->chunks_to_update.push_back(chunk);
-    } else if (pos_changed) {
-        self->needs_update = true;
-        self->chunks_to_move.push_back(chunk);
     }
 }

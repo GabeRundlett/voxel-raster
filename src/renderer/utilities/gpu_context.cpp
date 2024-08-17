@@ -13,7 +13,7 @@ GpuContext::GpuContext() {
             .mesh_shader_bit = true,
             .image_atomic64 = true,
             .ray_tracing = true,
-            // .shader_float16 = true,
+            .shader_float16 = true,
             // .robust_buffer_access = true,
             // .robust_image_access = true,
         },
