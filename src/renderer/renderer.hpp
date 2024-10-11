@@ -42,7 +42,8 @@ namespace renderer {
 
     auto create_chunk(Renderer *self, float const *pos) -> Chunk *;
     void destroy_chunk(Renderer *self, Chunk *chunk);
-    void update(Chunk *self, int brick_count, int const *surface_brick_indices, VoxelBrickBitmask const *bitmasks, VoxelRenderAttribBrick const *const *attribs, int const *positions);
+    void update(Chunk *self, int brick_count, int const *surface_brick_indices, void const *const *bricks,
+                int bitmask_offset, int render_attrib_ptr_offset, int pos_scl_offset);
     void render_chunk(Renderer *self, Chunk *chunk);
 } // namespace renderer
 

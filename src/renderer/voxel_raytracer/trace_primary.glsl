@@ -28,7 +28,7 @@ void main() {
     const uint sbt_record_stride = 0;
     const uint miss_index = 0;
     const float t_min = 0.0001;
-    const float t_max = 10000.0;
+    const float t_max = 100000.0;
 
     traceRayEXT(
         accelerationStructureEXT(push.uses.tlas),

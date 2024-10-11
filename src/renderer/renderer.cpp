@@ -113,6 +113,7 @@ auto composite(GpuContext &gpu_context, daxa::TaskGraph &task_graph, daxa::TaskI
         .frag_source = daxa::ShaderFile{"composite.glsl"},
         .color_attachments = {{.format = daxa::Format::R16G16B16A16_SFLOAT}},
         .views = std::array{
+            daxa::attachment_view(Composite::AT.gpu_input, gpu_context.task_input_buffer),
             daxa::attachment_view(Composite::AT.render_target, composited_image),
             daxa::attachment_view(Composite::AT.color, color),
             daxa::attachment_view(Composite::AT.depth, depth),
@@ -633,6 +634,17 @@ void update(Renderer *self) {
         temp_task_graph.submit({});
         temp_task_graph.complete({});
         temp_task_graph.execute({});
+
+        for (auto chunk : self->chunks_to_update) {
+            chunk->bitmasks.clear();
+            chunk->bitmasks.shrink_to_fit();
+            chunk->positions.clear();
+            chunk->positions.shrink_to_fit();
+            chunk->attribs.clear();
+            chunk->attribs.shrink_to_fit();
+            chunk->aabbs.clear();
+            chunk->aabbs.shrink_to_fit();
+        }
     }
     self->needs_update = false;
 }
@@ -876,7 +888,8 @@ void renderer::destroy_chunk(Renderer *self, Chunk *chunk) {
     }
 }
 
-void renderer::update(Chunk *self, int brick_count, int const *surface_brick_indices, VoxelBrickBitmask const *bitmasks, VoxelRenderAttribBrick const *const *attribs, int const *positions) {
+void renderer::update(Chunk *self, int brick_count, int const *surface_brick_indices, void const *const *bricks,
+                      int bitmask_offset, int render_attrib_ptr_offset, int pos_scl_offset) {
     self->needs_update = true;
     self->brick_count = brick_count;
 
@@ -884,14 +897,18 @@ void renderer::update(Chunk *self, int brick_count, int const *surface_brick_ind
     self->bitmasks.reserve(brick_count);
     for (int i = 0; i < brick_count; ++i) {
         int brick_index = surface_brick_indices[i];
-        self->bitmasks.push_back(bitmasks[brick_index]);
+        auto const *brick_ptr = bricks[brick_index];
+        auto const &bitmask = *reinterpret_cast<VoxelBrickBitmask const *>((uint8_t const *)brick_ptr + bitmask_offset);
+        self->bitmasks.push_back(bitmask);
     }
 
     self->attribs.clear();
     self->attribs.reserve(brick_count);
     for (int i = 0; i < brick_count; ++i) {
         int brick_index = surface_brick_indices[i];
-        self->attribs.push_back(*attribs[brick_index]);
+        auto const *brick_ptr = bricks[brick_index];
+        auto const &attribs = *reinterpret_cast<VoxelRenderAttribBrick const *const *>((uint8_t const *)brick_ptr + render_attrib_ptr_offset);
+        self->attribs.push_back(*attribs);
     }
 
     self->positions.clear();
@@ -906,15 +923,17 @@ void renderer::update(Chunk *self, int brick_count, int const *surface_brick_ind
 
     for (int i = 0; i < brick_count; ++i) {
         int brick_index = surface_brick_indices[i];
-        auto px = positions[brick_index * 4 + 0];
-        auto py = positions[brick_index * 4 + 1];
-        auto pz = positions[brick_index * 4 + 2];
-        auto scl = positions[brick_index * 4 + 3] + 8;
+        auto const *brick_ptr = bricks[brick_index];
+        auto positions = reinterpret_cast<int const *>((uint8_t const *)brick_ptr + pos_scl_offset);
+        auto px = positions[0];
+        auto py = positions[1];
+        auto pz = positions[2];
+        auto scl = positions[3] + 8;
 
-        self->positions.push_back(positions[brick_index * 4 + 0]);
-        self->positions.push_back(positions[brick_index * 4 + 1]);
-        self->positions.push_back(positions[brick_index * 4 + 2]);
-        self->positions.push_back(positions[brick_index * 4 + 3]);
+        self->positions.push_back(positions[0]);
+        self->positions.push_back(positions[1]);
+        self->positions.push_back(positions[2]);
+        self->positions.push_back(positions[3]);
 
 #define SCL (float(1 << scl) / float(1 << 8))
         float x0 = float(px * VOXEL_BRICK_SIZE + chunk_offset.x) * SCL;
@@ -996,6 +1015,15 @@ void renderer::render_chunk(Renderer *self, Chunk *chunk) {
             .offset = 0,
         });
         chunk->blas_build_info.dst_blas = chunk->blas;
+    } else {
+        chunk->bitmasks.clear();
+        chunk->bitmasks.shrink_to_fit();
+        chunk->positions.clear();
+        chunk->positions.shrink_to_fit();
+        chunk->attribs.clear();
+        chunk->attribs.shrink_to_fit();
+        chunk->aabbs.clear();
+        chunk->aabbs.shrink_to_fit();
     }
 
     // The buffer will be at the current size of tracked buffers.

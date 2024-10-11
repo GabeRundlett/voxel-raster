@@ -51,11 +51,15 @@ struct VoxelSimAttribBrick {
     float densities[VOXELS_PER_BRICK];
 };
 
+struct Brick {
+    VoxelBrickBitmask bitmask;
+    std::unique_ptr<VoxelRenderAttribBrick> render_attribs;
+    std::unique_ptr<VoxelSimAttribBrick> sim_attribs;
+    glm::ivec4 pos_scl;
+};
+
 struct Chunk {
-    std::array<VoxelBrickBitmask, BRICKS_PER_CHUNK> voxel_brick_bitmasks{};
-    std::array<std::unique_ptr<VoxelRenderAttribBrick>, BRICKS_PER_CHUNK> voxel_brick_render_attribs{};
-    std::array<std::unique_ptr<VoxelSimAttribBrick>, BRICKS_PER_CHUNK> voxel_brick_sim_attribs{};
-    std::array<glm::ivec4, BRICKS_PER_CHUNK> voxel_brick_positions{};
+    std::array<std::unique_ptr<Brick>, BRICKS_PER_CHUNK> bricks{};
     std::vector<int> surface_brick_indices;
 
     renderer::Chunk *render_chunk = nullptr;
@@ -95,7 +99,7 @@ struct DensityNrm {
 
 #include <random>
 
-const auto RANDOM_SEED = 0;
+const auto RANDOM_SEED = 3;
 const auto RANDOM_VALUES = []() {
     auto result = std::vector<uint8_t>{};
     result.resize(RANDOM_BUFFER_SIZE * RANDOM_BUFFER_SIZE * RANDOM_BUFFER_SIZE);
@@ -127,7 +131,7 @@ size_t get_chunk_index(int32_t chunk_xi, int32_t chunk_yi, int32_t chunk_zi, int
 }
 
 auto get_brick_metadata(std::unique_ptr<Chunk> &chunk, auto brick_index) -> BrickMetadata & {
-    return *reinterpret_cast<BrickMetadata *>(&chunk->voxel_brick_bitmasks[brick_index].metadata);
+    return *reinterpret_cast<BrickMetadata *>(&chunk->bricks[brick_index]->bitmask.metadata);
 }
 
 auto generate_chunk(VoxelWorld *self, int32_t chunk_xi, int32_t chunk_yi, int32_t chunk_zi, int32_t level) {
@@ -168,8 +172,10 @@ auto generate_chunk(VoxelWorld *self, int32_t chunk_xi, int32_t chunk_yi, int32_
         for (int32_t brick_yi = 0; brick_yi < BRICK_CHUNK_SIZE; ++brick_yi) {
             for (int32_t brick_xi = 0; brick_xi < BRICK_CHUNK_SIZE; ++brick_xi) {
                 auto brick_index = brick_xi + brick_yi * BRICK_CHUNK_SIZE + brick_zi * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
+                auto &brick = chunk->bricks[brick_index];
+                brick = std::make_unique<Brick>();
                 auto &brick_metadata = get_brick_metadata(chunk, brick_index);
-                auto &bitmask = chunk->voxel_brick_bitmasks[brick_index];
+                auto &bitmask = brick->bitmask;
 
                 brick_metadata = {};
                 bitmask = {};
@@ -186,21 +192,7 @@ auto generate_chunk(VoxelWorld *self, int32_t chunk_xi, int32_t chunk_yi, int32_
                     auto minmax = voxel_minmax_value_cpp(&noise_settings, RANDOM_VALUES.data(), p0.x, p0.y, p0.z, p1.x, p1.y, p1.z);
                     if (minmax.min >= 0.0f || minmax.max < 0.0f) {
                         // uniform
-                        if (minmax.min < 0.0f) {
-                            // inside
-                            brick_metadata.has_voxel = true;
-                            for (auto &word : bitmask.bits) {
-                                word = 0xffffffff;
-                            }
-                        } else {
-                            // outside
-                            brick_metadata.has_air_px = true;
-                            brick_metadata.has_air_nx = true;
-                            brick_metadata.has_air_py = true;
-                            brick_metadata.has_air_ny = true;
-                            brick_metadata.has_air_pz = true;
-                            brick_metadata.has_air_nz = true;
-                        }
+                        brick.reset();
                         continue;
                     }
                 }
@@ -227,12 +219,16 @@ auto generate_chunk2(VoxelWorld *self, int32_t chunk_xi, int32_t chunk_yi, int32
 
     chunk->surface_brick_indices.clear();
 
+    auto temp_sim_attrib_brick = VoxelSimAttribBrick{};
+
     for (int32_t brick_zi = 0; brick_zi < BRICK_CHUNK_SIZE; ++brick_zi) {
         for (int32_t brick_yi = 0; brick_yi < BRICK_CHUNK_SIZE; ++brick_yi) {
             for (int32_t brick_xi = 0; brick_xi < BRICK_CHUNK_SIZE; ++brick_xi) {
                 auto brick_index = brick_xi + brick_yi * BRICK_CHUNK_SIZE + brick_zi * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
+                if (!chunk->bricks[brick_index])
+                    continue;
                 auto &brick_metadata = get_brick_metadata(chunk, brick_index);
-                auto &bitmask = chunk->voxel_brick_bitmasks[brick_index];
+                auto &bitmask = chunk->bricks[brick_index]->bitmask;
 
                 brick_metadata.exposed_nx = false;
                 brick_metadata.exposed_px = false;
@@ -250,102 +246,126 @@ auto generate_chunk2(VoxelWorld *self, int32_t chunk_xi, int32_t chunk_yi, int32
 
                 if (brick_xi != 0) {
                     auto neighbor_brick_index = (brick_xi - 1) + brick_yi * BRICK_CHUNK_SIZE + brick_zi * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
-                    auto &neighbor_brick_metadata = get_brick_metadata(chunk, neighbor_brick_index);
-                    brick_metadata.exposed_nx = neighbor_brick_metadata.has_air_px;
-                    neighbor_bitmask_nx = &chunk->voxel_brick_bitmasks[neighbor_brick_index];
+                    if (chunk->bricks[neighbor_brick_index]) {
+                        auto &neighbor_brick_metadata = get_brick_metadata(chunk, neighbor_brick_index);
+                        brick_metadata.exposed_nx = neighbor_brick_metadata.has_air_px;
+                        neighbor_bitmask_nx = &chunk->bricks[neighbor_brick_index]->bitmask;
+                    }
                 } else if (chunk_xi != -CHUNK_NX) {
                     auto neighbor_chunk_index = get_chunk_index(chunk_xi - 1, chunk_yi, chunk_zi, level);
                     auto &neighbor_chunk = self->chunks[neighbor_chunk_index];
                     if (neighbor_chunk) {
                         auto neighbor_brick_index = (BRICK_CHUNK_SIZE - 1) + brick_yi * BRICK_CHUNK_SIZE + brick_zi * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
-                        auto &neighbor_brick_metadata = get_brick_metadata(neighbor_chunk, neighbor_brick_index);
-                        brick_metadata.exposed_nx = neighbor_brick_metadata.has_air_px;
-                        neighbor_bitmask_nx = &neighbor_chunk->voxel_brick_bitmasks[neighbor_brick_index];
+                        if (neighbor_chunk->bricks[neighbor_brick_index]) {
+                            auto &neighbor_brick_metadata = get_brick_metadata(neighbor_chunk, neighbor_brick_index);
+                            brick_metadata.exposed_nx = neighbor_brick_metadata.has_air_px;
+                            neighbor_bitmask_nx = &neighbor_chunk->bricks[neighbor_brick_index]->bitmask;
+                        }
                     } else {
                         // brick_metadata.exposed_nx = true;
                     }
                 }
                 if (brick_yi != 0) {
                     auto neighbor_brick_index = brick_xi + (brick_yi - 1) * BRICK_CHUNK_SIZE + brick_zi * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
-                    auto &neighbor_brick_metadata = get_brick_metadata(chunk, neighbor_brick_index);
-                    brick_metadata.exposed_ny = neighbor_brick_metadata.has_air_py;
-                    neighbor_bitmask_ny = &chunk->voxel_brick_bitmasks[neighbor_brick_index];
+                    if (chunk->bricks[neighbor_brick_index]) {
+                        auto &neighbor_brick_metadata = get_brick_metadata(chunk, neighbor_brick_index);
+                        brick_metadata.exposed_ny = neighbor_brick_metadata.has_air_py;
+                        neighbor_bitmask_ny = &chunk->bricks[neighbor_brick_index]->bitmask;
+                    }
                 } else if (chunk_yi != -CHUNK_NY) {
                     auto neighbor_chunk_index = get_chunk_index(chunk_xi, chunk_yi - 1, chunk_zi, level);
                     auto &neighbor_chunk = self->chunks[neighbor_chunk_index];
                     if (neighbor_chunk) {
                         auto neighbor_brick_index = brick_xi + (BRICK_CHUNK_SIZE - 1) * BRICK_CHUNK_SIZE + brick_zi * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
-                        auto &neighbor_brick_metadata = get_brick_metadata(neighbor_chunk, neighbor_brick_index);
-                        brick_metadata.exposed_ny = neighbor_brick_metadata.has_air_py;
-                        neighbor_bitmask_ny = &neighbor_chunk->voxel_brick_bitmasks[neighbor_brick_index];
+                        if (neighbor_chunk->bricks[neighbor_brick_index]) {
+                            auto &neighbor_brick_metadata = get_brick_metadata(neighbor_chunk, neighbor_brick_index);
+                            brick_metadata.exposed_ny = neighbor_brick_metadata.has_air_py;
+                            neighbor_bitmask_ny = &neighbor_chunk->bricks[neighbor_brick_index]->bitmask;
+                        }
                     } else {
                         // brick_metadata.exposed_ny = true;
                     }
                 }
                 if (brick_zi != 0) {
                     auto neighbor_brick_index = brick_xi + brick_yi * BRICK_CHUNK_SIZE + (brick_zi - 1) * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
-                    auto &neighbor_brick_metadata = get_brick_metadata(chunk, neighbor_brick_index);
-                    brick_metadata.exposed_nz = neighbor_brick_metadata.has_air_pz;
-                    neighbor_bitmask_nz = &chunk->voxel_brick_bitmasks[neighbor_brick_index];
+                    if (chunk->bricks[neighbor_brick_index]) {
+                        auto &neighbor_brick_metadata = get_brick_metadata(chunk, neighbor_brick_index);
+                        brick_metadata.exposed_nz = neighbor_brick_metadata.has_air_pz;
+                        neighbor_bitmask_nz = &chunk->bricks[neighbor_brick_index]->bitmask;
+                    }
                 } else if (chunk_zi != -CHUNK_NZ) {
                     auto neighbor_chunk_index = get_chunk_index(chunk_xi, chunk_yi, chunk_zi - 1, level);
                     auto &neighbor_chunk = self->chunks[neighbor_chunk_index];
                     if (neighbor_chunk) {
                         auto neighbor_brick_index = brick_xi + brick_yi * BRICK_CHUNK_SIZE + (BRICK_CHUNK_SIZE - 1) * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
-                        auto &neighbor_brick_metadata = get_brick_metadata(neighbor_chunk, neighbor_brick_index);
-                        brick_metadata.exposed_nz = neighbor_brick_metadata.has_air_pz;
-                        neighbor_bitmask_nz = &neighbor_chunk->voxel_brick_bitmasks[neighbor_brick_index];
+                        if (neighbor_chunk->bricks[neighbor_brick_index]) {
+                            auto &neighbor_brick_metadata = get_brick_metadata(neighbor_chunk, neighbor_brick_index);
+                            brick_metadata.exposed_nz = neighbor_brick_metadata.has_air_pz;
+                            neighbor_bitmask_nz = &neighbor_chunk->bricks[neighbor_brick_index]->bitmask;
+                        }
                     } else {
                         // brick_metadata.exposed_nz = true;
                     }
                 }
                 if (brick_xi != BRICK_CHUNK_SIZE - 1) {
                     auto neighbor_brick_index = (brick_xi + 1) + brick_yi * BRICK_CHUNK_SIZE + brick_zi * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
-                    auto &neighbor_brick_metadata = get_brick_metadata(chunk, neighbor_brick_index);
-                    brick_metadata.exposed_px = neighbor_brick_metadata.has_air_nx;
-                    neighbor_bitmask_px = &chunk->voxel_brick_bitmasks[neighbor_brick_index];
+                    if (chunk->bricks[neighbor_brick_index]) {
+                        auto &neighbor_brick_metadata = get_brick_metadata(chunk, neighbor_brick_index);
+                        brick_metadata.exposed_px = neighbor_brick_metadata.has_air_nx;
+                        neighbor_bitmask_px = &chunk->bricks[neighbor_brick_index]->bitmask;
+                    }
                 } else if (chunk_xi != CHUNK_NX - 1) {
                     auto neighbor_chunk_index = get_chunk_index(chunk_xi + 1, chunk_yi, chunk_zi, level);
                     auto &neighbor_chunk = self->chunks[neighbor_chunk_index];
                     if (neighbor_chunk) {
                         auto neighbor_brick_index = 0 + brick_yi * BRICK_CHUNK_SIZE + brick_zi * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
-                        auto &neighbor_brick_metadata = get_brick_metadata(neighbor_chunk, neighbor_brick_index);
-                        brick_metadata.exposed_px = neighbor_brick_metadata.has_air_nx;
-                        neighbor_bitmask_px = &neighbor_chunk->voxel_brick_bitmasks[neighbor_brick_index];
+                        if (neighbor_chunk->bricks[neighbor_brick_index]) {
+                            auto &neighbor_brick_metadata = get_brick_metadata(neighbor_chunk, neighbor_brick_index);
+                            brick_metadata.exposed_px = neighbor_brick_metadata.has_air_nx;
+                            neighbor_bitmask_px = &neighbor_chunk->bricks[neighbor_brick_index]->bitmask;
+                        }
                     } else {
                         // brick_metadata.exposed_px = true;
                     }
                 }
                 if (brick_yi != BRICK_CHUNK_SIZE - 1) {
                     auto neighbor_brick_index = brick_xi + (brick_yi + 1) * BRICK_CHUNK_SIZE + brick_zi * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
-                    auto &neighbor_brick_metadata = get_brick_metadata(chunk, neighbor_brick_index);
-                    brick_metadata.exposed_py = neighbor_brick_metadata.has_air_ny;
-                    neighbor_bitmask_py = &chunk->voxel_brick_bitmasks[neighbor_brick_index];
+                    if (chunk->bricks[neighbor_brick_index]) {
+                        auto &neighbor_brick_metadata = get_brick_metadata(chunk, neighbor_brick_index);
+                        brick_metadata.exposed_py = neighbor_brick_metadata.has_air_ny;
+                        neighbor_bitmask_py = &chunk->bricks[neighbor_brick_index]->bitmask;
+                    }
                 } else if (chunk_yi != CHUNK_NY - 1) {
                     auto neighbor_chunk_index = get_chunk_index(chunk_xi, chunk_yi + 1, chunk_zi, level);
                     auto &neighbor_chunk = self->chunks[neighbor_chunk_index];
                     if (neighbor_chunk) {
                         auto neighbor_brick_index = brick_xi + 0 * BRICK_CHUNK_SIZE + brick_zi * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
-                        auto &neighbor_brick_metadata = get_brick_metadata(neighbor_chunk, neighbor_brick_index);
-                        brick_metadata.exposed_py = neighbor_brick_metadata.has_air_ny;
-                        neighbor_bitmask_py = &neighbor_chunk->voxel_brick_bitmasks[neighbor_brick_index];
+                        if (neighbor_chunk->bricks[neighbor_brick_index]) {
+                            auto &neighbor_brick_metadata = get_brick_metadata(neighbor_chunk, neighbor_brick_index);
+                            brick_metadata.exposed_py = neighbor_brick_metadata.has_air_ny;
+                            neighbor_bitmask_py = &neighbor_chunk->bricks[neighbor_brick_index]->bitmask;
+                        }
                     } else {
                         // brick_metadata.exposed_py = true;
                     }
                 }
                 if (brick_zi != BRICK_CHUNK_SIZE - 1) {
                     auto neighbor_brick_index = brick_xi + brick_yi * BRICK_CHUNK_SIZE + (brick_zi + 1) * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
-                    auto &neighbor_brick_metadata = get_brick_metadata(chunk, neighbor_brick_index);
-                    brick_metadata.exposed_pz = neighbor_brick_metadata.has_air_nz;
-                    neighbor_bitmask_pz = &chunk->voxel_brick_bitmasks[neighbor_brick_index];
+                    if (chunk->bricks[neighbor_brick_index]) {
+                        auto &neighbor_brick_metadata = get_brick_metadata(chunk, neighbor_brick_index);
+                        brick_metadata.exposed_pz = neighbor_brick_metadata.has_air_nz;
+                        neighbor_bitmask_pz = &chunk->bricks[neighbor_brick_index]->bitmask;
+                    }
                 } else if (chunk_zi != CHUNK_NZ - 1) {
                     auto neighbor_chunk_index = get_chunk_index(chunk_xi, chunk_yi, chunk_zi + 1, level);
                     auto &neighbor_chunk = self->chunks[neighbor_chunk_index];
                     if (neighbor_chunk) {
                         auto neighbor_brick_index = brick_xi + brick_yi * BRICK_CHUNK_SIZE + 0 * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
-                        auto &neighbor_brick_metadata = get_brick_metadata(neighbor_chunk, neighbor_brick_index);
-                        brick_metadata.exposed_pz = neighbor_brick_metadata.has_air_nz;
-                        neighbor_bitmask_pz = &neighbor_chunk->voxel_brick_bitmasks[neighbor_brick_index];
+                        if (neighbor_chunk->bricks[neighbor_brick_index]) {
+                            auto &neighbor_brick_metadata = get_brick_metadata(neighbor_chunk, neighbor_brick_index);
+                            brick_metadata.exposed_pz = neighbor_brick_metadata.has_air_nz;
+                            neighbor_bitmask_pz = &neighbor_chunk->bricks[neighbor_brick_index]->bitmask;
+                        }
                     } else {
                         // brick_metadata.exposed_pz = true;
                     }
@@ -356,14 +376,20 @@ auto generate_chunk2(VoxelWorld *self, int32_t chunk_xi, int32_t chunk_yi, int32
                 auto position = glm::ivec4{brick_xi, brick_yi, brick_zi, -LOG2_VOXELS_PER_METER + level};
                 if (brick_metadata.has_voxel && exposed) {
                     // generate surface brick data
-                    auto &render_attrib_brick = chunk->voxel_brick_render_attribs[brick_index];
-                    auto &sim_attrib_brick = chunk->voxel_brick_sim_attribs[brick_index];
+                    auto &render_attrib_brick = chunk->bricks[brick_index]->render_attribs;
+                    auto &sim_attrib_brick = chunk->bricks[brick_index]->sim_attribs;
                     self->generate_chunk2s_total_n += 1;
 
                     if (render_attrib_brick == nullptr) {
                         render_attrib_brick = std::make_unique<VoxelRenderAttribBrick>();
-                        sim_attrib_brick = std::make_unique<VoxelSimAttribBrick>();
-                        generate_attributes(brick_xi, brick_yi, brick_zi, chunk_xi, chunk_yi, chunk_zi, level, (uint32_t *)render_attrib_brick->packed_voxels, (float *)sim_attrib_brick->densities, &noise_settings, RANDOM_VALUES.data());
+                        auto sim_attrib_brick_ptr = (VoxelSimAttribBrick *)nullptr;
+                        if (level == 0) {
+                            sim_attrib_brick = std::make_unique<VoxelSimAttribBrick>();
+                            sim_attrib_brick_ptr = sim_attrib_brick.get();
+                        } else {
+                            sim_attrib_brick_ptr = &temp_sim_attrib_brick;
+                        }
+                        generate_attributes(brick_xi, brick_yi, brick_zi, chunk_xi, chunk_yi, chunk_zi, level, (uint32_t *)render_attrib_brick->packed_voxels, (float *)sim_attrib_brick_ptr->densities, &noise_settings, RANDOM_VALUES.data());
                     }
 
                     auto get_brick_bit = [](VoxelBrickBitmask const &bitmask, uint32_t xi, uint32_t yi, uint32_t zi) {
@@ -468,7 +494,7 @@ auto generate_chunk2(VoxelWorld *self, int32_t chunk_xi, int32_t chunk_yi, int32
                         }
                     }
 
-                    chunk->voxel_brick_positions[brick_index] = position;
+                    chunk->bricks[brick_index]->pos_scl = position;
                     chunk->surface_brick_indices.push_back(brick_index);
                 }
             }
@@ -606,8 +632,12 @@ constexpr auto positive_mod(auto x, auto d) {
 }
 
 auto get_chunk_i(ivec3 p) {
-    // NOTE: subtracting 1 from negatives, since I want to round down
-    return p / int(VOXEL_CHUNK_SIZE) + (sign(p) - 1) / 2;
+    return (p + int(VOXEL_CHUNK_SIZE - 1) * ((sign(p) - 1) / 2)) / int(VOXEL_CHUNK_SIZE);
+}
+
+auto get_brick_i(ivec3 p) {
+    p = (p + int(VOXEL_BRICK_SIZE - 1) * ((sign(p) - 1) / 2)) / int(VOXEL_BRICK_SIZE);
+    return positive_mod(p, int(BRICK_CHUNK_SIZE));
 }
 
 auto get_voxel_is_solid(VoxelWorld *self, ivec3 p) -> bool {
@@ -617,7 +647,7 @@ auto get_voxel_is_solid(VoxelWorld *self, ivec3 p) -> bool {
         return false;
     }
 
-    ivec3 brick_i = positive_mod(p / int(VOXEL_BRICK_SIZE), int(BRICK_CHUNK_SIZE));
+    ivec3 brick_i = get_brick_i(p);
     ivec3 voxel_i = positive_mod(p, int(VOXEL_BRICK_SIZE));
     auto chunk_index = get_chunk_index(chunk_i.x, chunk_i.y, chunk_i.z, 0);
     auto brick_index = brick_i.x + brick_i.y * BRICK_CHUNK_SIZE + brick_i.z * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
@@ -626,7 +656,11 @@ auto get_voxel_is_solid(VoxelWorld *self, ivec3 p) -> bool {
     if (!chunk) {
         return false;
     }
-    auto &brick_bitmask = chunk->voxel_brick_bitmasks[brick_index];
+    auto &brick = chunk->bricks[brick_index];
+    if (!brick) {
+        return false;
+    }
+    auto &brick_bitmask = brick->bitmask;
     uint voxel_word_index = voxel_index / 32;
     uint voxel_in_word_index = voxel_index % 32;
     return ((brick_bitmask.bits[voxel_word_index] >> voxel_in_word_index) & 1) != 0;
@@ -639,7 +673,7 @@ void set_voxel_bit(VoxelWorld *self, ivec3 p, bool value) {
         return;
     }
 
-    ivec3 brick_i = positive_mod(p / int(VOXEL_BRICK_SIZE), int(BRICK_CHUNK_SIZE));
+    ivec3 brick_i = get_brick_i(p);
     ivec3 voxel_i = positive_mod(p, int(VOXEL_BRICK_SIZE));
     auto chunk_index = get_chunk_index(chunk_i.x, chunk_i.y, chunk_i.z, 0);
     auto brick_index = brick_i.x + brick_i.y * BRICK_CHUNK_SIZE + brick_i.z * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
@@ -650,7 +684,12 @@ void set_voxel_bit(VoxelWorld *self, ivec3 p, bool value) {
         chunk = std::make_unique<Chunk>();
         chunk->pos = chunk_i;
     }
-    auto &brick_bitmask = chunk->voxel_brick_bitmasks[brick_index];
+    auto &brick = chunk->bricks[brick_index];
+    if (!brick) {
+        brick = std::make_unique<Brick>();
+        generate_bitmask(brick_i.x, brick_i.y, brick_i.z, chunk_i.x, chunk_i.y, chunk_i.z, 0, brick->bitmask.bits, &brick->bitmask.metadata, &noise_settings, RANDOM_VALUES.data());
+    }
+    auto &brick_bitmask = brick->bitmask;
     uint voxel_word_index = voxel_index / 32;
     uint voxel_in_word_index = voxel_index % 32;
 
@@ -693,8 +732,8 @@ void set_voxel_bit(VoxelWorld *self, ivec3 p, bool value) {
     if (value) {
         brick_bitmask.bits[voxel_word_index] |= 1 << voxel_in_word_index;
         brick_metadata.has_voxel = true;
-        auto &render_attrib_brick = chunk->voxel_brick_render_attribs[brick_index];
-        auto &sim_attrib_brick = chunk->voxel_brick_sim_attribs[brick_index];
+        auto &render_attrib_brick = brick->render_attribs;
+        auto &sim_attrib_brick = brick->sim_attribs;
         if (!render_attrib_brick) {
             render_attrib_brick = std::make_unique<VoxelRenderAttribBrick>();
             sim_attrib_brick = std::make_unique<VoxelSimAttribBrick>();
@@ -720,7 +759,7 @@ void set_voxel_attrib(VoxelWorld *self, ivec3 p, Voxel value) {
         return;
     }
 
-    ivec3 brick_i = positive_mod(p / int(VOXEL_BRICK_SIZE), int(BRICK_CHUNK_SIZE));
+    ivec3 brick_i = get_brick_i(p);
     ivec3 voxel_i = positive_mod(p, int(VOXEL_BRICK_SIZE));
     auto chunk_index = get_chunk_index(chunk_i.x, chunk_i.y, chunk_i.z, 0);
     auto brick_index = brick_i.x + brick_i.y * BRICK_CHUNK_SIZE + brick_i.z * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
@@ -730,9 +769,14 @@ void set_voxel_attrib(VoxelWorld *self, ivec3 p, Voxel value) {
         chunk = std::make_unique<Chunk>();
         chunk->pos = chunk_i;
     }
-    auto &render_attrib_brick = chunk->voxel_brick_render_attribs[brick_index];
+    auto &brick = chunk->bricks[brick_index];
+    if (!brick) {
+        brick = std::make_unique<Brick>();
+        generate_bitmask(brick_i.x, brick_i.y, brick_i.z, chunk_i.x, chunk_i.y, chunk_i.z, 0, brick->bitmask.bits, &brick->bitmask.metadata, &noise_settings, RANDOM_VALUES.data());
+    }
+    auto &render_attrib_brick = brick->render_attribs;
     if (!render_attrib_brick) {
-        auto &sim_attrib_brick = chunk->voxel_brick_sim_attribs[brick_index];
+        auto &sim_attrib_brick = brick->sim_attribs;
         render_attrib_brick = std::make_unique<VoxelRenderAttribBrick>();
         sim_attrib_brick = std::make_unique<VoxelSimAttribBrick>();
         generate_attributes(brick_i.x, brick_i.y, brick_i.z, chunk_i.x, chunk_i.y, chunk_i.z, 0, (uint32_t *)render_attrib_brick->packed_voxels, (float *)sim_attrib_brick->densities, &noise_settings, RANDOM_VALUES.data());
@@ -755,7 +799,7 @@ void set_voxel_sim_attrib(VoxelWorld *self, ivec3 p, float density) {
         return;
     }
 
-    ivec3 brick_i = positive_mod(p / int(VOXEL_BRICK_SIZE), int(BRICK_CHUNK_SIZE));
+    ivec3 brick_i = get_brick_i(p);
     ivec3 voxel_i = positive_mod(p, int(VOXEL_BRICK_SIZE));
     auto chunk_index = get_chunk_index(chunk_i.x, chunk_i.y, chunk_i.z, 0);
     auto brick_index = brick_i.x + brick_i.y * BRICK_CHUNK_SIZE + brick_i.z * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
@@ -765,9 +809,14 @@ void set_voxel_sim_attrib(VoxelWorld *self, ivec3 p, float density) {
         chunk = std::make_unique<Chunk>();
         chunk->pos = chunk_i;
     }
-    auto &sim_attrib_brick = chunk->voxel_brick_sim_attribs[brick_index];
+    auto &brick = chunk->bricks[brick_index];
+    if (!brick) {
+        brick = std::make_unique<Brick>();
+        generate_bitmask(brick_i.x, brick_i.y, brick_i.z, chunk_i.x, chunk_i.y, chunk_i.z, 0, brick->bitmask.bits, &brick->bitmask.metadata, &noise_settings, RANDOM_VALUES.data());
+    }
+    auto &sim_attrib_brick = brick->sim_attribs;
     if (!sim_attrib_brick) {
-        auto &render_attrib_brick = chunk->voxel_brick_render_attribs[brick_index];
+        auto &render_attrib_brick = brick->render_attribs;
         render_attrib_brick = std::make_unique<VoxelRenderAttribBrick>();
         sim_attrib_brick = std::make_unique<VoxelSimAttribBrick>();
         generate_attributes(brick_i.x, brick_i.y, brick_i.z, chunk_i.x, chunk_i.y, chunk_i.z, 0, (uint32_t *)render_attrib_brick->packed_voxels, (float *)sim_attrib_brick->densities, &noise_settings, RANDOM_VALUES.data());
@@ -790,7 +839,7 @@ auto get_voxel_sim_attrib(VoxelWorld *self, ivec3 p, bool generate) -> float {
         return 0;
     }
 
-    ivec3 brick_i = positive_mod(p / int(VOXEL_BRICK_SIZE), int(BRICK_CHUNK_SIZE));
+    ivec3 brick_i = get_brick_i(p);
     ivec3 voxel_i = positive_mod(p, int(VOXEL_BRICK_SIZE));
     auto chunk_index = get_chunk_index(chunk_i.x, chunk_i.y, chunk_i.z, 0);
     auto brick_index = brick_i.x + brick_i.y * BRICK_CHUNK_SIZE + brick_i.z * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
@@ -804,11 +853,16 @@ auto get_voxel_sim_attrib(VoxelWorld *self, ivec3 p, bool generate) -> float {
             return 0;
         }
     }
-    auto &sim_attrib_brick = chunk->voxel_brick_sim_attribs[brick_index];
+    auto &brick = chunk->bricks[brick_index];
+    if (!brick) {
+        brick = std::make_unique<Brick>();
+        generate_bitmask(brick_i.x, brick_i.y, brick_i.z, chunk_i.x, chunk_i.y, chunk_i.z, 0, brick->bitmask.bits, &brick->bitmask.metadata, &noise_settings, RANDOM_VALUES.data());
+    }
+    auto &sim_attrib_brick = brick->sim_attribs;
 
     if (!sim_attrib_brick) {
         if (generate) {
-            auto &render_attrib_brick = chunk->voxel_brick_render_attribs[brick_index];
+            auto &render_attrib_brick = brick->render_attribs;
             render_attrib_brick = std::make_unique<VoxelRenderAttribBrick>();
             sim_attrib_brick = std::make_unique<VoxelSimAttribBrick>();
             generate_attributes(brick_i.x, brick_i.y, brick_i.z, chunk_i.x, chunk_i.y, chunk_i.z, 0, (uint32_t *)render_attrib_brick->packed_voxels, (float *)sim_attrib_brick->densities, &noise_settings, RANDOM_VALUES.data());
@@ -827,7 +881,7 @@ auto get_voxel_attrib(VoxelWorld *self, ivec3 p) -> Voxel {
         return {};
     }
 
-    ivec3 brick_i = positive_mod(p / int(VOXEL_BRICK_SIZE), int(BRICK_CHUNK_SIZE));
+    ivec3 brick_i = get_brick_i(p);
     ivec3 voxel_i = positive_mod(p, int(VOXEL_BRICK_SIZE));
     auto chunk_index = get_chunk_index(chunk_i.x, chunk_i.y, chunk_i.z, 0);
     auto brick_index = brick_i.x + brick_i.y * BRICK_CHUNK_SIZE + brick_i.z * BRICK_CHUNK_SIZE * BRICK_CHUNK_SIZE;
@@ -836,7 +890,11 @@ auto get_voxel_attrib(VoxelWorld *self, ivec3 p) -> Voxel {
     if (!chunk) {
         return {};
     }
-    auto &brick_attribs = chunk->voxel_brick_render_attribs[brick_index];
+    auto &brick = chunk->bricks[brick_index];
+    if (!brick) {
+        return {};
+    }
+    auto &brick_attribs = brick->render_attribs;
     if (!brick_attribs) {
         return {};
     }
@@ -849,8 +907,10 @@ auto dda_voxels(VoxelWorld *self, Ray ray, int max_iter, float max_dist) -> std:
     using Point = std::array<vec3, 3>;
     using Box = std::array<vec3, 3>;
 
+    ray.origin += glm::vec3(CHUNK_NX, CHUNK_NY, CHUNK_NZ) * float(VOXEL_CHUNK_SIZE) * VOXEL_SIZE;
+
     float tHit = -1;
-    GlmAabb aabb = {glm::vec3(0), glm::vec3(CHUNK_NX, CHUNK_NY, CHUNK_NZ) * float(VOXEL_CHUNK_SIZE)};
+    GlmAabb aabb = {glm::vec3(0), glm::vec3(CHUNK_NX, CHUNK_NY, CHUNK_NZ) * float(VOXEL_CHUNK_SIZE) * 2.0f};
     tHit = hitAabb(aabb, ray);
     const float BIAS = uintBitsToFloat(0x3f800040); // uintBitsToFloat(0x3f800040) == 1.00000762939453125
     ray.origin += ray.direction * tHit * BIAS;
@@ -870,7 +930,7 @@ auto dda_voxels(VoxelWorld *self, Ray ray, int max_iter, float max_dist) -> std:
     const int max_steps = min(max_iter, int(aabb.maximum.x + aabb.maximum.y + aabb.maximum.z));
 
     for (int i = 0; i < max_steps; i++) {
-        if (get_voxel_is_solid(self, mapPos) == true) {
+        if (get_voxel_is_solid(self, mapPos - ivec3(CHUNK_NX, CHUNK_NY, CHUNK_NZ) * VOXEL_CHUNK_SIZE) == true) {
             aabb.minimum += vec3(mapPos) * VOXEL_SIZE;
             aabb.maximum = aabb.minimum + VOXEL_SIZE;
             tHit += hitAabb(aabb, ray);
@@ -880,7 +940,7 @@ auto dda_voxels(VoxelWorld *self, Ray ray, int max_iter, float max_dist) -> std:
             // int z_face = (mask.z * ((rayStep.z + 1) / 2 + 4));
             // x_face + y_face + z_face
 
-            return {mapPos, -rayStep * ivec3(mask), tHit};
+            return {mapPos - ivec3(CHUNK_NX, CHUNK_NY, CHUNK_NZ) * VOXEL_CHUNK_SIZE, -rayStep * ivec3(mask), tHit};
         }
         mask = lessThanEqual(sideDist, min(vec3(sideDist.y, sideDist.z, sideDist.x), vec3(sideDist.z, sideDist.x, sideDist.y)));
         sideDist += vec3(mask) * deltaDist;
@@ -970,7 +1030,8 @@ void voxel_world::update(VoxelWorld *self) {
             if (chunk->render_chunk == nullptr) {
                 chunk->render_chunk = renderer::create_chunk(g_renderer, (float const *)&chunk->pos);
             }
-            update(chunk->render_chunk, brick_count, chunk->surface_brick_indices.data(), chunk->voxel_brick_bitmasks.data(), reinterpret_cast<VoxelRenderAttribBrick const *const *>(chunk->voxel_brick_render_attribs.data()), (int const *)chunk->voxel_brick_positions.data());
+            update(chunk->render_chunk, brick_count, chunk->surface_brick_indices.data(), (void const *const *)chunk->bricks.data(),
+                   offsetof(Brick, bitmask), offsetof(Brick, render_attribs), offsetof(Brick, pos_scl));
             chunk->bricks_changed = false;
         }
 
@@ -1121,7 +1182,7 @@ void fix_normals(VoxelWorld *self, int const *pos) {
 }
 
 void voxel_world::apply_brush_a(VoxelWorld *self, int const *pos) {
-    // place brush
+    // break brush
 
     for (int zi = -15; zi <= 15; ++zi) {
         for (int yi = -15; yi <= 15; ++yi) {
@@ -1141,7 +1202,7 @@ void voxel_world::apply_brush_a(VoxelWorld *self, int const *pos) {
 }
 
 void voxel_world::apply_brush_b(VoxelWorld *self, int const *pos) {
-    // break brush
+    // place brush
 
     for (int zi = -15; zi <= 15; ++zi) {
         for (int yi = -15; yi <= 15; ++yi) {

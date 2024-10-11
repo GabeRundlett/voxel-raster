@@ -13,7 +13,7 @@ DAXA_DECL_PUSH_CONSTANT(TraceShadowPush, push)
 
 layout(location = PAYLOAD_LOC) rayPayloadEXT PackedRayPayload prd;
 
-const vec3 SUN_DIR = normalize(vec3(-1.7, 2.4, 3.1));
+const vec3 SUN_DIR = normalize(vec3(-1.7, 2.4, 2.1));
 
 void main() {
     const ivec2 px = ivec2(gl_LaunchIDEXT.xy);

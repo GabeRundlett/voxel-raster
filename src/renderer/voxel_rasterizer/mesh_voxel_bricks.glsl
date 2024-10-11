@@ -6,6 +6,10 @@ DAXA_DECL_PUSH_CONSTANT(MeshVoxelBricksPush, push)
 
 shared VoxelBrickMesh result_mesh;
 
+int positive_mod(int x, int d) {
+    return ((x % d) + d) % d;
+}
+
 layout(local_size_x = VOXEL_BRICK_SIZE, local_size_y = VOXEL_BRICK_SIZE, local_size_z = 3) in;
 void main() {
     uint brick_instance_index = gl_WorkGroupID.x + 1 + deref(push.uses.indirect_info).offset;
@@ -63,7 +67,7 @@ void main() {
         } else if (p0.x >= 0) {
             t_edge_mask = 0x0;
         } else {
-            int cam_voxel_pos = int(cam_pos.x * INV_SCL) % int(VOXEL_BRICK_SIZE);
+            int cam_voxel_pos = positive_mod(int(floor(cam_pos.x * INV_SCL)), int(VOXEL_BRICK_SIZE));
             int mask = (1 << cam_voxel_pos) - 1;
             b_edge_mask &= ~mask;
             t_edge_mask &= mask;
@@ -75,7 +79,7 @@ void main() {
         } else if (p0.y >= 0) {
             t_edge_mask = 0x0;
         } else {
-            int cam_voxel_pos = int(cam_pos.y * INV_SCL) % int(VOXEL_BRICK_SIZE);
+            int cam_voxel_pos = positive_mod(int(floor(cam_pos.y * INV_SCL)), int(VOXEL_BRICK_SIZE));
             int mask = (1 << cam_voxel_pos) - 1;
             b_edge_mask &= ~mask;
             t_edge_mask &= mask;
@@ -87,7 +91,7 @@ void main() {
         } else if (p0.z >= 0) {
             t_edge_mask = 0x0;
         } else {
-            int cam_voxel_pos = int(cam_pos.z * INV_SCL) % int(VOXEL_BRICK_SIZE);
+            int cam_voxel_pos = positive_mod(int(floor(cam_pos.z * INV_SCL)), int(VOXEL_BRICK_SIZE));
             int mask = (1 << cam_voxel_pos) - 1;
             b_edge_mask &= ~mask;
             t_edge_mask &= mask;
